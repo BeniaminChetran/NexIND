@@ -2,10 +2,6 @@
 #--------activitati.py---------
 #------------------------------
 
-#------------------------------
-#--------activitati.py---------
-#------------------------------
-
 import streamlit as st
 import json
 import threading
@@ -34,7 +30,7 @@ def render_activitati():
 
     # Dacă raportul a fost salvat, afișăm butoanele de acțiune rapidă (Download + Activitate Nouă)
     if st.session_state["raport_salvat"]:
-        st.success(f"✅ Activitate salvată cu succes! E-mailul a fost trimis în fundal.")
+        st.success("✅ Activitate salvată cu succes! E-mailul a fost trimis în fundal.")
         
         col_act1, col_act2 = st.columns(2)
         with col_act1:
@@ -124,11 +120,9 @@ def render_activitati():
                     "data": datetime.now(), "tip_interventie": tip_interventie
                 })
                 
-                # Salvăm în sesiune pentru butonul de download
                 st.session_state["ultimul_id_salvat"] = rid
                 st.session_state["ultimul_pdf_bytes"] = pdf_bytes
 
-                # Trimitem emailul și sincronizarea în fundal
                 threading.Thread(target=background_sync_task, args=(
                     {"status": "nefacturat", "id": str(rid), "data": datetime.now().strftime("%Y-%m-%d"), "tip_interventie": tip_interventie, "ora": f"{durata_min} min", "firma": sel_firma, "masina": sel_masina},
                     firma_obj['email'], f"Raport #{rid} - {sel_firma}", f"Vă atașăm raportul #{rid}.", pdf_bytes, f"Raport_{rid}.pdf"
