@@ -18,7 +18,9 @@ from pages.documentatii import render_documentatii
 from pages.masini import render_masini
 from pages.piese import render_piese
 from pages.firme import render_firme
+from pages.masuratori import render_masuratori
 from pages.setari import render_setari
+
 
 load_dotenv()
 
@@ -46,6 +48,7 @@ tab_dashboard, tab_predictii, tab_activitati, tab_rapoarte, tab_optimizare, tab_
     "📋 5. Istoric",
     "📊 6. Documentații / Proceduri",
     "🔮 7. Predicții",
+    "📏 8. Măsurători",
     "⚙️ 9. Setări"
 ])
 
@@ -72,6 +75,9 @@ with tab_piese:
 
 with tab_firme:
     render_firme()
+
+with tab_masuratori:
+    render_masuratori()
 
 with tab_setari:
     render_setari()
