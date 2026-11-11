@@ -1,6 +1,3 @@
-#--------------------------------
-#-----reparatii_repository.py----
-#--------------------------------
 #----------------------------------
 #----reparatii_repository.py-------
 #----------------------------------
@@ -41,4 +38,4 @@ class ReparatiiRepository:
                 data.get("tehnician_nume"), data.get("verificator_nume"), data.get("tip_interventie")
             ))
             res = c.fetchone()
-            return res['id'] if res'id' else None
+            return res['id'] if res else None
