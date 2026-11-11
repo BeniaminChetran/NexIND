@@ -2,6 +2,10 @@
 #--------activitati.py---------
 #------------------------------
 
+#------------------------------
+#--------activitati.py---------
+#------------------------------
+
 import streamlit as st
 import json
 import threading
@@ -20,6 +24,7 @@ def render_activitati():
     
     if "raport_salvat" not in st.session_state: st.session_state["raport_salvat"] = False
     if "ultimul_id_salvat" not in st.session_state: st.session_state["ultimul_id_salvat"] = None
+    if "ultimul_pdf_bytes" not in st.session_state: st.session_state["ultimul_pdf_bytes"] = None
 
     firme_db = FirmeRepository.get_all()
     firme_dict = {f['nume_firma']: f for f in firme_db}
@@ -27,12 +32,29 @@ def render_activitati():
         st.warning("⚠️ Adăugați cel puțin o firmă.")
         return
 
+    # Dacă raportul a fost salvat, afișăm butoanele de acțiune rapidă (Download + Activitate Nouă)
     if st.session_state["raport_salvat"]:
-        if st.button("➕ Introdu o activitate nouă", type="primary"):
-            st.session_state["raport_salvat"] = False
-            st.session_state["ultimul_id_salvat"] = None
-            if "df_piese_editor" in st.session_state: del st.session_state["df_piese_editor"]
-            st.rerun()
+        st.success(f"✅ Activitate salvată cu succes! E-mailul a fost trimis în fundal.")
+        
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            if st.session_state["ultimul_pdf_bytes"]:
+                st.download_button(
+                    label="📥 Descarcă Raport PDF",
+                    data=st.session_state["ultimul_pdf_bytes"],
+                    file_name=f"Raport_{st.session_state['ultimul_id_salvat']}.pdf",
+                    mime="application/pdf",
+                    type="primary"
+                )
+        with col_act2:
+            if st.button("➕ Introdu o activitate nouă"):
+                st.session_state["raport_salvat"] = False
+                st.session_state["ultimul_id_salvat"] = None
+                st.session_state["ultimul_pdf_bytes"] = None
+                if "df_piese_editor" in st.session_state: del st.session_state["df_piese_editor"]
+                st.rerun()
+        st.markdown("---")
+        return
 
     col_f1, col_f2 = st.columns([4, 1])
     with col_f1:
@@ -94,12 +116,23 @@ def render_activitati():
             }
             rid = ReparatiiRepository.insert(data_rep)
             if rid:
+                pdf_bytes = genereaza_pdf({
+                    "id": rid, "client": sel_firma, "masina": sel_masina, "durata": durata_min, 
+                    "stare_finala": stare_fin, "piese_json": [{"piesa": p.get("Piesa"), "cantitate": p.get("Cantitate"), "tip": p.get("Tip")} for p in piese_valide], 
+                    "titlu": titlu_lucrare, "simptom": simptom, "defect": defect, "solutie": solutie, 
+                    "optimizari": optimizari, "tehnician": tehnician, "verificator": verificator, 
+                    "data": datetime.now(), "tip_interventie": tip_interventie
+                })
+                
+                # Salvăm în sesiune pentru butonul de download
                 st.session_state["ultimul_id_salvat"] = rid
-                pdf_bytes = genereaza_pdf({"id": rid, "client": sel_firma, "masina": sel_masina, "durata": durata_min, "stare_finala": stare_fin, "piese_json": [{"piesa": p.get("Piesa"), "cantitate": p.get("Cantitate"), "tip": p.get("Tip")} for p in piese_valide], "titlu": titlu_lucrare, "simptom": simptom, "defect": defect, "solutie": solutie, "optimizari": optimizari, "tehnician": tehnician, "verificator": verificator, "data": datetime.now(), "tip_interventie": tip_interventie})
+                st.session_state["ultimul_pdf_bytes"] = pdf_bytes
+
+                # Trimitem emailul și sincronizarea în fundal
                 threading.Thread(target=background_sync_task, args=(
                     {"status": "nefacturat", "id": str(rid), "data": datetime.now().strftime("%Y-%m-%d"), "tip_interventie": tip_interventie, "ora": f"{durata_min} min", "firma": sel_firma, "masina": sel_masina},
                     firma_obj['email'], f"Raport #{rid} - {sel_firma}", f"Vă atașăm raportul #{rid}.", pdf_bytes, f"Raport_{rid}.pdf"
                 ), daemon=True).start()
+
             st.session_state["raport_salvat"] = True
-            st.success("Activitate salvată cu succes!")
             st.rerun()
