@@ -57,9 +57,10 @@ tab_dashboard, tab_activitati, tab_firme, tab_masini, tab_piese, tab_electronice
 # 2. Conținutul fiecărui tab legat de funcția corespunzătoare din module
 with tab_dashboard:
     # Aici afișezi dashboard-ul sau funcția corespunzătoare
-    st.subheader("📈 Dashboard Principal & Indicatori")
-    st.info("Panoul central cu statistici și intervenții.")
-    pass
+    #st.subheader("📈 Dashboard Principal & Indicatori")
+    #st.info("Panoul central cu statistici și intervenții.")
+    #pass
+    render_dashboard
 
 with tab_activitati:
     render_activitati()
@@ -84,9 +85,10 @@ with tab_documentatii:
 
 with tab_predictii:
     # Aici afișezi modulul de predicții
-    st.subheader("🔮 Predicții & Health Score Mașini")
-    st.info("Modulul de analiză predictivă.")
-    pass
+    #st.subheader("🔮 Predicții & Health Score Mașini")
+    #st.info("Modulul de analiză predictivă.")
+    #pass
+    render_predictii
 
 with tab_masuratori:
     render_masuratori()
