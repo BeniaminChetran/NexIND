@@ -39,14 +39,14 @@ st.title("🛠️ NexInd CMMS Dashboard & Predictive")
 # Taburile aplicației în ordinea dorită
 tab_dashboard, tab_predictii, tab_activitati, tab_rapoarte, tab_optimizare, tab_masini, tab_piese, tab_firme, tab_setari = st.tabs([
     "📈 0. Dashboard",
-    "🔮 1. Predicții",
-    "📝 2. Activități", 
-    "📋 3. Istoric",
-    "📊 4. Documentații / Proceduri", 
-    "🏭 5. Mașini", 
-    "🔧 6. Piese", 
-    "📇 7. Firme",
-    "⚙️ 8. Setări"
+    "📝 1. Activități", 
+    "📇 2. Firme",
+    "🏭 3. Mașini", 
+    "🔧 4. Piese", 
+    "📋 5. Istoric",
+    "📊 6. Documentații / Proceduri",
+    "🔮 7. Predicții",
+    "⚙️ 9. Setări"
 ])
 
 with tab_dashboard:
