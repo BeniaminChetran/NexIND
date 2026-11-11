@@ -39,7 +39,7 @@ st.sidebar.info("Arhitectură Enterprise modularizată.")
 st.title("🛠️ NexInd CMMS Dashboard & Predictive")
 
 # Taburile aplicației în ordinea dorită
-tab_dashboard, tab_predictii, tab_activitati, tab_rapoarte, tab_optimizare, tab_masini, tab_piese, tab_firme, tab_setari = st.tabs([
+tab_dashboard, tab_predictii, tab_activitati, tab_rapoarte, tab_optimizare, tab_masuratori, tab_masini, tab_piese, tab_firme, tab_setari = st.tabs([
     "📈 0. Dashboard",
     "📝 1. Activități", 
     "📇 2. Firme",
