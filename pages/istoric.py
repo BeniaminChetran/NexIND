@@ -1,6 +1,3 @@
-#------------------------------------
-#------istoric.py--------------------
-#------------------------------------
 #----------------------------------
 #-------istoric.py-----------------
 #----------------------------------
@@ -9,7 +6,6 @@ import streamlit as st
 from datetime import datetime
 import pandas as pd
 import json
-from repositories.reparatii_repository import ReparatiiRepository
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
@@ -28,8 +24,17 @@ def render_istoric():
             masini = ["Toate mașinile"] + [m['denumire'] for m in MasiniRepository.get_all()]
             sel_m = st.selectbox("Filtrează după Mașină", options=masini)
 
-    # Preluare rapoarte din baza de date
-    rapoarte = ReparatiiRepository.get_all()
+    # Preluare rapoarte direct din baza de date
+    with db_cursor() as c:
+        c.execute("""
+            SELECT id, firma, masina, subansamblu, defect, cod_eroare, piese_json, 
+                   titlu AS titlu_lucrare, simptom, solutie, stare_finala AS stare_fin, 
+                   durata AS durata_min, optimizari, tehnician AS tehnician_nume, 
+                   verificator AS verificator_nume, data_creare AS data, tip_interventie 
+            FROM reparatii 
+            ORDER BY id DESC
+        """)
+        rapoarte = c.fetchall()
     
     # Filtrare
     if sel_f != "Toate firmele":
@@ -43,7 +48,7 @@ def render_istoric():
         st.info("Nu există rapoarte care să corespundă filtrelor selectate.")
         return
 
-    rapoarte_dict = {f"Raport #{r['id']} | {r.get('firma')} - {r.get('masina')} ({r.get('data', 'N/A')})": r for r in rapoarte}
+    rapoarte_dict = {f"Raport #{r['id']} | {r.get('firma')} - {r.get('masina')} ({str(r.get('data', 'N/A'))[:10]})": r for r in rapoarte}
     
     sel_rap_key = st.selectbox("Selectează Raportul dorit pentru Vizualizare / Modificare", options=list(rapoarte_dict.keys()))
     
@@ -78,11 +83,16 @@ def render_istoric():
 
             st.markdown("#### 🔩 Gestiune Piese")
             piese_existente = r_data.get('piese_valide', [])
+            if not piese_existente:
+                piese_existente = r_data.get('piese_json', [])
             if isinstance(piese_existente, str):
                 try: piese_existente = json.loads(piese_existente)
                 except: piese_existente = []
             
             df_piese_hist = pd.DataFrame(piese_existente if piese_existente else [{"Piesa": "", "Cantitate": 1, "Tip": "Necesara"}])
+            if "piesa" in df_piese_hist.columns and "Piesa" not in df_piese_hist.columns:
+                df_piese_hist = df_piese_hist.rename(columns={"piesa": "Piesa", "cantitate": "Cantitate", "tip": "Tip"})
+
             piese_catalog = [p['denumire'] for p in PieseRepository.get_all()]
             
             edited_piese_hist = st.data_editor(df_piese_hist, num_rows="dynamic", column_config={
@@ -99,14 +109,14 @@ def render_istoric():
                 with db_cursor() as c:
                     c.execute("""
                         UPDATE reparatii 
-                        SET titlu_lucrare=%s, simptom=%s, defect=%s, solutie=%s, durata_min=%s, 
-                            stare_fin=%s, tip_interventie=%s, tehnician_nume=%s, verificator_nume=%s, 
-                            optimizari=%s, piese_valide=%s 
+                        SET titlu=%s, simptom=%s, defect=%s, solutie=%s, durata=%s, 
+                            stare_finala=%s, tip_interventie=%s, tehnician=%s, verificator=%s, 
+                            optimizari=%s, piese_json=%s 
                         WHERE id=%s
                     """, (
                         titlu_lucrare, simptom, defect, solutie, durata_min, 
                         stare_fin, tip_interventie, tehnician, verificator, 
-                        optimizari, json.dumps(piese_valide_nou), rid
+                        optimizari, json.dumps(piese_valide_nou, ensure_ascii=False), rid
                     ))
                 st.success("Modificările raportului au fost salvate cu succes!")
                 st.rerun()
@@ -117,7 +127,7 @@ def render_istoric():
                 pdf_bytes = genereaza_pdf({
                     "id": rid, "client": r_data.get('firma'), "masina": r_data.get('masina'), 
                     "durata": r_data.get('durata_min', 60), "stare_finala": r_data.get('stare_fin', 'Funcțională'), 
-                    "piese_json": r_data.get('piese_valide', []), 
+                    "piese_json": r_data.get('piese_valide', r_data.get('piese_json', [])), 
                     "titlu": r_data.get('titlu_lucrare', ''), "simptom": r_data.get('simptom', ''), 
                     "defect": r_data.get('defect', ''), "solutie": r_data.get('solutie', ''), 
                     "optimizari": r_data.get('optimizari', ''), "tehnician": r_data.get('tehnician_nume', ''), 
