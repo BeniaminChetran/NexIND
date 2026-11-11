@@ -1,147 +1,140 @@
-#-----------------------
-#-----pdf_service.py----
-#-----------------------
+#----------------------------------
+#-------pdf_service.py-------------
+#----------------------------------
 
-from fpdf import FPDF
-from repositories.setari_repository import SetariRepository
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+import io
+import json
 
-class RaportPDF(FPDF):
-    def header(self):
-        self.set_fill_color(30, 41, 59)
-        self.rect(0, 0, 210, 25, 'F')
-        self.set_font('Helvetica', 'B', 16)
-        self.set_text_color(255, 255, 255)
-        self.set_xy(10, 8)
-        self.cell(0, 10, 'RAPORT DE INTERVENTIE TEHNICA', 0, 0, 'L')
-        self.set_font('Helvetica', '', 10)
-        self.set_xy(140, 8)
-        self.cell(60, 10, 'DOCUMENT OFICIAL', 0, 0, 'R')
-        self.ln(20)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Helvetica', 'I', 8)
-        self.set_text_color(128, 128, 128)
-        self.cell(0, 10, 'Pagina ' + str(self.page_no()) + ' | Raport generat automat', 0, 0, 'C')
-
-def curata_text(text):
-    if not text:
-        return ""
-    inlocuiri = {
-        'ă': 'a', 'Ă': 'A', 'â': 'a', 'Â': 'A',
-        'î': 'i', 'Î': 'I', 'ș': 's', 'Ș': 'S',
-        'ț': 't', 'Ț': 'T', 'ş': 's', 'Ş': 'S', 'ţ': 't', 'Ţ': 'T'
-    }
-    for k, v in inlocuiri.items():
-        text = text.replace(k, v)
-    return text
-
-def genereaza_pdf(data: dict) -> bytes:
-    pdf = RaportPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+def genereaza_pdf(data):
+    """Generare raport PDF pentru intervenții mecanice/standard"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
     
-    PRIMARY = (30, 41, 59)
-    SECONDARY = (71, 85, 105)
-    BG_LIGHT = (241, 245, 249)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor("#1A365D"), alignment=1)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#2D3748"))
+    bold_style = ParagraphStyle('BoldStyle', parent=normal_style, fontName="Helvetica-Bold")
+
+    elements.append(Paragraph(f"<b>RAPORT INTERVENȚIE TEHNICĂ #{data.get('id')}</b>", title_style))
+    elements.append(Spacer(1, 15))
+
+    info_data = [
+        [Paragraph("<b>Client / Firmă:</b>", bold_style), Paragraph(data.get('client', ''), normal_style)],
+        [Paragraph("<b>Mașină / Echipament:</b>", bold_style), Paragraph(data.get('masina', ''), normal_style)],
+        [Paragraph("<b>Titlu Lucrare:</b>", bold_style), Paragraph(data.get('titlu', ''), normal_style)],
+        [Paragraph("<b>Simptom / Defect:</b>", bold_style), Paragraph(data.get('defect', ''), normal_style)],
+        [Paragraph("<b>Soluție Aplicată:</b>", bold_style), Paragraph(data.get('solutie', ''), normal_style)],
+        [Paragraph("<b>Stare Finală:</b>", bold_style), Paragraph(data.get('stare_finala', ''), normal_style)],
+        [Paragraph("<b>Durată Intervenție:</b>", bold_style), Paragraph(f"{data.get('durata', 0)} minute", normal_style)],
+        [Paragraph("<b>Tehnician:</b>", bold_style), Paragraph(data.get('tehnician', ''), normal_style)],
+        [Paragraph("<b>Verificat de:</b>", bold_style), Paragraph(data.get('verificator', ''), normal_style)],
+        [Paragraph("<b>Data:</b>", bold_style), Paragraph(str(data.get('data', ''))[:19], normal_style)]
+    ]
     
-    setari_pdf = SetariRepository.get_setari()
+    t_info = Table(info_data, colWidths=[150, 380])
+    t_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F7FAFC")),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 15))
 
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.set_text_color(*PRIMARY)
-    pdf.cell(0, 5, curata_text(f"{setari_pdf['nume_firma_mea']} | CUI: {setari_pdf['cui_mea']} | Reg. Com.: {setari_pdf['reg_com_mea']}"), 0, 1, 'L')
-    pdf.set_font('Helvetica', '', 8)
-    pdf.set_text_color(*SECONDARY)
-    pdf.cell(0, 4, curata_text(f"Adresă: {setari_pdf['adresa_mea']} | Bancă: {setari_pdf['banca_mea']} | IBAN: {setari_pdf['iban_mea']} | SWIFT: {setari_pdf['swep_mea']}"), 0, 1, 'L')
-    pdf.ln(6)
+    # Piese utilizate
+    elements.append(Paragraph("<b>Piese / Materiale Implicate:</b>", bold_style))
+    elements.append(Spacer(1, 5))
 
-    pdf.set_font('Helvetica', 'B', 11)
-    pdf.set_text_color(*PRIMARY)
-    pdf.cell(100, 7, curata_text(f"Nr. Inregistrare: #{data['id']}"), 0, 0)
-    pdf.cell(90, 7, curata_text(f"Data: {str(data['data'])[:10]}"), 0, 1, 'R')
-    pdf.line(10, pdf.get_y() + 2, 200, pdf.get_y() + 2)
-    pdf.ln(6)
-
-    pdf.set_fill_color(*BG_LIGHT)
-    pdf.rect(10, pdf.get_y(), 190, 32, 'F')
-    pdf.set_xy(12, pdf.get_y() + 2)
-    pdf.set_font('Helvetica', 'B', 10)
-    pdf.set_text_color(*PRIMARY)
-    pdf.cell(90, 6, curata_text("DETALII CLIENT"), 0, 0)
-    pdf.cell(90, 6, curata_text("DETALII ECHIPAMENT"), 0, 1)
-    
-    pdf.set_font('Helvetica', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_x(12)
-    pdf.cell(90, 5, curata_text(f"Client: {data['client'] or 'Nespecificat'}"), 0, 0)
-    pdf.cell(90, 5, curata_text(f"Echipament: {data['masina']} ({data.get('subansamblu','')})"), 0, 1)
-    pdf.set_x(12)
-    pdf.cell(90, 5, curata_text(f"Durata: {data['durata']} minute ({data.get('tip_interventie', 'N/A')})"), 0, 0)
-    pdf.cell(90, 5, curata_text(f"Cod Eroare: {data.get('cod_eroare','N/A')}"), 0, 1)
-    pdf.set_x(12)
-    pdf.cell(90, 5, "", 0, 0)
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.cell(90, 5, curata_text(f"Stare Finala: {data['stare_finala']}"), 0, 1)
-    pdf.ln(8)
-
-    def adauga_sectiune(titlu, continut):
-        pdf.set_font('Helvetica', 'B', 10)
-        pdf.set_text_color(*SECONDARY)
-        pdf.cell(0, 6, curata_text(titlu.upper()), 0, 1)
-        pdf.set_draw_color(*SECONDARY)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(2)
-        pdf.set_font('Helvetica', '', 9)
-        pdf.set_text_color(0, 0, 0)
-        pdf.multi_cell(0, 5, curata_text(continut or "Nespecificat"))
-        pdf.ln(4)
-
-    adauga_sectiune("Titlu Lucrare", data['titlu'])
-    adauga_sectiune("Simptom Initial / Defect", f"{data['simptom']} / {data['defect']}")
-    adauga_sectiune("Solutie / Lucrari Executate", data['solutie'])
-
-    pdf.set_font('Helvetica', 'B', 10)
-    pdf.set_text_color(*SECONDARY)
-    pdf.cell(0, 6, curata_text("TABEL PIESE (UTILIZATE / INLOCUITE / NECESARE / COMANDAT)"), 0, 1)
-    pdf.set_draw_color(*SECONDARY)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(2)
-    
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.cell(100, 6, curata_text("Denumire Piesa"), 1, 0, 'C', fill=True)
-    pdf.cell(40, 6, curata_text("Cantitate"), 1, 0, 'C', fill=True)
-    pdf.cell(50, 6, curata_text("Tip / Status"), 1, 1, 'C', fill=True)
-    
-    pdf.set_font('Helvetica', '', 9)
     piese_list = data.get('piese_json', [])
-    if piese_list:
-        for p in piese_list:
-            pdf.cell(100, 6, curata_text(p.get('piesa', '')), 1, 0, 'L')
-            pdf.cell(40, 6, str(p.get('cantitate', 1)), 1, 0, 'C')
-            pdf.cell(50, 6, curata_text(p.get('tip', '')), 1, 1, 'C')
-    else:
-        pdf.cell(190, 6, curata_text("Nicio piesa inregistrata"), 1, 1, 'C')
-    pdf.ln(4)
+    if isinstance(piese_list, str):
+        try: piese_list = json.loads(piese_list)
+        except: piese_list = []
 
-    if data['optimizari']:
-        adauga_sectiune("Recomandari Tehnice & Siguranta", data['optimizari'])
+    p_table_data = [["Piesă", "Cantitate", "Tip"]]
+    for p in piese_list:
+        p_table_data.append([
+            str(p.get('piesa', p.get('Piesa', ''))),
+            str(p.get('cantitate', p.get('Cantitate', 1))),
+            str(p.get('tip', p.get('Tip', '')))
+        ])
 
-    if pdf.get_y() > 235:
-        pdf.add_page()
+    t_piese = Table(p_table_data, colWidths=[260, 100, 170])
+    t_piese.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
+        ('PADDING', (0,0), (-1,-1), 5),
+    ]))
+    elements.append(t_piese)
 
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(4)
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.set_text_color(*PRIMARY)
-    pdf.cell(95, 5, curata_text("EFECTUAT DE (TEHNICIAN)"), 0, 0, 'C')
-    pdf.cell(95, 5, curata_text("VERIFICAT / RECEPTIONAT DE"), 0, 1, 'C')
-    pdf.set_font('Helvetica', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(95, 5, curata_text(f"Nume: {data['tehnician'] or 'Tehnician Nexus'}"), 0, 0, 'C')
-    pdf.cell(95, 5, curata_text(f"Nume: {data['verificator'] or 'Client'}"), 0, 1, 'C')
-    pdf.ln(8)
-    pdf.cell(95, 5, curata_text("Semnatura: ___________________"), 0, 0, 'C')
-    pdf.cell(95, 5, curata_text("Semnatura: ___________________"), 0, 1, 'C')
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
 
-    output = pdf.output(dest='S') if hasattr(pdf, 'output') else pdf.output()
-    return output if isinstance(output, bytes) else output.encode('latin1', errors='ignore')
+
+def genereaza_pdf_electronic(data):
+    """Generare raport PDF specific pentru reparații electronice / mecatronice"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor("#1A365D"), alignment=1)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#2D3748"))
+    bold_style = ParagraphStyle('BoldStyle', parent=normal_style, fontName="Helvetica-Bold")
+
+    elements.append(Paragraph(f"<b>RAPORT REPARAȚIE ELECTRONICĂ / MECATRONICĂ #{data.get('id')}</b>", title_style))
+    elements.append(Spacer(1, 15))
+
+    info_data = [
+        [Paragraph("<b>Client / Firmă:</b>", bold_style), Paragraph(data.get('client', ''), normal_style)],
+        [Paragraph("<b>Echipament / Mașină:</b>", bold_style), Paragraph(data.get('masina', 'General / Fără mașină'), normal_style)],
+        [Paragraph("<b>Piesă / Subansamblu:</b>", bold_style), Paragraph(data.get('piesa_subansamblu', ''), normal_style)],
+        [Paragraph("<b>Defect Reclamat:</b>", bold_style), Paragraph(data.get('defect_reclamat', ''), normal_style)],
+        [Paragraph("<b>Stare Finală:</b>", bold_style), Paragraph(data.get('stare_finala', ''), normal_style)],
+        [Paragraph("<b>Tehnician:</b>", bold_style), Paragraph(data.get('tehnician', ''), normal_style)],
+        [Paragraph("<b>Verificat de:</b>", bold_style), Paragraph(data.get('verificator', ''), normal_style)],
+        [Paragraph("<b>Data:</b>", bold_style), Paragraph(str(data.get('data', ''))[:19], normal_style)]
+    ]
+    
+    t_info = Table(info_data, colWidths=[150, 380])
+    t_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F7FAFC")),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(t_info)
+    elements.append(Spacer(1, 15))
+
+    elements.append(Paragraph("<b>Componente Electronice / Elemente Înlocuite sau Reparate:</b>", bold_style))
+    elements.append(Spacer(1, 5))
+
+    comp_table_data = [["Componentă / Cod & Parametri", "Stare Componentă"]]
+    for comp in data.get('componente_json', []):
+        comp_table_data.append([
+            str(comp.get('Componenta / Cod / Parametri', '')),
+            str(comp.get('Stare', 'Necesara'))
+        ])
+
+    t_comp = Table(comp_table_data, colWidths=[380, 150])
+    t_comp.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
+        ('PADDING', (0,0), (-1,-1), 5),
+    ]))
+    elements.append(t_comp)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
