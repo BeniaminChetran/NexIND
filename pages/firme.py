@@ -52,14 +52,14 @@ def render_firme():
             with st.expander(f"🏢 {f['nume_firma']}{cui_txt}{pers_txt}"):
                 col_info1, col_info2 = st.columns(2)
                 with col_info1:
-                    st.write(**CUI:** {f.get('cui', 'N/A')})
-                    st.write(**Reg. Com.:** {f.get('reg_com', 'N/A')})
-                    st.write(**Adresă:** {f.get('adresa', 'N/A')})
-                    st.write(**Bancă:** {f.get('banca', 'N/A')})
-                    st.write(**IBAN:** {f.get('cont', 'N/A')})
+                    st.write(f"**CUI:** {f.get('cui', 'N/A')}")
+                    st.write(f"**Reg. Com.:** {f.get('reg_com', 'N/A')}")
+                    st.write(f"**Adresă:** {f.get('adresa', 'N/A')}")
+                    st.write(f"**Bancă:** {f.get('banca', 'N/A')}")
+                    st.write(f"**IBAN:** {f.get('cont', 'N/A')}")
                 with col_info2:
-                    st.write(**Persoană Contact:** {f.get('nume_persoana', 'N/A')})
-                    st.write(**Email:** {f.get('email', 'N/A')})
-                    st.write(**Telefon:** {f.get('telefon', 'N/A')})
+                    st.write(f"**Persoană Contact:** {f.get('nume_persoana', 'N/A')}")
+                    st.write(f"**Email:** {f.get('email', 'N/A')}")
+                    st.write(f"**Telefon:** {f.get('telefon', 'N/A')}")
     else:
         st.info("Nu există firme înregistrate momentan.")
