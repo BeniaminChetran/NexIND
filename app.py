@@ -60,7 +60,7 @@ with tab_dashboard:
     #st.subheader("📈 Dashboard Principal & Indicatori")
     #st.info("Panoul central cu statistici și intervenții.")
     #pass
-    render_dashboard
+    render_dashboard()
 
 with tab_activitati:
     render_activitati()
@@ -88,7 +88,7 @@ with tab_predictii:
     #st.subheader("🔮 Predicții & Health Score Mașini")
     #st.info("Modulul de analiză predictivă.")
     #pass
-    render_predictii
+    render_predictii()
 
 with tab_masuratori:
     render_masuratori()
