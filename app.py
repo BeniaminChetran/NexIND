@@ -52,7 +52,7 @@ st.title("🛠️ NexInd CMMS Dashboard & Predictive")
     tab_istoric, 
     tab_documentatii, 
     tab_predictii, 
-    tab_masuratori
+    tab_masuratori,
     tab_setari
 ) = st.tabs([
     "📈 0. Dashboard",
