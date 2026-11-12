@@ -65,8 +65,8 @@ st.title("🛠️ NexInd CMMS Dashboard & Predictive")
     "📋 7. Istoric",
     "📄 8. Documentații",
     "🔮 9. Predicții",
-    "📊 11. Măsurători"
-    "⚙️ 10. Setări"
+    "📊 10. Măsurători",
+    "⚙️ 11. Setări"
 ])
 
 # 2. Conținutul fiecărui tab legat de funcția corespunzătoare din module
