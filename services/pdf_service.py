@@ -84,15 +84,14 @@ def formateaza_linii_cu_simbol(text):
     if not text:
         return "Nespecificat"
     
-    # Curata si imparte textul dupa linii noi sau după '#'
-     linii_brute = text.split('\n')
+    # Curata si imparte textul dupa linii noi sau dupa '#'
+    linii_brute = text.split('\n')
     linii_finale = []
     
     for l in linii_brute:
         l_curat = l.strip()
         if not l_curat:
             continue
-        # Daca linia contine #, o spargem daca sunt mai multe pe acelasi rand sau curatam
         parti = l_curat.split('#')
         for p in parti:
             p_limpezit = p.strip()
