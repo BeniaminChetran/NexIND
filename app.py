@@ -20,6 +20,7 @@ from pages.piese import render_piese
 from pages.firme import render_firme
 from pages.masuratori import render_masuratori
 from pages.reparatii_electronice import render_reparatii_electronice
+from pages.oferte import render_oferte
 from pages.setari import render_setari
 
 
@@ -40,30 +41,30 @@ st.sidebar.info("Arhitectură Enterprise modularizată.")
 st.title("🛠️ NexInd CMMS Dashboard & Predictive")
 
 # 1. Definitia taburilor în ordinea exactă dorită (10 taburi în total)
-tab_dashboard, tab_activitati, tab_firme, tab_masini, tab_piese, tab_electronice, tab_istoric, tab_documentatii, tab_predictii, tab_masuratori, tab_setari = st.tabs([
+tab_dashboard, tab_activitati,tab_oferte, tab_firme, tab_masini, tab_piese, tab_electronice, tab_istoric, tab_documentatii, tab_predictii, tab_masuratori, tab_setari = st.tabs([
     "📈 0. Dashboard",
     "📝 1. Activități", 
-    "📇 2. Firme",
-    "🏭 3. Mașini", 
-    "🔧 4. Piese",
-    "⚡ 5. Reparații Electronice",
-    "📋 6. Istoric",
-    "📊 7. Documentații / Proceduri",
-    "🔮 8. Predicții",
-    "📏 9. Măsurători",
-    "⚙️ 10. Setări"
+    "💼 2. Oferte Preț"
+    "📇 3. Firme",
+    "🏭 4. Mașini", 
+    "🔧 5. Piese",
+    "⚡ 6. Reparații Electronice",
+    "📋 7. Istoric",
+    "📊 8. Documentații / Proceduri",
+    "🔮 9. Predicții",
+    "📏 10. Măsurători",
+    "⚙️ 11. Setări"
 ])
 
 # 2. Conținutul fiecărui tab legat de funcția corespunzătoare din module
 with tab_dashboard:
-    # Aici afișezi dashboard-ul sau funcția corespunzătoare
-    #st.subheader("📈 Dashboard Principal & Indicatori")
-    #st.info("Panoul central cu statistici și intervenții.")
-    #pass
     render_dashboard()
 
 with tab_activitati:
     render_activitati()
+    
+with tab_oferte:
+    render_oferte()
 
 with tab_firme:
     render_firme()
@@ -84,10 +85,6 @@ with tab_documentatii:
     render_documentatii()
 
 with tab_predictii:
-    # Aici afișezi modulul de predicții
-    #st.subheader("🔮 Predicții & Health Score Mașini")
-    #st.info("Modulul de analiză predictivă.")
-    #pass
     render_predictii()
 
 with tab_masuratori:

@@ -310,3 +310,128 @@ def genereaza_pdf_electronic(data):
               onLaterPages=lambda c, d: draw_header_footer(c, d, "RAPORT REPARAȚIE ELECTRONICĂ"))
     buffer.seek(0)
     return buffer.getvalue()
+    
+   # ------------------------------------------------------------------------------
+# 3. RAPORT OFERTĂ DE PREȚ GENERALĂ
+# ------------------------------------------------------------------------------
+def genereaza_pdf_oferta(data):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=65, bottomMargin=35)
+    elements = []
+    s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
+    setari = get_date_firma_mea()
+
+    # Antet firmă emitentă
+    elements.append(Paragraph(f"<b>{setari.get('nume_firma_mea', '')}</b> | CUI: {setari.get('cui_mea', '')} | Reg. Com.: {setari.get('reg_com_mea', '')}", s_normal))
+    elements.append(Paragraph(f"Adresă: {setari.get('adresa_mea', '')} | Bancă: {setari.get('banca_mea', '')} | IBAN: {setari.get('iban_mea', '')} | SWIFT: {setari.get('swep_mea', '')}", s_small))
+    elements.append(Spacer(1, 8))
+
+    # Număr și Dată
+    t_nr = Table([
+        [Paragraph(f"<b>OFERTĂ DE PREȚ Nr: #{data.get('id', '')}</b>", s_normal),
+         Paragraph(f"<b>Data: {str(data.get('data', ''))[:10]}</b>", ParagraphStyle('Right', parent=s_normal, alignment=2))]
+    ], colWidths=[265, 270])
+    t_nr.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,0), 0.8, colors.HexColor("#CBD5E1")), ('BOTTOMPADDING', (0,0), (-1,0), 4)]))
+    elements.append(t_nr)
+    elements.append(Spacer(1, 8))
+
+    # Casetă Client & Condiții
+    detalii_data = [
+        [Paragraph("<b>BENEFICIAR / CLIENT</b>", s_bold), Paragraph("<b>CONDIȚII COMERCIALE</b>", s_bold)],
+        [Paragraph(f"<b>{data.get('client', '')}</b><br/>CUI: {data.get('cui_client', 'N/A')}<br/>Adresă: {data.get('adresa_client', 'Nespecificată')}", s_normal),
+         Paragraph(f"Valabilitate: {data.get('valabilitate', '30 zile')}<br/>Termeni de plată: {data.get('termeni_plata', 'OP')}", s_normal)]
+    ]
+    t_detalii = Table(detalii_data, colWidths=[265, 270])
+    t_detalii.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F1F5F9")),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(t_detalii)
+    elements.append(Spacer(1, 8))
+
+    # Titlu / Obiectiv Ofertă
+    elements.append(Paragraph(f"<b>Obiect:</b> {data.get('titlu', '')}", s_sec_title))
+    elements.append(Spacer(1, 4))
+
+    # Tabel Articole Ofertă
+    elements.append(Paragraph("DETALIERE ARTICOLE / SERVICII", s_sec_title))
+    elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
+
+    articole = data.get('articole', [])
+    t_rows = [[
+        Paragraph("<b>Nr.</b>", s_bold),
+        Paragraph("<b>Denumire Articol / Serviciu</b>", s_bold),
+        Paragraph("<b>UM</b>", s_bold),
+        Paragraph("<b>Cant.</b>", s_bold),
+        Paragraph("<b>Preț Unitar (RON)</b>", s_bold),
+        Paragraph("<b>Valoare (RON)</b>", s_bold)
+    ]]
+
+    subtotal = 0.0
+    for idx, art in enumerate(articole, 1):
+        cant = float(art.get('Cantitate', 1.0))
+        pret = float(art.get('Pret Unitar (RON)', 0.0))
+        valoare = cant * pret
+        subtotal += valoare
+
+        t_rows.append([
+            Paragraph(str(idx), s_normal),
+            Paragraph(str(art.get('Descriere', '')), s_normal),
+            Paragraph(str(art.get('UM', 'buc')), s_normal),
+            Paragraph(f"{cant:.2f}", s_normal),
+            Paragraph(f"{pret:,.2f}", s_normal),
+            Paragraph(f"{valoare:,.2f}", s_normal)
+        ])
+
+    t_articole = Table(t_rows, colWidths=[30, 245, 45, 45, 80, 90])
+    t_articole.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F8FAFC")),
+        ('PADDING', (0,0), (-1,-1), 4),
+    ]))
+    elements.append(t_articole)
+    elements.append(Spacer(1, 6))
+
+    # Calcule Totale (Valoare, TVA 19%, Total General)
+    tva = subtotal * 0.19
+    total_general = subtotal + tva
+
+    t_totale = Table([
+        ["", Paragraph("<b>Subtotal fără TVA:</b>", s_normal), Paragraph(f"<b>{subtotal:,.2f} RON</b>", s_normal)],
+        ["", Paragraph("<b>TVA (19%):</b>", s_normal), Paragraph(f"<b>{tva:,.2f} RON</b>", s_normal)],
+        ["", Paragraph("<b>TOTAL GENERAL:</b>", s_bold), Paragraph(f"<b>{total_general:,.2f} RON</b>", s_bold)]
+    ], colWidths=[250, 195, 90])
+    t_totale.setStyle(TableStyle([
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 2),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+        ('LINEABOVE', (1,2), (2,2), 1, colors.HexColor("#1E293B")),
+    ]))
+    elements.append(t_totale)
+    elements.append(Spacer(1, 10))
+
+    if data.get('observatii'):
+        elements.append(Paragraph("MENȚIUNI / OBSERVAȚII", s_sec_title))
+        elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
+        elements.append(Paragraph(str(data.get('observatii')).replace("\n", "<br/>"), s_normal))
+        elements.append(Spacer(1, 10))
+
+    # Semnături
+    elements.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
+    semnaturi_data = [
+        [Paragraph("<b>ÎNTOCMIT / EMIS DE</b>", ParagraphStyle('C', parent=s_bold, alignment=1)),
+         Paragraph("<b>ACCEPTAT / BENEFICIAR</b>", ParagraphStyle('C', parent=s_bold, alignment=1))],
+        [Paragraph(f"Reprezentant: {setari.get('nume_firma_mea', '')}", ParagraphStyle('C', parent=s_normal, alignment=1)),
+         Paragraph(f"Reprezentant: {data.get('client', '')}", ParagraphStyle('C', parent=s_normal, alignment=1))],
+        [Spacer(1, 16), Spacer(1, 16)],
+        [Paragraph("Semnătură și ștampilă: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1)),
+         Paragraph("Semnătură și ștampilă: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1))]
+    ]
+    elements.append(Table(semnaturi_data, colWidths=[265, 270]))
+
+    doc.build(elements, onFirstPage=lambda c, d: draw_header_footer(c, d, "OFERTĂ DE PREȚ COMERCIALĂ"),
+              onLaterPages=lambda c, d: draw_header_footer(c, d, "OFERTĂ DE PREȚ COMERCIALĂ"))
+    buffer.seek(0)
+    return buffer.getvalue() 
