@@ -40,20 +40,31 @@ st.sidebar.info("Arhitectură Enterprise modularizată.")
 
 st.title("🛠️ NexInd CMMS Dashboard & Predictive")
 
-# 1. Definitia taburilor în ordinea exactă dorită (10 taburi în total)
-tab_dashboard, tab_activitati,tab_oferte, tab_firme, tab_masini, tab_piese, tab_electronice, tab_istoric, tab_documentatii, tab_predictii, tab_masuratori, tab_setari = st.tabs([
+# 1. Definiția taburilor în ordinea exactă dorită
+(
+    tab_dashboard, 
+    tab_activitati, 
+    tab_oferte, 
+    tab_firme, 
+    tab_masini, 
+    tab_piese, 
+    tab_electronice, 
+    tab_istoric, 
+    tab_documentatii, 
+    tab_predictii, 
+    tab_setari
+) = st.tabs([
     "📈 0. Dashboard",
-    "📝 1. Activități", 
-    "💼 2. Oferte Preț"
-    "📇 3. Firme",
-    "🏭 4. Mașini", 
-    "🔧 5. Piese",
+    "📝 1. Activități",
+    "💼 2. Oferte Preț",
+    "🏢 3. Firme",
+    "⚙️ 4. Mașini",
+    "📦 5. Piese",
     "⚡ 6. Reparații Electronice",
     "📋 7. Istoric",
-    "📊 8. Documentații / Proceduri",
+    "📄 8. Documentații",
     "🔮 9. Predicții",
-    "📏 10. Măsurători",
-    "⚙️ 11. Setări"
+    "⚙️ 10. Setări"
 ])
 
 # 2. Conținutul fiecărui tab legat de funcția corespunzătoare din module
