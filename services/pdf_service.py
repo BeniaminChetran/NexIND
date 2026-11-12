@@ -18,7 +18,6 @@ def inregistreaza_fonturi():
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
     
-    # Căi standard pe Linux (Streamlit Cloud) și Windows
     cai_regular = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "C:\\Windows\\Fonts\\arial.ttf"
@@ -57,7 +56,6 @@ def get_date_firma_mea():
 
 def draw_header_footer(canvas, doc, titlu_document="RAPORT DE INTERVENȚIE TEHNICĂ"):
     canvas.saveState()
-    # Banner Antet
     canvas.setFillColor(colors.HexColor("#1E293B"))
     canvas.rect(0, A4[1] - 55, A4[0], 55, fill=1, stroke=0)
     
@@ -68,7 +66,6 @@ def draw_header_footer(canvas, doc, titlu_document="RAPORT DE INTERVENȚIE TEHNI
     canvas.setFont(FONT_REG, 9)
     canvas.drawRightString(A4[0] - 30, A4[1] - 34, "DOCUMENT OFICIAL")
     
-    # Subsol (Footer)
     canvas.setFont(FONT_REG, 8)
     canvas.setFillColor(colors.grey)
     canvas.drawCentredString(A4[0] / 2.0, 20, f"Pagina {doc.page} | Raport generat automat")
@@ -76,7 +73,7 @@ def draw_header_footer(canvas, doc, titlu_document="RAPORT DE INTERVENȚIE TEHNI
 
 def creeaza_stiluri():
     styles = getSampleStyleSheet()
-    s_normal = ParagraphStyle('SNormal', parent=styles['Normal'], fontName=FONT_REG, fontSize=9, leading=12, textColor=colors.black)
+    s_normal = ParagraphStyle('SNormal', parent=styles['Normal'], fontName=FONT_REG, fontSize=9, leading=13, textColor=colors.black)
     s_bold = ParagraphStyle('SBold', parent=s_normal, fontName=FONT_BOLD)
     s_small = ParagraphStyle('SSmall', parent=s_normal, fontSize=8, textColor=colors.HexColor("#475569"))
     s_sec_title = ParagraphStyle('SSecTitle', parent=s_normal, fontName=FONT_BOLD, fontSize=9.5, textColor=colors.HexColor("#334155"), spaceBefore=8, spaceAfter=2)
@@ -106,12 +103,18 @@ def genereaza_pdf(data):
     elements.append(t_nr)
     elements.append(Spacer(1, 8))
 
+    # Calcul durată în format ore:minute (ex: 02:00)
+    durata_min = int(data.get('durata') or 0)
+    ore = durata_min // 60
+    minute = durata_min % 60
+    durata_formatata = f"{ore:02d}:{minute:02d} (ore:minute)"
+
     # Caseta Detalii Client & Detalii Echipament
     detalii_data = [
         [Paragraph("<b>DETALII CLIENT</b>", s_bold), Paragraph("<b>DETALII ECHIPAMENT</b>", s_bold)],
         [Paragraph(f"Client: {data.get('client') or 'Nespecificat'}", s_normal),
          Paragraph(f"Echipament: {data.get('masina', '')} ({data.get('subansamblu', '')})", s_normal)],
-        [Paragraph(f"Durată: {data.get('durata', 0)} minute ({data.get('tip_interventie', 'reparație')})", s_normal),
+        [Paragraph(f"Durată: <b>{durata_formatata}</b>", s_normal),
          Paragraph(f"Cod Eroare: {data.get('cod_eroare', 'N/A')}", s_normal)],
         ["", Paragraph(f"<b>Stare Finală: {data.get('stare_finala', '')}</b>", s_normal)]
     ]
@@ -132,8 +135,19 @@ def genereaza_pdf(data):
         elements.append(Paragraph(text_formatat, s_normal))
         elements.append(Spacer(1, 4))
 
-    adauga_sectiune("Titlu Lucrare", data.get('titlu'))
-    adauga_sectiune("Simptom Inițial / Defect", f"{data.get('simptom', '')} / {data.get('defect', '')}")
+    # 1. Titlu Lucrare + Tipul intervenției
+    titlu_baza = data.get('titlu') or "Intervenție tehnică"
+    tip_interv = data.get('tip_interventie') or ""
+    titlu_complet = f"{titlu_baza} - {tip_interv}" if tip_interv else titlu_baza
+    adauga_sectiune("Titlu Lucrare", titlu_complet)
+
+    # 2. Simptom Inițial și Defect pe rânduri separate
+    simptom_text = str(data.get('simptom') or "Nespecificat").replace("\n", "<br/>")
+    defect_text = str(data.get('defect') or "Nespecificat").replace("\n", "<br/>")
+    simptom_defect_separat = f"<b>Simptom inițial:</b> {simptom_text}<br/><br/><b>Defect constatat:</b> {defect_text}"
+    adauga_sectiune("Simptom Inițial / Defect", simptom_defect_separat)
+
+    # 3. Soluție
     adauga_sectiune("Soluție / Lucrări Executate", data.get('solutie'))
 
     # Tabel Piese
