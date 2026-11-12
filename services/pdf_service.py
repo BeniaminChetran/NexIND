@@ -79,6 +79,31 @@ def creeaza_stiluri():
     s_sec_title = ParagraphStyle('SSecTitle', parent=s_normal, fontName=FONT_BOLD, fontSize=9.5, textColor=colors.HexColor("#334155"), spaceBefore=8, spaceAfter=2)
     return s_normal, s_bold, s_small, s_sec_title
 
+def formateaza_linii_cu_simbol(text):
+    """Transforma liniile care incep cu # sau sunt despartite in elemente curate pe randuri noi."""
+    if not text:
+        return "Nespecificat"
+    
+    # Curata si imparte textul dupa linii noi sau după '#'
+     linii_brute = text.split('\n')
+    linii_finale = []
+    
+    for l in linii_brute:
+        l_curat = l.strip()
+        if not l_curat:
+            continue
+        # Daca linia contine #, o spargem daca sunt mai multe pe acelasi rand sau curatam
+        parti = l_curat.split('#')
+        for p in parti:
+            p_limpezit = p.strip()
+            if p_limpezit:
+                linii_finale.append(f"• {p_limpezit}")
+                
+    if not linii_finale:
+        return text.replace("\n", "<br/>")
+        
+    return "<br/>".join(linii_finale)
+
 # ------------------------------------------------------------------------------
 # 1. RAPORT INTERVENȚIE TEHNICĂ (STANDARD / MECANIC)
 # ------------------------------------------------------------------------------
@@ -103,7 +128,7 @@ def genereaza_pdf(data):
     elements.append(t_nr)
     elements.append(Spacer(1, 8))
 
-    # Calcul durată în format ore:minute (ex: 02:00)
+    # Calcul durată în format ore:minute
     durata_min = int(data.get('durata') or 0)
     ore = durata_min // 60
     minute = durata_min % 60
@@ -128,10 +153,9 @@ def genereaza_pdf(data):
     elements.append(t_detalii)
     elements.append(Spacer(1, 6))
 
-    def adauga_sectiune(titlu, text):
+    def adauga_sectiune(titlu, text_formatat):
         elements.append(Paragraph(titlu.upper(), s_sec_title))
         elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
-        text_formatat = str(text or "Nespecificat").replace("\n", "<br/>")
         elements.append(Paragraph(text_formatat, s_normal))
         elements.append(Spacer(1, 4))
 
@@ -141,14 +165,16 @@ def genereaza_pdf(data):
     titlu_complet = f"{titlu_baza} - {tip_interv}" if tip_interv else titlu_baza
     adauga_sectiune("Titlu Lucrare", titlu_complet)
 
-    # 2. Simptom Inițial și Defect pe rânduri separate
-    simptom_text = str(data.get('simptom') or "Nespecificat").replace("\n", "<br/>")
-    defect_text = str(data.get('defect') or "Nespecificat").replace("\n", "<br/>")
-    simptom_defect_separat = f"<b>Simptom inițial:</b> {simptom_text}<br/><br/><b>Defect constatat:</b> {defect_text}"
+    # 2. Simptom Inițial și Defect formatate curat pe rânduri cu buline
+    simptom_text = formateaza_linii_cu_simbol(data.get('simptom'))
+    defect_text = formateaza_linii_cu_simbol(data.get('defect'))
+    simptom_defect_separat = f"<b>Simptom inițial:</b><br/>{simptom_text}<br/><br/><b>Defect constatat:</b><br/>{defect_text}"
     adauga_sectiune("Simptom Inițial / Defect", simptom_defect_separat)
 
-    # 3. Soluție
-    adauga_sectiune("Soluție / Lucrări Executate", data.get('solutie'))
+    # 3. Soluție / Lucrări Executate formatat curat
+    solutie_text = formateaza_linii_cu_simbol(data.get('solutie'))
+    solutie_formatata = f"<b>Lucrări executate:</b><br/>{solutie_text}"
+    adauga_sectiune("Soluție / Lucrări Executate", solutie_formatata)
 
     # Tabel Piese
     elements.append(Paragraph("TABEL PIESE (UTILIZATE / ÎNLOCUITE / NECESARE / COMANDAT)", s_sec_title))
@@ -180,7 +206,7 @@ def genereaza_pdf(data):
     elements.append(Spacer(1, 6))
 
     if data.get('optimizari'):
-        adauga_sectiune("Recomandări Tehnice & Siguranță", data.get('optimizari'))
+        adauga_sectiune("Recomandări Tehnice & Siguranță", formateaza_linii_cu_simbol(data.get('optimizari')))
 
     # Semnături
     elements.append(Spacer(1, 14))
@@ -243,7 +269,7 @@ def genereaza_pdf_electronic(data):
 
     elements.append(Paragraph("DEFECT RECLAMAT", s_sec_title))
     elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
-    elements.append(Paragraph(str(data.get('defect_reclamat') or "Nespecificat").replace("\n", "<br/>"), s_normal))
+    elements.append(Paragraph(formateaza_linii_cu_simbol(data.get('defect_reclamat')), s_normal))
     elements.append(Spacer(1, 8))
 
     elements.append(Paragraph("COMPONENTE ELECTRONICE / ELEMENTE ÎNLOCUITE SAU REPARATE", s_sec_title))
