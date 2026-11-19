@@ -1,8 +1,9 @@
 #----------------------------------
-#-------masini.py------------------
+#-------pages/masini.py------------
 #----------------------------------
 
 import streamlit as st
+import pandas as pd
 from datetime import datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
@@ -19,14 +20,16 @@ OPT_SISTEME = [
 CODURI_SISTEME = [s[0] for s in OPT_SISTEME]
 ETICHETE_SISTEME = {s[0]: s[1] for s in OPT_SISTEME}
 
+
 def render_masini():
     st.subheader("🚗 Gestiune Mașini și Echipamente")
-    
+    is_unlocked = st.session_state.get("is_unlocked", False)
+
     firme_db = FirmeRepository.get_all()
     firme_dict = {f['nume_firma']: f['id'] for f in firme_db}
-    
+
     if not firme_dict:
-        st.warning("⚠️ Adăugați mai întâi cel puțin o firmă în tabul 'Firme'.")
+        st.warning("⚠️ Adăugați mai întâi cel puțin o firmă în modulul 'Firme'.")
         return
 
     sel_firma_nume = st.selectbox("Selectează Firma Proprietară", options=list(firme_dict.keys()), key="sel_firma_masini")
@@ -79,61 +82,106 @@ def render_masini():
                         "tipuri_fluide": tipuri_fluide
                     })
                     st.success(f"Mașina '{denumire}' a fost salvată cu succes!")
+                    st.rerun()
                 else:
                     st.error("Te rugăm să completezi cel puțin denumirea mașinii.")
 
     render_form_masina()
     st.markdown("---")
-    
-    @st.fragment
-    def render_lista_masini():
-        st.subheader("📋 Mașini Înregistrate")
-        masini_list = MasiniRepository.get_all()
-        if masini_list:
-            for m in masini_list:
-                nume_f = next((n for n, fid in firme_dict.items() if fid == m.get('firma_id')), "Necunoscută")
-                mid = m.get('id')
-                sist_curente = [s.strip() for s in str(m.get('sisteme_active') or ALL_SISTEME_DEFAULT).split(",") if s.strip() in CODURI_SISTEME]
-                if not sist_curente:
-                    sist_curente = CODURI_SISTEME
-                
-                with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f})"):
-                    with st.form(f"form_mod_masina_{mid}"):
-                        mc1, mc2 = st.columns(2)
-                        with mc1:
-                            m_den = st.text_input("Denumire Mașină", value=m.get('denumire', ''), key=f"m_den_{mid}")
-                            m_tip = st.text_input("Tip Mașină", value=m.get('tip_masina', ''), key=f"m_tip_{mid}")
-                            m_serie = st.text_input("Număr Serie", value=m.get('serie', ''), key=f"m_serie_{mid}")
-                            m_sub = st.text_input("Subansambluri", value=m.get('subansambluri', ''), key=f"m_sub_{mid}")
-                        with mc2:
-                            m_erori = st.text_input("Erori", value=m.get('erori', ''), key=f"m_erori_{mid}")
-                            m_an = st.number_input("An Fabricație", value=int(m.get('an_fabricatie', 2020) or 2020), key=f"m_an_{mid}")
-                            m_tip_int = st.text_input("Tip Întreținere", value=m.get('tip_intretinere', ''), key=f"m_tip_int_{mid}")
-                            m_sist = st.multiselect(
-                                "Sisteme active (Mentenanță Preventivă)",
-                                options=CODURI_SISTEME,
-                                default=sist_curente,
-                                format_func=lambda x: ETICHETE_SISTEME.get(x, x),
-                                key=f"m_sist_{mid}"
-                            )
-                        
-                        m_def = st.text_area("Defecte", value=m.get('defecte', ''), key=f"m_def_{mid}")
-                        
-                        bt_s, bt_d = st.columns(2)
-                        if bt_s.form_submit_button("💾 Salvează Modificările", key=f"m_sav_{mid}"):
-                            MasiniRepository._ensure_sisteme_col()
-                            sist_str = ",".join(m_sist) if m_sist else ALL_SISTEME_DEFAULT
-                            with db_cursor() as c:
-                                c.execute("""
-                                    UPDATE masini SET denumire=%s, tip_masina=%s, serie=%s, subansambluri=%s, erori=%s, an_fabricatie=%s, tip_intretinere=%s, defecte=%s, sisteme_active=%s 
-                                    WHERE id=%s
-                                """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, m_def, sist_str, mid))
-                            st.success("Modificările mașinii au fost salvate!")
-                        if bt_d.form_submit_button("🗑️ Șterge Mașina", key=f"m_del_{mid}"):
-                            with db_cursor() as c:
-                                c.execute("DELETE FROM masini WHERE id=%s", (mid,))
-                            st.success("Mașina a fost ștearsă!")
-        else:
-            st.info("Nu există mașini înregistrate momentan.")
 
-    render_lista_masini()
+    st.subheader("📋 Mașini Înregistrate & Componență Sisteme")
+    masini_list = MasiniRepository.get_all()
+    if masini_list:
+        for m in masini_list:
+            nume_f = next((n for n, fid in firme_dict.items() if fid == m.get('firma_id')), "Necunoscută")
+            mid = m.get('id')
+            sist_curente = [s.strip() for s in str(m.get('sisteme_active') or ALL_SISTEME_DEFAULT).split(",") if s.strip() in CODURI_SISTEME]
+            if not sist_curente:
+                sist_curente = CODURI_SISTEME
+
+            with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f})"):
+                with st.form(f"form_mod_masina_{mid}"):
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        m_den = st.text_input("Denumire Mașină", value=m.get('denumire', ''), key=f"m_den_{mid}")
+                        m_tip = st.text_input("Tip Mașină", value=m.get('tip_masina', ''), key=f"m_tip_{mid}")
+                        m_serie = st.text_input("Număr Serie", value=m.get('serie', ''), key=f"m_serie_{mid}")
+                        m_sub = st.text_input("Subansambluri", value=m.get('subansambluri', ''), key=f"m_sub_{mid}")
+                    with mc2:
+                        m_erori = st.text_input("Erori", value=m.get('erori', ''), key=f"m_erori_{mid}")
+                        m_an = st.number_input("An Fabricație", value=int(m.get('an_fabricatie', 2020) or 2020), key=f"m_an_{mid}")
+                        m_tip_int = st.text_input("Tip Întreținere", value=m.get('tip_intretinere', ''), key=f"m_tip_int_{mid}")
+                        m_sist = st.multiselect(
+                            "Sisteme active (Mentenanță Preventivă)",
+                            options=CODURI_SISTEME,
+                            default=sist_curente,
+                            format_func=lambda x: ETICHETE_SISTEME.get(x, x),
+                            key=f"m_sist_{mid}"
+                        )
+
+                    m_def = st.text_area("Defecte", value=m.get('defecte', ''), key=f"m_def_{mid}")
+
+                    bt_s, bt_d = st.columns(2)
+                    if bt_s.form_submit_button("💾 Salvează Modificările", key=f"m_sav_{mid}"):
+                        MasiniRepository._ensure_sisteme_col()
+                        sist_str = ",".join(m_sist) if m_sist else ALL_SISTEME_DEFAULT
+                        with db_cursor() as c:
+                            c.execute("""
+                                UPDATE masini SET denumire=%s, tip_masina=%s, serie=%s, subansambluri=%s, erori=%s, an_fabricatie=%s, tip_intretinere=%s, defecte=%s, sisteme_active=%s 
+                                WHERE id=%s
+                            """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, m_def, sist_str, mid))
+                        st.success("Modificările mașinii au fost salvate!")
+                        st.rerun()
+                    if bt_d.form_submit_button("🗑️ Șterge Mașina", key=f"m_del_{mid}"):
+                        with db_cursor() as c:
+                            c.execute("DELETE FROM masini WHERE id=%s", (mid,))
+                        st.success("Mașina a fost ștearsă!")
+                        st.rerun()
+
+                # TABEL COMPONENȚĂ SISTEME (Punctele 4, 5, 6)
+                st.markdown("#### 🧩 Tabel Componență Sisteme Utilaj")
+                comp_lista = m.get("componenta_sisteme_json") or []
+                df_comp = pd.DataFrame(comp_lista) if comp_lista else pd.DataFrame(
+                    columns=["Sistem", "Element / Componentă", "Cod / Specificații", "Cantitate", "Observații"]
+                )
+                for col_req in ["Sistem", "Element / Componentă", "Cod / Specificații", "Cantitate", "Observații"]:
+                    if col_req not in df_comp.columns:
+                        df_comp[col_req] = ""
+
+                if is_unlocked:
+                    st.caption("🔓 Mod editare activ: poți adăuga rânduri noi jos (`+`) sau șterge rânduri bifând caseta din stânga și apăsând `Delete`.")
+                    edited_comp = st.data_editor(
+                        df_comp,
+                        num_rows="dynamic",
+                        hide_index=False,
+                        column_config={
+                            "Sistem": st.column_config.SelectboxColumn(
+                                "Sistem",
+                                options=CODURI_SISTEME,
+                                default=sist_curente[0] if sist_curente else "Electric",
+                                required=True
+                            ),
+                            "Element / Componentă": st.column_config.TextColumn("Element / Componentă", required=True, width="medium"),
+                            "Cod / Specificații": st.column_config.TextColumn("Cod / Specificații", width="medium"),
+                            "Cantitate": st.column_config.TextColumn("Cantitate", default="1", width="small"),
+                            "Observații": st.column_config.TextColumn("Observații", width="medium"),
+                        },
+                        key=f"comp_editor_masina_{mid}",
+                        use_container_width=True
+                    )
+                    if st.button("💾 Salvează Componența Sistemelor", key=f"save_comp_masina_{mid}", type="primary"):
+                        clean_records = [
+                            row for row in edited_comp.fillna("").to_dict(orient="records")
+                            if str(row.get("Element / Componentă", "")).strip() != ""
+                        ]
+                        MasiniRepository.update_componenta_sisteme(mid, clean_records)
+                        st.success("✅ Componența sistemelor pentru această mașină a fost salvată!")
+                        st.rerun()
+                else:
+                    st.caption("🔒 Tabel protejat (doar vizualizare). Pentru a adăuga sau scoate elemente, deblochează din **SistemAdmin → Deblocare**.")
+                    if df_comp.empty:
+                        st.info("Nu sunt definite elemente în componența sistemelor acestui utilaj.")
+                    else:
+                        st.dataframe(df_comp, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nu există mașini înregistrate momentan.")

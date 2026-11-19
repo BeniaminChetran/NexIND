@@ -3,6 +3,7 @@
 #------------------------------------------
 
 import json
+import uuid
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
@@ -117,17 +118,37 @@ SECTIONS_MENTENANTA = [
 ]
 
 
-def _build_default_df_for_section(sec: dict, default_status: str = "DA") -> pd.DataFrame:
+def _get_items_pentru_masina(sec: dict, masina_obj: dict | None) -> list:
+    """Returnează lista de verificări individuale ale mașinii pentru secțiunea respectivă (sau cele implicite)."""
+    s_key = sec["key"]
+    if masina_obj:
+        custom_map = masina_obj.get("verificari_custom_json") or {}
+        if isinstance(custom_map, dict) and s_key in custom_map and isinstance(custom_map[s_key], list):
+            return custom_map[s_key]
+    return list(sec["items"])
+
+
+def _build_df_for_section(sec: dict, masina_obj: dict | None = None, default_status: str = "DA") -> pd.DataFrame:
+    items = _get_items_pentru_masina(sec, masina_obj)
     rows = []
-    for it in sec["items"]:
-        obs_init = f"{it['param_hint']}: " if it["param_hint"] else ""
+    for it in items:
+        hint = it.get("param_hint", "")
+        obs_init = f"{hint}: " if hint else ""
         rows.append({
-            "ID": it["id"],
-            "Operațiune": it["spec"],
+            "ID": it.get("id", str(uuid.uuid4())[:8]),
+            "Operațiune": it.get("spec", ""),
             "Conformitate": default_status,
             "Observații / Valori Măsurate": obs_init
         })
     return pd.DataFrame(rows)
+
+
+def _incarca_dfs_pentru_masina(masina_obj: dict | None, default_status: str = "DA"):
+    st.session_state["ment_dfs"] = {
+        sec["key"]: _build_df_for_section(sec, masina_obj, default_status)
+        for sec in SECTIONS_MENTENANTA
+    }
+    st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
 
 
 def _init_sau_reseteaza_ment_draft(tehnician_def: str, default_status: str = "DA"):
@@ -152,11 +173,7 @@ def _init_sau_reseteaza_ment_draft(tehnician_def: str, default_status: str = "DA
         "ultima_masina": "-- Alege mașina --",
         "necesar": {sec["key"]: "" for sec in SECTIONS_MENTENANTA}
     }
-    st.session_state["ment_dfs"] = {
-        sec["key"]: _build_default_df_for_section(sec, default_status)
-        for sec in SECTIONS_MENTENANTA
-    }
-    st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
+    _incarca_dfs_pentru_masina(None, default_status)
 
 
 def _aplica_status_global(status_nou: str):
@@ -172,6 +189,7 @@ def _aplica_status_global(status_nou: str):
 
 def render_mentenanta():
     st.subheader("🛡️ Fișă de Mentenanță Preventivă & Audit Tehnic")
+    is_unlocked = st.session_state.get("is_unlocked", False)
 
     setari = SetariRepository.get_setari()
     tehnician_def = setari.get("tehnician_implicit") or "Tehnician Nexus"
@@ -187,7 +205,6 @@ def render_mentenanta():
 
     draft = st.session_state["ment_draft"]
 
-    # Banner post-salvare
     if st.session_state["ment_salvat"]:
         st.success(f"✅ Fișa de Mentenanță Preventivă #{st.session_state['ment_id_salvat']} a fost salvată și data următoarei revizii pe utilaj a fost actualizată!")
         c_dl1, c_dl2 = st.columns(2)
@@ -218,17 +235,16 @@ def render_mentenanta():
     firme_dict = {f["nume_firma"]: f for f in firme_db}
     opt_firme = ["-- Alege firma --"] + list(firme_dict.keys())
 
-    # Bara de acțiuni rapide (1-Click Audit 4B + Reset)
     top_1, top_2, top_3, top_4 = st.columns([3.2, 1.3, 1.3, 1.2], vertical_alignment="center")
     with top_1:
         st.caption("⚡ **Mod Audit Rapid:** toate punctele pornesc pe **DA**; modifică doar neconformitățile (**NU** / **N/A**) și valorile măsurate.")
     with top_2:
-        if st.button("✅ Setează tot DA", use_container_width=True, help="Marchează toate operațiunile active ca DA"):
+        if st.button("✅ Setează tot DA", use_container_width=True):
             _aplica_status_global("DA")
             st.toast("✅ Toate punctele au fost setate pe DA.")
             st.rerun()
     with top_3:
-        if st.button("⬜ Setează tot N/A", use_container_width=True, help="Marchează toate operațiunile ca N/A"):
+        if st.button("⬜ Setează tot N/A", use_container_width=True):
             _aplica_status_global("N/A")
             st.toast("⬜ Toate punctele au fost setate pe N/A.")
             st.rerun()
@@ -280,8 +296,9 @@ def render_mentenanta():
         draft["ultima_masina"] = sel_masina
         draft["producator_model"] = str(masina_obj.get("tip_masina") or "")
         draft["serie_fabricatie"] = str(masina_obj.get("serie") or "")
+        # Încarcă verificările specifice acestei mașini!
+        _incarca_dfs_pentru_masina(masina_obj, "DA")
 
-    # Filtrare dinamică pe sistemele active ale utilajului (Varianta 4A)
     sisteme_utilaj = [
         s.strip() for s in str(masina_obj.get("sisteme_active") or ALL_SISTEME_DEFAULT).split(",")
         if s.strip()
@@ -337,8 +354,57 @@ def render_mentenanta():
             value=urmatoarea_rev_default
         )
 
+    # TABEL COMPONENȚĂ SISTEM PENTRU UTILAJUL SELECTAT (Punctele 4, 5, 6)
+    with st.expander(f"🧩 Componență Sisteme Utilaj: {sel_masina}", expanded=False):
+        comp_lista = masina_obj.get("componenta_sisteme_json") or []
+        df_comp = pd.DataFrame(comp_lista) if comp_lista else pd.DataFrame(
+            columns=["Sistem", "Element / Componentă", "Cod / Specificații", "Cantitate", "Observații"]
+        )
+        for col_req in ["Sistem", "Element / Componentă", "Cod / Specificații", "Cantitate", "Observații"]:
+            if col_req not in df_comp.columns:
+                df_comp[col_req] = ""
+
+        if is_unlocked:
+            st.caption("🔓 Mod editare activ (deblocat din **SistemAdmin → Deblocare**): poți adăuga sau scoate elemente din componența sistemelor acestei mașini.")
+            edited_comp = st.data_editor(
+                df_comp,
+                num_rows="dynamic",
+                column_config={
+                    "Sistem": st.column_config.SelectboxColumn(
+                        "Sistem",
+                        options=["Electric", "Mecanic", "Hidraulic", "Pneumatic", "Vacuum", "Auxiliare"],
+                        default="Electric",
+                        required=True
+                    ),
+                    "Element / Componentă": st.column_config.TextColumn("Element / Componentă", required=True, width="medium"),
+                    "Cod / Specificații": st.column_config.TextColumn("Cod / Specificații", width="medium"),
+                    "Cantitate": st.column_config.TextColumn("Cantitate", default="1", width="small"),
+                    "Observații": st.column_config.TextColumn("Observații", width="medium"),
+                },
+                key=f"ment_comp_ed_{masina_obj['id']}",
+                use_container_width=True
+            )
+            if st.button("💾 Salvează Componența Sistemelor Utilajului", key=f"ment_save_comp_{masina_obj['id']}"):
+                clean_comp = [
+                    row for row in edited_comp.fillna("").to_dict(orient="records")
+                    if str(row.get("Element / Componentă", "")).strip() != ""
+                ]
+                MasiniRepository.update_componenta_sisteme(masina_obj["id"], clean_comp)
+                st.success("✅ Componența sistemelor a fost salvată pentru acest utilaj!")
+                st.rerun()
+        else:
+            st.caption("🔒 Componență protejată (doar vizualizare). Deblochează din **SistemAdmin → Deblocare** pentru a adăuga/scoate elemente.")
+            if df_comp.empty:
+                st.info("Nu există elemente înregistrate în componența acestui utilaj.")
+            else:
+                st.dataframe(df_comp, hide_index=True, use_container_width=True)
+
     st.markdown("---")
     st.markdown("### 🔍 Verificări Tehnice pe Sisteme")
+    if is_unlocked:
+        st.caption("🔓 **Mod Administrator Deblocat:** În fiecare sistem poți adăuga verificări noi sau elimina verificări specifice acestei mașini.")
+    else:
+        st.caption("🔒 Listele de verificări pe sisteme sunt blocate la editare structură (pentru a adăuga/scoate verificări, mergi la **SistemAdmin → Deblocare**).")
 
     sectiuni_active = [
         sec for sec in SECTIONS_MENTENANTA
@@ -356,7 +422,7 @@ def render_mentenanta():
             edited_sec = st.data_editor(
                 df_sec,
                 hide_index=True,
-                disabled=["ID", "Operațiune"],
+                disabled=["ID"] if is_unlocked else ["ID", "Operațiune"],
                 column_config={
                     "ID": None,
                     "Operațiune": st.column_config.TextColumn("Specificație Operațiune", width="large"),
@@ -375,6 +441,72 @@ def render_mentenanta():
                 use_container_width=True
             )
             st.session_state["ment_dfs"][s_key] = edited_sec
+
+            # PANOU PROTEJAT: Adăugare / Ștergere verificări pentru această mașină (Punctele 3, 5, 6)
+            if is_unlocked:
+                st.markdown("##### 🔐 Administrare verificări pentru acest sistem (individual pe mașină)")
+                c_add1, c_add2, c_add3 = st.columns([3.5, 1.5, 1.2], vertical_alignment="bottom")
+                noua_spec = c_add1.text_input(
+                    "Verificare nouă",
+                    placeholder="Descrierea operațiunii de verificare...",
+                    key=f"inp_new_verif_{masina_obj['id']}_{s_key}"
+                )
+                nou_hint = c_add2.text_input(
+                    "Parametru (opțional)",
+                    placeholder="ex: Presiune (bar)",
+                    key=f"inp_new_hint_{masina_obj['id']}_{s_key}"
+                )
+                if c_add3.button("➕ Adaugă", key=f"btn_add_verif_{masina_obj['id']}_{s_key}", use_container_width=True):
+                    if noua_spec.strip():
+                        items_curente = _get_items_pentru_masina(sec, masina_obj)
+                        new_item = {
+                            "id": f"cust_{uuid.uuid4().hex[:6]}",
+                            "spec": noua_spec.strip(),
+                            "param_hint": nou_hint.strip()
+                        }
+                        items_actualizate = items_curente + [new_item]
+                        custom_map = dict(masina_obj.get("verificari_custom_json") or {})
+                        custom_map[s_key] = items_actualizate
+                        MasiniRepository.update_verificari_custom(masina_obj["id"], custom_map)
+
+                        # Adaugă rândul și în dataframe-ul curent din sesiune
+                        obs_init = f"{nou_hint.strip()}: " if nou_hint.strip() else ""
+                        new_row = pd.DataFrame([{
+                            "ID": new_item["id"],
+                            "Operațiune": new_item["spec"],
+                            "Conformitate": "DA",
+                            "Observații / Valori Măsurate": obs_init
+                        }])
+                        st.session_state["ment_dfs"][s_key] = pd.concat([edited_sec, new_row], ignore_index=True)
+                        st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
+                        st.toast("✅ Verificarea a fost adăugată pentru acest utilaj!")
+                        st.rerun()
+                    else:
+                        st.warning("Introdu descrierea verificării înainte de a apăsa Adaugă.")
+
+                if not edited_sec.empty:
+                    c_del1, c_del2 = st.columns([4.8, 1.4], vertical_alignment="bottom")
+                    opt_del = {
+                        f"{idx+1}. {row['Operațiune'][:85]}": row["ID"]
+                        for idx, row in edited_sec.iterrows()
+                    }
+                    verif_de_sters = c_del1.selectbox(
+                        "Selectează verificare de eliminat din acest sistem",
+                        options=list(opt_del.keys()),
+                        key=f"sel_del_verif_{masina_obj['id']}_{s_key}"
+                    )
+                    if c_del2.button("🗑️ Elimină", key=f"btn_del_verif_{masina_obj['id']}_{s_key}", use_container_width=True):
+                        id_sters = opt_del[verif_de_sters]
+                        items_curente = _get_items_pentru_masina(sec, masina_obj)
+                        items_ramase = [it for it in items_curente if it.get("id") != id_sters]
+                        custom_map = dict(masina_obj.get("verificari_custom_json") or {})
+                        custom_map[s_key] = items_ramase
+                        MasiniRepository.update_verificari_custom(masina_obj["id"], custom_map)
+
+                        st.session_state["ment_dfs"][s_key] = edited_sec[edited_sec["ID"] != id_sters].reset_index(drop=True)
+                        st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
+                        st.toast("🗑️ Verificarea a fost eliminată pentru acest utilaj.")
+                        st.rerun()
 
             draft["necesar"][s_key] = st.text_area(
                 sec["necesar_label"],
