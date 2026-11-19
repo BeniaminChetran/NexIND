@@ -727,10 +727,7 @@ def genereaza_pdf_mentenanta(data):
     elements.append(Paragraph("7. RECOMANDĂRI TEHNICE, AUDIT UPGRADE / IIoT & RECEPȚIE LUCRĂRI", s_sec_title))
     elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
     elements.append(Paragraph(
-        recomandari_iiot.replace("
-", "<br/>") if recomandari_iiot else "Fără recomandări suplimentare.",
-        s_normal
-    ))
+        recomandari_iiot.replace("\n", "<br/>") if recomandari_iiot else "Fără recomandări suplimentare.",s_normal))
     elements.append(Spacer(1, 14))
 
     # Semnături
