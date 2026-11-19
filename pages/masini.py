@@ -127,16 +127,46 @@ def render_masini():
             prag_int = int(m.get("prag_interventii", 20))
             este_noua_cur = bool(m.get("este_masina_noua", False))
             depasit = total_int >= prag_int
+            grila_efectiva = MasiniRepository.determina_grila_efectiva(m)
 
             tag_noua = " | 🆕 Mașină nouă" if este_noua_cur else ""
-            tag_contor = f" | ⚠️ {total_int}/{prag_int} interv. (TRECE LA GRILA URMĂTOARE!)" if depasit else f" | 📊 {total_int}/{prag_int} interv."
+            tag_grila = f" | 💶 {grila_efectiva}"
+            tag_contor = f" | ⚠️ {total_int}/{prag_int} interv. (PRAG DEPĂȘIT)" if depasit else f" | 📊 {total_int}/{prag_int} interv."
 
-            with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f}{tag_noua}{tag_contor})"):
+            with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f}{tag_noua}{tag_grila}{tag_contor})"):
                 if depasit:
-                    st.error(f"🚨 **Prag atins/depășit ({total_int} din {prag_int} intervenții)!** Acest utilaj este eligibil pentru trecerea la **următoarea grilă de tarifare**.")
+                    st.error(f"🚨 **Prag atins/depășit ({total_int} din {prag_int} intervenții)!** Grilă efectivă curentă: **{grila_efectiva}**.")
                 else:
                     ramase = prag_int - total_int
-                    st.info(f"📈 **Contor intervenții:** {total_int} efectuate din pragul de {prag_int} (mai sunt **{ramase}** intervenții până la schimbarea grilei).")
+                    st.info(f"📈 **Contor intervenții:** {total_int} efectuate din pragul de {prag_int} (mai sunt **{ramase}** intervenții până la prag) | Grilă efectivă: **{grila_efectiva}**.")
+
+                # SELECTOR GRILĂ TARIFARE PROTEJAT PRIN PAROLĂ
+                st.markdown("#### 💶 Grilă Tarifare Echipament (Varianta A / Varianta B)")
+                opt_grile_masina = ["AUTO", "Nivel A", "Nivel B"]
+                etichete_grile = {
+                    "AUTO": f"Automat (Nivel A până la {prag_int} interv., apoi Nivel B)",
+                    "Nivel A": "Varianta 1 — Grila Nivel A (Multimarcă)",
+                    "Nivel B": "Varianta 2 — Grila Nivel B (Expertiză CNC / >20h / SLA)"
+                }
+                grila_curenta = m.get("grila_tarifare") if m.get("grila_tarifare") in opt_grile_masina else "AUTO"
+
+                cg1, cg2 = st.columns([3.2, 1.3], vertical_alignment="bottom")
+                grila_aleasa = cg1.selectbox(
+                    f"Mod alocare grilă (Activ acum: {grila_efectiva})",
+                    options=opt_grile_masina,
+                    index=opt_grile_masina.index(grila_curenta),
+                    format_func=lambda x: etichete_grile[x],
+                    disabled=not is_unlocked,
+                    key=f"sel_grila_masina_{mid}",
+                    help="Deblochează din SistemAdmin → Deblocare pentru a trece manual mașina din Varianta A în Varianta B."
+                )
+                if is_unlocked:
+                    if cg2.button("💾 Aplică Grila", key=f"btn_save_grila_{mid}", use_container_width=True):
+                        MasiniRepository.update_grila_tarifare(mid, grila_aleasa)
+                        st.success(f"✅ Grila pentru '{m['denumire']}' a fost setată pe {grila_aleasa}!")
+                        st.rerun()
+                else:
+                    cg2.caption("🔒 Blocat (necesită parolă)")
 
                 with st.form(f"form_mod_masina_{mid}"):
                     mc1, mc2 = st.columns(2)

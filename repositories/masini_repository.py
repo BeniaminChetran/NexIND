@@ -41,6 +41,10 @@ class MasiniRepository(BaseRepository):
                     ALTER TABLE masini
                     ADD COLUMN IF NOT EXISTS offset_interventii INTEGER DEFAULT 0
                 """)
+                c.execute("""
+                    ALTER TABLE masini
+                    ADD COLUMN IF NOT EXISTS grila_tarifare VARCHAR(20) DEFAULT 'AUTO'
+                """)
         except Exception as e:
             logger.debug(f"Verificare coloane masini: {e}")
 
@@ -68,6 +72,7 @@ class MasiniRepository(BaseRepository):
                    COALESCE(m.este_masina_noua, FALSE) AS este_masina_noua,
                    COALESCE(m.prag_interventii, 20) AS prag_interventii,
                    COALESCE(m.offset_interventii, 0) AS offset_interventii,
+                   COALESCE(NULLIF(TRIM(m.grila_tarifare), ''), 'AUTO') AS grila_tarifare,
                    (
                        COALESCE((SELECT COUNT(*) FROM reparatii r WHERE r.masina = m.denumire AND (f.nume_firma IS NULL OR r.firma = f.nume_firma)), 0) +
                        COALESCE((SELECT COUNT(*) FROM mentenanta_preventiva mp WHERE mp.masina_id = m.id), 0) +
@@ -98,6 +103,7 @@ class MasiniRepository(BaseRepository):
                    COALESCE(m.este_masina_noua, FALSE) AS este_masina_noua,
                    COALESCE(m.prag_interventii, 20) AS prag_interventii,
                    COALESCE(m.offset_interventii, 0) AS offset_interventii,
+                   COALESCE(NULLIF(TRIM(m.grila_tarifare), ''), 'AUTO') AS grila_tarifare,
                    (
                        COALESCE((SELECT COUNT(*) FROM reparatii r WHERE r.masina = m.denumire AND r.firma = f.nume_firma), 0) +
                        COALESCE((SELECT COUNT(*) FROM mentenanta_preventiva mp WHERE mp.masina_id = m.id), 0) +
@@ -116,6 +122,25 @@ class MasiniRepository(BaseRepository):
             r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))
             r["prag_interventii"] = int(r.get("prag_interventii") or 20)
         return rows
+
+    @classmethod
+    def update_grila_tarifare(cls, masina_id: int, grila_noua: str):
+        cls._ensure_sisteme_col()
+        with db_cursor() as c:
+            c.execute(
+                "UPDATE masini SET grila_tarifare = %s WHERE id = %s",
+                (grila_noua, masina_id)
+            )
+        logger.info(f"Grila tarifară pentru mașina #{masina_id} a fost schimbată în {grila_noua}")
+
+    @staticmethod
+    def determina_grila_efectiva(masina_obj: dict) -> str:
+        mod = str(masina_obj.get("grila_tarifare") or "AUTO").strip()
+        if mod in ("Nivel A", "Nivel B"):
+            return mod
+        total_int = int(masina_obj.get("total_interventii", 0))
+        prag_int = int(masina_obj.get("prag_interventii", 20))
+        return "Nivel B" if total_int >= prag_int else "Nivel A"
 
     @classmethod
     def update_verificari_custom(cls, masina_id: int, verificari_dict: dict):
@@ -146,9 +171,9 @@ class MasiniRepository(BaseRepository):
                 defecte, remediu, piese_necesare, piese_inlocuite, tipuri_fluide,
                 data_intretinere, tip_intretinere, sisteme_active,
                 verificari_custom_json, componenta_sisteme_json,
-                este_masina_noua, prag_interventii, offset_interventii
+                este_masina_noua, prag_interventii, offset_interventii, grila_tarifare
             ) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
         """
         params = (
             data['firma_id'], data['denumire'], data.get('tip_masina'),
@@ -164,6 +189,7 @@ class MasiniRepository(BaseRepository):
             bool(data.get('este_masina_noua', False)),
             int(data.get('prag_interventii', 20) or 20),
             int(data.get('offset_interventii', 0) or 0),
+            data.get('grila_tarifare') or 'AUTO',
         )
         cls().execute(query, params)
         logger.info(f"Mașină adăugată: {data['denumire']}")
