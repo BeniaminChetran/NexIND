@@ -29,8 +29,20 @@ class MasiniRepository(BaseRepository):
                     ALTER TABLE masini
                     ADD COLUMN IF NOT EXISTS componenta_sisteme_json JSONB DEFAULT '[]'::jsonb
                 """)
+                c.execute("""
+                    ALTER TABLE masini
+                    ADD COLUMN IF NOT EXISTS este_masina_noua BOOLEAN DEFAULT FALSE
+                """)
+                c.execute("""
+                    ALTER TABLE masini
+                    ADD COLUMN IF NOT EXISTS prag_interventii INTEGER DEFAULT 20
+                """)
+                c.execute("""
+                    ALTER TABLE masini
+                    ADD COLUMN IF NOT EXISTS offset_interventii INTEGER DEFAULT 0
+                """)
         except Exception as e:
-            logger.debug(f"Verificare coloane sisteme/componentă masini: {e}")
+            logger.debug(f"Verificare coloane masini: {e}")
 
     @staticmethod
     def _parse_json(val, default):
@@ -47,18 +59,31 @@ class MasiniRepository(BaseRepository):
     def get_all(cls):
         cls._ensure_sisteme_col()
         query = """
-            SELECT id, firma_id, denumire, tip_masina, serie, an_fabricatie, subansambluri, erori,
-                   defecte, remediu, piese_necesare, piese_inlocuite, tipuri_fluide, data_intretinere, tip_intretinere,
-                   COALESCE(NULLIF(TRIM(sisteme_active), ''), %s) AS sisteme_active,
-                   COALESCE(verificari_custom_json, '{}'::jsonb) AS verificari_custom_json,
-                   COALESCE(componenta_sisteme_json, '[]'::jsonb) AS componenta_sisteme_json
-            FROM masini 
-            ORDER BY denumire
+            SELECT m.id, m.firma_id, m.denumire, m.tip_masina, m.serie, m.an_fabricatie,
+                   m.subansambluri, m.erori, m.defecte, m.remediu, m.piese_necesare,
+                   m.piese_inlocuite, m.tipuri_fluide, m.data_intretinere, m.tip_intretinere,
+                   COALESCE(NULLIF(TRIM(m.sisteme_active), ''), %s) AS sisteme_active,
+                   COALESCE(m.verificari_custom_json, '{}'::jsonb) AS verificari_custom_json,
+                   COALESCE(m.componenta_sisteme_json, '[]'::jsonb) AS componenta_sisteme_json,
+                   COALESCE(m.este_masina_noua, FALSE) AS este_masina_noua,
+                   COALESCE(m.prag_interventii, 20) AS prag_interventii,
+                   COALESCE(m.offset_interventii, 0) AS offset_interventii,
+                   (
+                       COALESCE((SELECT COUNT(*) FROM reparatii r WHERE r.masina = m.denumire AND (f.nume_firma IS NULL OR r.firma = f.nume_firma)), 0) +
+                       COALESCE((SELECT COUNT(*) FROM mentenanta_preventiva mp WHERE mp.masina_id = m.id), 0) +
+                       COALESCE((SELECT COUNT(*) FROM reparatii_electronice re WHERE re.masina_id = m.id), 0) +
+                       COALESCE(m.offset_interventii, 0)
+                   ) AS total_interventii
+            FROM masini m
+            LEFT JOIN firme f ON m.firma_id = f.id
+            ORDER BY m.denumire
         """
         rows = cls().fetch_all(query, (ALL_SISTEME_DEFAULT,))
         for r in rows:
             r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})
             r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])
+            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))
+            r["prag_interventii"] = int(r.get("prag_interventii") or 20)
         return rows
 
     @classmethod
@@ -69,7 +94,16 @@ class MasiniRepository(BaseRepository):
                    m.data_intretinere, m.tip_intretinere, m.tipuri_fluide,
                    COALESCE(NULLIF(TRIM(m.sisteme_active), ''), %s) AS sisteme_active,
                    COALESCE(m.verificari_custom_json, '{}'::jsonb) AS verificari_custom_json,
-                   COALESCE(m.componenta_sisteme_json, '[]'::jsonb) AS componenta_sisteme_json
+                   COALESCE(m.componenta_sisteme_json, '[]'::jsonb) AS componenta_sisteme_json,
+                   COALESCE(m.este_masina_noua, FALSE) AS este_masina_noua,
+                   COALESCE(m.prag_interventii, 20) AS prag_interventii,
+                   COALESCE(m.offset_interventii, 0) AS offset_interventii,
+                   (
+                       COALESCE((SELECT COUNT(*) FROM reparatii r WHERE r.masina = m.denumire AND r.firma = f.nume_firma), 0) +
+                       COALESCE((SELECT COUNT(*) FROM mentenanta_preventiva mp WHERE mp.masina_id = m.id), 0) +
+                       COALESCE((SELECT COUNT(*) FROM reparatii_electronice re WHERE re.masina_id = m.id), 0) +
+                       COALESCE(m.offset_interventii, 0)
+                   ) AS total_interventii
             FROM masini m
             JOIN firme f ON m.firma_id = f.id
             WHERE f.id = %s 
@@ -79,6 +113,8 @@ class MasiniRepository(BaseRepository):
         for r in rows:
             r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})
             r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])
+            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))
+            r["prag_interventii"] = int(r.get("prag_interventii") or 20)
         return rows
 
     @classmethod
@@ -105,8 +141,14 @@ class MasiniRepository(BaseRepository):
     def insert(cls, data: dict):
         cls._ensure_sisteme_col()
         query = """
-            INSERT INTO masini (firma_id, denumire, tip_masina, serie, an_fabricatie, subansambluri, erori, defecte, remediu, piese_necesare, piese_inlocuite, tipuri_fluide, data_intretinere, tip_intretinere, sisteme_active, verificari_custom_json, componenta_sisteme_json) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            INSERT INTO masini (
+                firma_id, denumire, tip_masina, serie, an_fabricatie, subansambluri, erori,
+                defecte, remediu, piese_necesare, piese_inlocuite, tipuri_fluide,
+                data_intretinere, tip_intretinere, sisteme_active,
+                verificari_custom_json, componenta_sisteme_json,
+                este_masina_noua, prag_interventii, offset_interventii
+            ) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
         """
         params = (
             data['firma_id'], data['denumire'], data.get('tip_masina'),
@@ -119,6 +161,9 @@ class MasiniRepository(BaseRepository):
             data.get('sisteme_active') or ALL_SISTEME_DEFAULT,
             json.dumps(data.get('verificari_custom_json') or {}, ensure_ascii=False),
             json.dumps(data.get('componenta_sisteme_json') or [], ensure_ascii=False),
+            bool(data.get('este_masina_noua', False)),
+            int(data.get('prag_interventii', 20) or 20),
+            int(data.get('offset_interventii', 0) or 0),
         )
         cls().execute(query, params)
         logger.info(f"Mașină adăugată: {data['denumire']}")

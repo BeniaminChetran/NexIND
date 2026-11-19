@@ -32,6 +32,19 @@ def render_masini():
         st.warning("⚠️ Adăugați mai întâi cel puțin o firmă în modulul 'Firme'.")
         return
 
+    # Banner global dacă există mașini care au atins/depășit pragul de intervenții
+    masini_list = MasiniRepository.get_all()
+    masini_prag_depasit = [
+        m for m in masini_list
+        if int(m.get("total_interventii", 0)) >= int(m.get("prag_interventii", 20))
+    ]
+    if masini_prag_depasit:
+        nume_alert = ", ".join(
+            f"{m['denumire']} ({m['total_interventii']}/{m['prag_interventii']})"
+            for m in masini_prag_depasit
+        )
+        st.warning(f"🔔 **Atenție Grilă Tarifare:** Următoarele utilaje au atins sau depășit pragul de intervenții și pot trece la următoarea grilă de tarifare: **{nume_alert}**")
+
     sel_firma_nume = st.selectbox("Selectează Firma Proprietară", options=list(firme_dict.keys()), key="sel_firma_masini")
     firma_id = firme_dict[sel_firma_nume]
 
@@ -45,6 +58,16 @@ def render_masini():
                 tip_masina = st.text_input("Tip Mașină")
                 nr_serie = st.text_input("Număr Serie")
                 an_fabricatie = st.number_input("An Fabricație", value=2020, min_value=1950, max_value=2030, step=1)
+                este_noua = st.checkbox("🆕 Mașină nouă (monitorizare prag intervenții pentru grila de tarifare)", value=True)
+                prag_init = st.number_input(
+                    "Prag intervenții (standard 20)",
+                    value=20,
+                    min_value=1,
+                    max_value=500,
+                    step=1,
+                    disabled=not is_unlocked,
+                    help="Valoarea implicită este 20. Deblochează din SistemAdmin → Deblocare pentru a o modifica."
+                )
                 defecte = st.text_area("Defecte (Memo)")
                 reparatii = st.text_area("Remediații aferente (Memo)")
                 piese_necesare = st.text_area("Piese Necesare")
@@ -70,6 +93,8 @@ def render_masini():
                         "tip_masina": tip_masina,
                         "serie": nr_serie,
                         "an_fabricatie": an_fabricatie,
+                        "este_masina_noua": este_noua,
+                        "prag_interventii": int(prag_init) if is_unlocked else 20,
                         "subansambluri": subansambluri,
                         "erori": erori,
                         "data_intretinere": data_intretinere.strftime("%Y-%m-%d"),
@@ -90,7 +115,6 @@ def render_masini():
     st.markdown("---")
 
     st.subheader("📋 Mașini Înregistrate & Componență Sisteme")
-    masini_list = MasiniRepository.get_all()
     if masini_list:
         for m in masini_list:
             nume_f = next((n for n, fid in firme_dict.items() if fid == m.get('firma_id')), "Necunoscută")
@@ -99,7 +123,21 @@ def render_masini():
             if not sist_curente:
                 sist_curente = CODURI_SISTEME
 
-            with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f})"):
+            total_int = int(m.get("total_interventii", 0))
+            prag_int = int(m.get("prag_interventii", 20))
+            este_noua_cur = bool(m.get("este_masina_noua", False))
+            depasit = total_int >= prag_int
+
+            tag_noua = " | 🆕 Mașină nouă" if este_noua_cur else ""
+            tag_contor = f" | ⚠️ {total_int}/{prag_int} interv. (TRECE LA GRILA URMĂTOARE!)" if depasit else f" | 📊 {total_int}/{prag_int} interv."
+
+            with st.expander(f"⚙️ {m['denumire']} (Firma: {nume_f}{tag_noua}{tag_contor})"):
+                if depasit:
+                    st.error(f"🚨 **Prag atins/depășit ({total_int} din {prag_int} intervenții)!** Acest utilaj este eligibil pentru trecerea la **următoarea grilă de tarifare**.")
+                else:
+                    ramase = prag_int - total_int
+                    st.info(f"📈 **Contor intervenții:** {total_int} efectuate din pragul de {prag_int} (mai sunt **{ramase}** intervenții până la schimbarea grilei).")
+
                 with st.form(f"form_mod_masina_{mid}"):
                     mc1, mc2 = st.columns(2)
                     with mc1:
@@ -107,6 +145,7 @@ def render_masini():
                         m_tip = st.text_input("Tip Mașină", value=m.get('tip_masina', ''), key=f"m_tip_{mid}")
                         m_serie = st.text_input("Număr Serie", value=m.get('serie', ''), key=f"m_serie_{mid}")
                         m_sub = st.text_input("Subansambluri", value=m.get('subansambluri', ''), key=f"m_sub_{mid}")
+                        m_noua = st.checkbox("🆕 Mașină nouă", value=este_noua_cur, key=f"m_noua_{mid}")
                     with mc2:
                         m_erori = st.text_input("Erori", value=m.get('erori', ''), key=f"m_erori_{mid}")
                         m_an = st.number_input("An Fabricație", value=int(m.get('an_fabricatie', 2020) or 2020), key=f"m_an_{mid}")
@@ -118,6 +157,16 @@ def render_masini():
                             format_func=lambda x: ETICHETE_SISTEME.get(x, x),
                             key=f"m_sist_{mid}"
                         )
+                        m_prag = st.number_input(
+                            "Prag intervenții (protejat prin parolă)",
+                            value=prag_int,
+                            min_value=1,
+                            max_value=500,
+                            step=1,
+                            disabled=not is_unlocked,
+                            key=f"m_prag_{mid}",
+                            help="Deblochează din SistemAdmin → Deblocare pentru a modifica pragul."
+                        )
 
                     m_def = st.text_area("Defecte", value=m.get('defecte', ''), key=f"m_def_{mid}")
 
@@ -125,11 +174,15 @@ def render_masini():
                     if bt_s.form_submit_button("💾 Salvează Modificările", key=f"m_sav_{mid}"):
                         MasiniRepository._ensure_sisteme_col()
                         sist_str = ",".join(m_sist) if m_sist else ALL_SISTEME_DEFAULT
+                        prag_final = int(m_prag) if is_unlocked else prag_int
                         with db_cursor() as c:
                             c.execute("""
-                                UPDATE masini SET denumire=%s, tip_masina=%s, serie=%s, subansambluri=%s, erori=%s, an_fabricatie=%s, tip_intretinere=%s, defecte=%s, sisteme_active=%s 
+                                UPDATE masini
+                                SET denumire=%s, tip_masina=%s, serie=%s, subansambluri=%s, erori=%s,
+                                    an_fabricatie=%s, tip_intretinere=%s, defecte=%s, sisteme_active=%s,
+                                    este_masina_noua=%s, prag_interventii=%s
                                 WHERE id=%s
-                            """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, m_def, sist_str, mid))
+                            """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, m_def, sist_str, m_noua, prag_final, mid))
                         st.success("Modificările mașinii au fost salvate!")
                         st.rerun()
                     if bt_d.form_submit_button("🗑️ Șterge Mașina", key=f"m_del_{mid}"):
@@ -138,7 +191,7 @@ def render_masini():
                         st.success("Mașina a fost ștearsă!")
                         st.rerun()
 
-                # TABEL COMPONENȚĂ SISTEME (Punctele 4, 5, 6)
+                # TABEL COMPONENȚĂ SISTEME (Protejat prin parolă)
                 st.markdown("#### 🧩 Tabel Componență Sisteme Utilaj")
                 comp_lista = m.get("componenta_sisteme_json") or []
                 df_comp = pd.DataFrame(comp_lista) if comp_lista else pd.DataFrame(

@@ -292,12 +292,24 @@ def render_mentenanta():
         return
 
     masina_obj = masini_dict[sel_masina]
+    total_int_m = int(masina_obj.get("total_interventii", 0))
+    prag_int_m = int(masina_obj.get("prag_interventii", 20))
+
     if draft.get("ultima_masina") != sel_masina:
         draft["ultima_masina"] = sel_masina
         draft["producator_model"] = str(masina_obj.get("tip_masina") or "")
         draft["serie_fabricatie"] = str(masina_obj.get("serie") or "")
+        if total_int_m >= prag_int_m:
+            draft["nivel_grila"] = "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
+        else:
+            draft["nivel_grila"] = "Nivel A – Multimarcă (<20h)"
         # Încarcă verificările specifice acestei mașini!
         _incarca_dfs_pentru_masina(masina_obj, "DA")
+
+    if total_int_m >= prag_int_m:
+        st.warning(f"🔔 **Atenție Grilă Tarifare:** Utilajul **{sel_masina}** a atins/depășit pragul (**{total_int_m} / {prag_int_m}** intervenții)! Se recomandă trecerea la următoarea grilă de tarifare (**Nivel B**).")
+    else:
+        st.info(f"📊 **Contor intervenții ({sel_masina}):** {total_int_m} / {prag_int_m} efectuate (mai sunt **{prag_int_m - total_int_m}** până la următoarea grilă).")
 
     sisteme_utilaj = [
         s.strip() for s in str(masina_obj.get("sisteme_active") or ALL_SISTEME_DEFAULT).split(",")
