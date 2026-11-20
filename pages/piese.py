@@ -270,7 +270,7 @@ def render_piese():
     ])
 
     # ==================================================================
-    # TAB 1: CATALOG PIESE DE SCHIMB (FRAGMENT IZOLAT — FĂRĂ RERUN GLOBAL)
+    # TAB 1: CATALOG PIESE DE SCHIMB
     # ==================================================================
     @st.fragment
     def _fragment_catalog_piese():
@@ -282,7 +282,7 @@ def render_piese():
         )
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
-            with st.form("form_adauga_piesa", clear_on_submit=True):
+            with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
                     denumire = st.text_input("Denumire Piesă *")
@@ -345,7 +345,7 @@ def render_piese():
                 key="termen_cautare_piese"
             ).strip().lower()
         with c_search2:
-            if st.button("🧹 Resetează", key="btn_reset_cautare_piese", use_container_width=True):
+            if st.button("🧹 Resetează", key="btn_reset_cautare_piese", width="stretch"):
                 st.session_state["termen_cautare_piese"] = ""
 
         piese_baza = PieseRepository.get_filtrate(sel_m) or []
@@ -466,7 +466,7 @@ def render_piese():
             return
 
         with st.expander("➕ Adaugă Tarif Nou în Grila Nivel A / Nivel B", expanded=False):
-            with st.form("form_add_tarif_piese_tab", clear_on_submit=True):
+            with st.form("form_add_tarif_unic_v3", clear_on_submit=True):
                 ct1, ct2, ct3, ct4 = st.columns([3, 1.3, 1.4, 1.4], vertical_alignment="bottom")
                 with ct1:
                     desc_t_nou = st.text_input("Descriere serviciu / activitate *", placeholder="ex: Manoperă intervenție CNC / Ora de transport")
@@ -482,8 +482,7 @@ def render_piese():
                         st.error("⚠️ Introduceți descrierea serviciului / activității!")
                     else:
                         _insert_tarif_safe(desc_t_nou.strip(), pret_t_nou, um_t_nou, nivel_t_nou)
-                        st.toast(f"✅ Tarif adăugat: {desc_t_nou.strip()} [{nivel_t_nou}]")
-                        st.rerun(scope="fragment")
+                        st.success(f"✅ Tarif adăugat: **{desc_t_nou.strip()}** [{nivel_t_nou}]")
 
         tarife_all = _get_tarife_all_safe()
         nr_a = sum(1 for t in tarife_all if t.get("nivel_grila") == "Nivel A")
@@ -546,7 +545,7 @@ def render_piese():
         edited_tarife = st.data_editor(
             df_tarife_init,
             key=editor_key,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             num_rows="fixed",
             column_config={
@@ -600,142 +599,6 @@ def render_piese():
 
             if editor_key in st.session_state:
                 del st.session_state[editor_key]
-
-            if nr_modificate == 0 and nr_sterse == 0:
-                st.info("ℹ️ Nu există modificări nesalvate în tabel.")
-            else:
-                st.toast(f"✅ Salvare completă! {nr_modificate} tarife actualizate, {nr_sterse} șterse.")
-                st.rerun(scope="fragment")
-        st.markdown("##### 💶 Tarife Standard pentru Servicii & Activități (Grila Nivel A & Grila Nivel B)")
-        st.caption(
-            "Editează direct în tabel denumirea, nivelul (**Nivel A** / **Nivel B**), prețul și **unitatea de măsură (UM)** "
-            "pentru oricâte rânduri dorești, apoi apasă **un singur buton `💾 Salvează Toate Modificările`**."
-        )
-
-        if not acces_permis:
-            st.warning("🔒 Tarifele standard sunt protejate cu parolă. Mergi la **SistemAdmin → 🔑 Deblocare** pentru a le vizualiza sau modifica.")
-            return
-
-        with st.expander("➕ Adaugă Tarif Nou în Grila Nivel A / Nivel B", expanded=False):
-            with st.form("form_add_tarif_piese_tab", clear_on_submit=True):
-                ct1, ct2, ct3, ct4 = st.columns([3, 1.3, 1.4, 1.4], vertical_alignment="bottom")
-                with ct1:
-                    desc_t_nou = st.text_input("Descriere serviciu / activitate *", placeholder="ex: Manoperă intervenție CNC / Ora de transport")
-                with ct2:
-                    nivel_t_nou = st.selectbox("Nivel Grilă", options=OPT_NIVELE_GRILA, index=0)
-                with ct3:
-                    pret_t_nou = st.number_input("Preț unitar", min_value=0.0, step=5.0, format="%.2f")
-                with ct4:
-                    um_t_nou = st.selectbox("Monedă / UM", options=OPT_MONEDA_UM_TARIFE, index=0)
-
-                if st.form_submit_button("💾 Adaugă Tarif", type="primary"):
-                    if not desc_t_nou.strip():
-                        st.error("⚠️ Introduceți descrierea serviciului / activității!")
-                    else:
-                        _insert_tarif_safe(desc_t_nou.strip(), pret_t_nou, um_t_nou, nivel_t_nou)
-                        st.toast(f"✅ Tarif adăugat: {desc_t_nou.strip()} [{nivel_t_nou}]")
-
-        tarife_all = _get_tarife_all_safe()
-        nr_a = sum(1 for t in tarife_all if t.get("nivel_grila") == "Nivel A")
-        nr_b = sum(1 for t in tarife_all if t.get("nivel_grila") == "Nivel B")
-
-        c_ft1, c_ft2 = st.columns([2.2, 2], vertical_alignment="bottom")
-        with c_ft1:
-            filtru_grila_t = st.selectbox(
-                "Filtrează după nivel grilă:",
-                options=["Toate grilele", "Nivel A", "Nivel B"],
-                format_func=lambda x: (
-                    f"Toate grilele ({len(tarife_all)})" if x == "Toate grilele"
-                    else (f"Nivel A ({nr_a})" if x == "Nivel A" else f"Nivel B ({nr_b})")
-                ),
-                key="piese_tab_filtru_grila_sel"
-            )
-        with c_ft2:
-            filtru_lipsa_t = st.checkbox(
-                "⚠️ Arată doar tarifele fără preț (0.00) sau fără UM",
-                value=False,
-                key="piese_tab_tarife_incomplete"
-            )
-
-        tarife_afis = []
-        for t in tarife_all:
-            niv = t.get("nivel_grila", "Nivel A")
-            if filtru_grila_t == "Nivel A" and niv != "Nivel A":
-                continue
-            if filtru_grila_t == "Nivel B" and niv != "Nivel B":
-                continue
-            pret_t = float(t.get("pret") or 0.0)
-            um_t = str(t.get("moneda_um") or "").strip()
-            if filtru_lipsa_t and not (pret_t <= 0 or not um_t or "/" not in um_t):
-                continue
-            tarife_afis.append(t)
-
-        if not tarife_afis:
-            st.info("Nu există tarife care să corespundă filtrelor selectate.")
-            return
-
-        toate_um = list(OPT_MONEDA_UM_TARIFE)
-        for t in tarife_afis:
-            u = str(t.get("moneda_um") or "").strip()
-            if u and u not in toate_um:
-                toate_um.append(u)
-
-        df_tarife_init = pd.DataFrame([
-            {
-                "id": int(t["id"]),
-                "Descriere Serviciu / Activitate": str(t.get("descriere") or ""),
-                "Nivel Grilă": t.get("nivel_grila", "Nivel A"),
-                "Preț Unitar": float(t.get("pret") or 0.0),
-                "Monedă / UM": str(t.get("moneda_um") or "EUR/ora"),
-                "Șterge": False,
-            }
-            for t in tarife_afis
-        ])
-
-        edited_tarife = st.data_editor(
-            df_tarife_init,
-            key=f"editor_tarife_grile_{filtru_grila_t}_{filtru_lipsa_t}",
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                "id": None,
-                "Descriere Serviciu / Activitate": st.column_config.TextColumn("Descriere Serviciu / Activitate", width="large", required=True),
-                "Nivel Grilă": st.column_config.SelectboxColumn("Nivel Grilă", options=OPT_NIVELE_GRILA, width="small", required=True),
-                "Preț Unitar": st.column_config.NumberColumn("Preț Unitar", min_value=0.0, step=1.0, format="%.2f", width="small", required=True),
-                "Monedă / UM": st.column_config.SelectboxColumn("Monedă / UM", options=toate_um, width="medium", required=True),
-                "Șterge": st.column_config.CheckboxColumn("🗑️ Șterge", default=False, width="small"),
-            }
-        )
-
-        if st.button("💾 Salvează Toate Modificările (Tarife)", type="primary", key="btn_bulk_save_tarife"):
-            nr_modificate = 0
-            nr_sterse = 0
-            orig_map = {int(r["id"]): r for _, r in df_tarife_init.iterrows()}
-
-            for _, row in edited_tarife.iterrows():
-                tid = int(row["id"])
-                if bool(row.get("Șterge", False)):
-                    _delete_tarif_safe(tid)
-                    nr_sterse += 1
-                    continue
-
-                orig = orig_map.get(tid)
-                nou_desc = str(row["Descriere Serviciu / Activitate"] or "").strip()
-                nou_niv = _normalizeaza_nivel_grila(row["Nivel Grilă"])
-                nou_pret = float(row["Preț Unitar"] or 0.0)
-                nou_um = str(row["Monedă / UM"] or "EUR/ora").strip()
-
-                if orig is not None:
-                    schimbat = (
-                        nou_desc != str(orig["Descriere Serviciu / Activitate"]).strip()
-                        or nou_niv != str(orig["Nivel Grilă"]).strip()
-                        or abs(nou_pret - float(orig["Preț Unitar"])) > 1e-6
-                        or nou_um != str(orig["Monedă / UM"]).strip()
-                    )
-                    if schimbat and nou_desc:
-                        _update_tarif_complet_safe(tid, nou_desc, nou_pret, nou_um, nou_niv)
-                        nr_modificate += 1
 
             if nr_modificate == 0 and nr_sterse == 0:
                 st.info("ℹ️ Nu există modificări nesalvate în tabel.")
@@ -865,10 +728,11 @@ def render_piese():
 
         df_audit_init = pd.DataFrame(rows_audit)
 
+        editor_audit_key = f"editor_audit_piese_{mod_audit[:10]}_{filtru_txt_audit}_{doar_neutilizate_si_fara_pret}"
         edited_audit = st.data_editor(
             df_audit_init,
-            key=f"editor_audit_piese_{mod_audit[:10]}_{filtru_txt_audit}_{doar_neutilizate_si_fara_pret}",
-            use_container_width=True,
+            key=editor_audit_key,
+            width="stretch",
             hide_index=True,
             num_rows="fixed",
             disabled=["Cod Producător", "Mașină", "Status"],
@@ -885,11 +749,21 @@ def render_piese():
         )
 
         if st.button("💾 Salvează Toate Modificările (Piese)", type="primary", key="btn_bulk_save_audit_piese"):
+            df_audit_final = edited_audit.copy()
+            state_aud = st.session_state.get(editor_audit_key)
+            if isinstance(state_aud, dict):
+                for idx_key, changes in state_aud.get("edited_rows", {}).items():
+                    idx = int(idx_key)
+                    if 0 <= idx < len(df_audit_final) and isinstance(changes, dict):
+                        for col_name, new_val in changes.items():
+                            if col_name in df_audit_final.columns:
+                                df_audit_final.at[idx, col_name] = new_val
+
             nr_act = 0
             nr_del = 0
             orig_audit_map = {int(r["id"]): r for _, r in df_audit_init.iterrows()}
 
-            for _, row in edited_audit.iterrows():
+            for _, row in df_audit_final.iterrows():
                 pid = int(row["id"])
                 if bool(row.get("Șterge", False)):
                     PieseRepository.delete(pid)
@@ -925,6 +799,9 @@ def render_piese():
                         "valuta_achizitie": nou_val
                     })
                     nr_act += 1
+
+            if editor_audit_key in st.session_state:
+                del st.session_state[editor_audit_key]
 
             if nr_act == 0 and nr_del == 0:
                 st.info("ℹ️ Nu există modificări nesalvate în tabel.")
