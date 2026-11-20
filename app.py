@@ -50,6 +50,7 @@ from pages.firme import render_firme
 from pages.masuratori import render_masuratori
 from pages.reparatii_electronice import render_reparatii_electronice
 from pages.oferte import render_oferte
+from pages.simulator_preturi import render_simulator_preturi
 from pages.setari import render_setari
 
 
@@ -132,6 +133,7 @@ MENIU_STRUCTURA = {
         "📈 DashBoard": render_dashboard,
         "🔮 Predicții": render_predictii,
         "💼 Oferte de preț": render_oferte,
+        "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
     },
     "🛠️ Activități": {
         "📝 Intervenții": render_activitati,

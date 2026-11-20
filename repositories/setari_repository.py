@@ -7,6 +7,12 @@ from repositories.base_repository import BaseRepository
 
 logger = logging.getLogger("NexIndCMMS.SetariRepository")
 
+DEFAULT_CLAUZE_SUBSOL = (
+    "Oferta de preț este exprimată în {MONEDA}, nu conține piese de schimb și este valabilă 15 zile.\n"
+    "Costul pieselor de schimb se va transmite după constatare/diagnosticare.\n"
+    "În funcție de complexitatea lucrărilor, durata intervenției poate suferi modificări. Acestea vă vor fi comunicate la fața locului."
+)
+
 class SetariRepository(BaseRepository):
     @classmethod
     def get_setari(cls):
@@ -31,7 +37,8 @@ class SetariRepository(BaseRepository):
             "valabilitate_implicita": "15 zile",
             "termeni_plata_impliciti": "5 zile de la emiterea facturii",
             "intocmit_de_implicit": "Echipa Nexus Industrial",
-            "tehnician_implicit": "Tehnician Nexus"
+            "tehnician_implicit": "Tehnician Nexus",
+            "clauze_subsol_implicite": DEFAULT_CLAUZE_SUBSOL
         }
         if res:
             for k, v in defaults.items():
@@ -41,7 +48,8 @@ class SetariRepository(BaseRepository):
                         "valabilitate_implicita",
                         "termeni_plata_impliciti",
                         "intocmit_de_implicit",
-                        "tehnician_implicit"
+                        "tehnician_implicit",
+                        "clauze_subsol_implicite"
                     ):
                         res[k] = v
             return res
@@ -52,6 +60,9 @@ class SetariRepository(BaseRepository):
         from config import db_cursor
         existing = cls.get_setari()
         parola_curenta = data.get("pass") if data.get("pass") is not None else existing.get("pass", "")
+        clauze_subsol = data.get("clauze_subsol_implicite")
+        if clauze_subsol is None:
+            clauze_subsol = existing.get("clauze_subsol_implicite", DEFAULT_CLAUZE_SUBSOL)
         with db_cursor() as c:
             c.execute("DELETE FROM setari")
             c.execute("""
@@ -60,9 +71,9 @@ class SetariRepository(BaseRepository):
                     iban_mea, swep_mea, smtp_server, smtp_port, smtp_user, 
                     smtp_pass, google_sheet_url, email_tehnician, cota_tva, pass,
                     valabilitate_implicita, termeni_plata_impliciti,
-                    intocmit_de_implicit, tehnician_implicit
+                    intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite
                 ) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 data.get('nume_firma_mea'), data.get('cui_mea'), data.get('reg_com_mea'),
                 data.get('adresa_mea'), data.get('banca_mea'), data.get('iban_mea'),
@@ -73,7 +84,8 @@ class SetariRepository(BaseRepository):
                 data.get('valabilitate_implicita', '15 zile'),
                 data.get('termeni_plata_impliciti', '5 zile de la emiterea facturii'),
                 data.get('intocmit_de_implicit', 'Echipa Nexus Industrial'),
-                data.get('tehnician_implicit', 'Tehnician Nexus')
+                data.get('tehnician_implicit', 'Tehnician Nexus'),
+                clauze_subsol
             ))
         logger.info("Setările au fost salvate în baza de date.")
 
