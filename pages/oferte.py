@@ -840,35 +840,87 @@ def render_oferte():
                         articole_salvate = []
 
                 col_pret_hist = f"Pret Unitar ({moneda_of})"
-                df_art_vechi = pd.DataFrame(articole_salvate) if articole_salvate else pd.DataFrame(
-                    columns=["Descriere", "UM", "Cantitate", col_pret_hist, "Termen livrare"]
-                )
-                for c_name in list(df_art_vechi.columns):
-                    if "Pret Unitar" in c_name and c_name != col_pret_hist:
-                        if col_pret_hist not in df_art_vechi.columns:
-                            df_art_vechi = df_art_vechi.rename(columns={c_name: col_pret_hist})
-                        else:
-                            df_art_vechi = df_art_vechi.drop(columns=[c_name])
-                if col_pret_hist not in df_art_vechi.columns:
-                    df_art_vechi[col_pret_hist] = 0.0
-                if "Termen livrare" not in df_art_vechi.columns:
-                    df_art_vechi["Termen livrare"] = ""
+                hist_state_key = f"df_hist_state_{oid}"
+                hist_counter_key = f"hist_editor_counter_{oid}"
+                if hist_counter_key not in st.session_state:
+                    st.session_state[hist_counter_key] = 0
 
-                st.markdown("##### ✏️ Editare Poziții / Prețuri (pentru Revizuire Ofertă):")
+                if hist_state_key not in st.session_state:
+                    df_art_vechi = pd.DataFrame(articole_salvate) if articole_salvate else pd.DataFrame(
+                        columns=["Ordine", "Descriere", "UM", "Cantitate", col_pret_hist, "Termen livrare"]
+                    )
+                    for c_name in list(df_art_vechi.columns):
+                        if "Pret Unitar" in c_name and c_name != col_pret_hist:
+                            if col_pret_hist not in df_art_vechi.columns:
+                                df_art_vechi = df_art_vechi.rename(columns={c_name: col_pret_hist})
+                            else:
+                                df_art_vechi = df_art_vechi.drop(columns=[c_name])
+                    if col_pret_hist not in df_art_vechi.columns:
+                        df_art_vechi[col_pret_hist] = 0.0
+                    if "Termen livrare" not in df_art_vechi.columns:
+                        df_art_vechi["Termen livrare"] = ""
+                    df_art_vechi = df_art_vechi.reset_index(drop=True)
+                    if "Ordine" not in df_art_vechi.columns:
+                        df_art_vechi.insert(0, "Ordine", range(1, len(df_art_vechi) + 1))
+                    else:
+                        df_art_vechi["Ordine"] = range(1, len(df_art_vechi) + 1)
+                    st.session_state[hist_state_key] = df_art_vechi
+
+                st.markdown("##### ✏️ Editare & Reordonare Poziții / Prețuri (pentru Revizuire Ofertă):")
+                df_hist_curent = st.session_state[hist_state_key].copy().reset_index(drop=True)
                 df_art_editat_hist = st.data_editor(
-                    df_art_vechi,
+                    df_hist_curent,
                     num_rows="dynamic",
                     hide_index=True,
                     column_config={
-                        "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False),
-                        "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc"),
-                        "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0),
-                        col_pret_hist: st.column_config.NumberColumn(f"Preț ({moneda_of})", min_value=0.0, format="%.2f", default=0.0),
-                        "Termen livrare": st.column_config.TextColumn("Termen livrare", default="")
+                        "Ordine": st.column_config.NumberColumn("Ordine", min_value=1, step=1, format="%d", default=len(df_hist_curent) + 1, width="small"),
+                        "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False, width="large"),
+                        "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"),
+                        "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
+                        col_pret_hist: st.column_config.NumberColumn(f"Preț ({moneda_of})", min_value=0.0, format="%.2f", default=0.0, width="small"),
+                        "Termen livrare": st.column_config.TextColumn("Termen livrare", default="1", width="small")
                     },
-                    key=f"hist_editor_{oid}",
+                    key=f"hist_editor_{oid}_{st.session_state[hist_counter_key]}",
                     use_container_width=True
                 )
+                st.session_state[hist_state_key] = df_art_editat_hist.reset_index(drop=True)
+
+                if not df_art_editat_hist.empty:
+                    ch_ord1, ch_ins_pos, ch_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
+                    if ch_ord1.button("🔄 Aplică Ordinea & Renumerotează", key=f"btn_ord_hist_{oid}", use_container_width=True):
+                        df_h_sort = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+                        df_h_sort["Ordine"] = pd.to_numeric(df_h_sort["Ordine"], errors="coerce").fillna(999)
+                        df_h_sort = df_h_sort.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
+                        df_h_sort["Ordine"] = range(1, len(df_h_sort) + 1)
+                        st.session_state[hist_state_key] = df_h_sort
+                        st.session_state[hist_counter_key] += 1
+                        st.rerun()
+
+                    nr_h_cur = len(df_art_editat_hist)
+                    poz_h_ins = ch_ins_pos.number_input(
+                        "La poziția (Nr.)",
+                        min_value=1,
+                        max_value=nr_h_cur + 1,
+                        value=min(2, nr_h_cur + 1),
+                        step=1,
+                        key=f"num_poz_ins_hist_{oid}"
+                    )
+                    if ch_ins_btn.button("➕ Inserează rând gol la mijloc", key=f"btn_ins_mid_hist_{oid}", use_container_width=True):
+                        df_h_c = df_art_editat_hist.reset_index(drop=True)
+                        idx_h_sp = int(poz_h_ins) - 1
+                        rand_h_gol = pd.DataFrame([{
+                            "Ordine": int(poz_h_ins),
+                            "Descriere": "",
+                            "UM": "buc",
+                            "Cantitate": 1.0,
+                            col_pret_hist: 0.0,
+                            "Termen livrare": "1"
+                        }])
+                        df_h_nou = pd.concat([df_h_c.iloc[:idx_h_sp], rand_h_gol, df_h_c.iloc[idx_h_sp:]], ignore_index=True)
+                        df_h_nou["Ordine"] = range(1, len(df_h_nou) + 1)
+                        st.session_state[hist_state_key] = df_h_nou
+                        st.session_state[hist_counter_key] += 1
+                        st.rerun()
 
                 obs_hist_editat = st.text_area(
                     "Mențiuni subsol ofertă",
@@ -880,7 +932,11 @@ def render_oferte():
                 c_hbtn1, c_hbtn2 = st.columns(2)
                 with c_hbtn1:
                     if st.button(f"🔄 Salvează Revizia & Generează PDF Revizuit #{nr_of}", type="primary", key=f"rev_pdf_hist_{oid}", use_container_width=True):
-                        linii_rev = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].to_dict(orient="records")
+                        df_h_val = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+                        if "Ordine" in df_h_val.columns:
+                            df_h_val["Ordine"] = pd.to_numeric(df_h_val["Ordine"], errors="coerce").fillna(999)
+                            df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort")
+                        linii_rev = df_h_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_r in linii_rev:
                             if este_ore_transport(l_r.get("Descriere")) and float(l_r.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
                                 st.error(f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
@@ -923,7 +979,11 @@ def render_oferte():
 
                 with c_hbtn2:
                     if st.button(f"📥 Generează PDF Ofertă #{nr_of} (forma curentă)", key=f"dl_pdf_hist_{oid}", use_container_width=True):
-                        linii_cur = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].to_dict(orient="records")
+                        df_h_cur_val = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+                        if "Ordine" in df_h_cur_val.columns:
+                            df_h_cur_val["Ordine"] = pd.to_numeric(df_h_cur_val["Ordine"], errors="coerce").fillna(999)
+                            df_h_cur_val = df_h_cur_val.sort_values(by="Ordine", kind="mergesort")
+                        linii_cur = df_h_cur_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_c in linii_cur:
                             if este_ore_transport(l_c.get("Descriere")) and float(l_c.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
                                 st.error(f"⚠️ Activitatea **{l_c.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
