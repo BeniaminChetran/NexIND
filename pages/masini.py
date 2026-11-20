@@ -45,7 +45,15 @@ def render_masini():
         )
         st.warning(f"🔔 **Atenție Grilă Tarifare:** Următoarele utilaje au atins sau depășit pragul de intervenții și pot trece la următoarea grilă de tarifare: **{nume_alert}**")
 
-    sel_firma_nume = st.selectbox("Selectează Firma Proprietară", options=list(firme_dict.keys()), key="sel_firma_masini")
+    c_sf1, c_sf2 = st.columns([3, 1.5], vertical_alignment="bottom")
+    with c_sf1:
+        sel_firma_nume = st.selectbox("Selectează Firma Proprietară", options=list(firme_dict.keys()), key="sel_firma_masini")
+    with c_sf2:
+        arata_toate_firmele = st.checkbox(
+            "Afișează utilajele de la toate firmele",
+            value=False,
+            key="chk_toate_firmele_masini"
+        )
     firma_id = firme_dict[sel_firma_nume]
 
     @st.fragment
@@ -114,9 +122,15 @@ def render_masini():
     render_form_masina()
     st.markdown("---")
 
-    st.subheader("📋 Mașini Înregistrate & Componență Sisteme")
-    if masini_list:
-        for m in masini_list:
+    if arata_toate_firmele:
+        masini_afisate = masini_list
+        st.subheader(f"📋 Mașini Înregistrate — Toate Firmele ({len(masini_afisate)})")
+    else:
+        masini_afisate = [m for m in masini_list if m.get("firma_id") == firma_id]
+        st.subheader(f"📋 Mașini Înregistrate — {sel_firma_nume} ({len(masini_afisate)})")
+
+    if masini_afisate:
+        for m in masini_afisate:
             nume_f = next((n for n, fid in firme_dict.items() if fid == m.get('firma_id')), "Necunoscută")
             mid = m.get('id')
             sist_curente = [s.strip() for s in str(m.get('sisteme_active') or ALL_SISTEME_DEFAULT).split(",") if s.strip() in CODURI_SISTEME]
@@ -267,4 +281,7 @@ def render_masini():
                     else:
                         st.dataframe(df_comp, hide_index=True, use_container_width=True)
     else:
-        st.info("Nu există mașini înregistrate momentan.")
+        if arata_toate_firmele:
+            st.info("Nu există mașini înregistrate momentan.")
+        else:
+            st.info(f"Nu există mașini înregistrate pentru firma **{sel_firma_nume}**.")
