@@ -22,7 +22,7 @@ ETICHETE_SISTEME = {s[0]: s[1] for s in OPT_SISTEME}
 
 
 def render_masini():
-    st.subheader("🚗 Gestiune Mașini și Echipamente")
+    st.subheader("🦾 Gestiune Mașini și Echipamente")
     is_unlocked = st.session_state.get("is_unlocked", False)
 
     firme_db = FirmeRepository.get_all()
