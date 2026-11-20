@@ -1,5 +1,5 @@
 #----------------------------------
-#-------pdf_service.py-------------
+#-------services/pdf_service.py------
 #----------------------------------
 
 import io
@@ -7,17 +7,28 @@ import os
 import re
 import json
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    HRFlowable,
+    Image as RLImage,
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from config import db_cursor
 
+
 def inregistreaza_fonturi():
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
-    
+
     cai_regular = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "C:\\Windows\\Fonts\\arial.ttf"
@@ -26,32 +37,57 @@ def inregistreaza_fonturi():
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "C:\\Windows\\Fonts\\arialbd.ttf"
     ]
-    
+
     for path in cai_regular:
         if os.path.exists(path):
             pdfmetrics.registerFont(TTFont("CustomFont", path))
             font_regular = "CustomFont"
             break
-            
+
     for path in cai_bold:
         if os.path.exists(path):
             pdfmetrics.registerFont(TTFont("CustomFont-Bold", path))
             font_bold = "CustomFont-Bold"
             break
-            
+
     return font_regular, font_bold
 
+
 FONT_REG, FONT_BOLD = inregistreaza_fonturi()
+
+
+def _gaseste_sigla_nexind() -> str | None:
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidati = [
+        os.path.join(base_dir, "Nexind_android.jpg"),
+        os.path.join(base_dir, "Nexind_android.png"),
+        "Nexind_android.jpg",
+        "Nexind_android.png",
+    ]
+    for c in candidati:
+        if os.path.exists(c):
+            return c
+    return None
+
 
 def get_date_firma_mea():
     with db_cursor() as cur:
         cur.execute("SELECT * FROM setari LIMIT 1")
         res = cur.fetchone()
     if res:
-        return res
+        return dict(res)
     return {
-        "nume_firma_mea": "SC Nexus Industrial SRL", "cui_mea": "", "reg_com_mea": "",
-        "adresa_mea": "", "banca_mea": "", "iban_mea": "", "swep_mea": "",
+        "nume_firma_mea": "SC Nexus Industrial SRL",
+        "cui_mea": "",
+        "reg_com_mea": "",
+        "adresa_mea": "",
+        "banca_mea": "",
+        "iban_mea": "",
+        "swep_mea": "",
+        "telefon_1": "",
+        "telefon_2": "",
+        "email_1": "",
+        "email_2": "",
         "cota_tva": 21.0,
         "valabilitate_implicita": "15 zile",
         "termeni_plata_impliciti": "5 zile de la emiterea facturii",
@@ -59,41 +95,161 @@ def get_date_firma_mea():
         "tehnician_implicit": "Tehnician Nexus"
     }
 
+
+def _extrage_contacte_si_swift(setari: dict) -> list[str]:
+    """Returnează liniile separate pentru SWIFT, telefoane și emailuri (doar dacă există)."""
+    linii = []
+    swift = str((setari or {}).get("swep_mea") or "").strip()
+    if swift:
+        linii.append(f"SWIFT: {swift}")
+
+    telefoane = [
+        str((setari or {}).get(k) or "").strip()
+        for k in ("telefon_1", "telefon_2")
+        if str((setari or {}).get(k) or "").strip()
+    ]
+    if telefoane:
+        linii.append(f"Tel: {' | '.join(telefoane)}")
+
+    emailuri = [
+        str((setari or {}).get(k) or "").strip()
+        for k in ("email_1", "email_2")
+        if str((setari or {}).get(k) or "").strip()
+    ]
+    if emailuri:
+        linii.append(f"Email: {' | '.join(emailuri)}")
+
+    return linii
+
+
+def _construieste_antet_cu_sigla(
+    setari: dict,
+    titlu_dreapta: str,
+    nr_text: str,
+    data_text: str,
+    s_normal: ParagraphStyle,
+    s_bold: ParagraphStyle,
+    s_small: ParagraphStyle,
+    include_banca_iban: bool = False,
+) -> Table:
+    """
+    Stânga: sigla Nexind sus, dedesubt datele firmei, iar SWIFT, telefoanele și emailurile fiecare pe rândul său.
+    Dreapta: titlul, numărul și data aliniate mai la dreapta.
+    """
+    stanga_elems = []
+    logo_path = _gaseste_sigla_nexind()
+    if logo_path:
+        try:
+            img = RLImage(logo_path, width=20 * mm, height=20 * mm)
+            img.hAlign = "LEFT"
+            stanga_elems.append(img)
+            stanga_elems.append(Spacer(1, 2 * mm))
+        except Exception:
+            pass
+
+    nume = str((setari or {}).get("nume_firma_mea") or "").strip()
+    cui = str((setari or {}).get("cui_mea") or "").strip()
+    reg_com = str((setari or {}).get("reg_com_mea") or "").strip()
+    adresa = str((setari or {}).get("adresa_mea") or "").strip()
+    banca = str((setari or {}).get("banca_mea") or "").strip()
+    iban = str((setari or {}).get("iban_mea") or "").strip()
+
+    if nume:
+        stanga_elems.append(Paragraph(f"<b>{nume}</b>", s_bold))
+
+    fiscal = []
+    if cui:
+        fiscal.append(f"CUI: {cui}")
+    if reg_com:
+        fiscal.append(f"Reg. Com.: {reg_com}")
+    if fiscal:
+        stanga_elems.append(Paragraph(" | ".join(fiscal), s_small))
+
+    if adresa:
+        stanga_elems.append(Paragraph(f"Adresă: {adresa}", s_small))
+
+    if include_banca_iban:
+        banca_parts = []
+        if banca:
+            banca_parts.append(f"Bancă: {banca}")
+        if iban:
+            banca_parts.append(f"IBAN: {iban}")
+        if banca_parts:
+            stanga_elems.append(Paragraph(" | ".join(banca_parts), s_small))
+
+    for linie_extra in _extrage_contacte_si_swift(setari or {}):
+        stanga_elems.append(Paragraph(linie_extra, s_small))
+
+    style_titlu_dr = ParagraphStyle(
+        "TitluDreapta",
+        parent=s_bold,
+        fontSize=12.5,
+        leading=16,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#0F172A"),
+    )
+    style_meta_dr = ParagraphStyle(
+        "MetaDreapta",
+        parent=s_normal,
+        fontSize=9.5,
+        leading=13,
+        alignment=TA_RIGHT,
+    )
+
+    dreapta_elems = [
+        Paragraph(f"<b>{titlu_dreapta}</b>", style_titlu_dr),
+        Spacer(1, 2 * mm),
+        Paragraph(f"<b>Nr.:</b> {nr_text}", style_meta_dr),
+        Paragraph(f"<b>Data:</b> {data_text}", style_meta_dr),
+    ]
+
+    tbl = Table([[stanga_elems, dreapta_elems]], colWidths=[95 * mm, 87 * mm])
+    tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#CBD5E1")),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+    ]))
+    return tbl
+
+
 def draw_header_footer(canvas, doc, titlu_document="RAPORT DE INTERVENȚIE TEHNICĂ", centreaza_titlu=False, font_size_titlu=14):
     canvas.saveState()
     canvas.setFillColor(colors.HexColor("#1E293B"))
-    canvas.rect(0, A4[1] - 55, A4[0], 55, fill=1, stroke=0)
-    
+    canvas.rect(0, A4[1] - 48, A4[0], 48, fill=1, stroke=0)
+
     canvas.setFillColor(colors.white)
     canvas.setFont(FONT_BOLD, font_size_titlu)
     if centreaza_titlu:
-        canvas.drawCentredString(A4[0] / 2.0, A4[1] - 33, titlu_document)
+        canvas.drawCentredString(A4[0] / 2.0, A4[1] - 29, titlu_document)
     else:
-        canvas.drawString(30, A4[1] - 34, titlu_document)
-    
+        canvas.drawString(30, A4[1] - 29, titlu_document)
+
     canvas.setFont(FONT_REG, 8)
-    canvas.drawRightString(A4[0] - 30, A4[1] - 33, "DOCUMENT OFICIAL")
-    
+    canvas.drawRightString(A4[0] - 30, A4[1] - 29, "DOCUMENT OFICIAL")
+
     canvas.setFont(FONT_REG, 8)
     canvas.setFillColor(colors.grey)
     canvas.drawCentredString(A4[0] / 2.0, 20, f"Pagina {doc.page} | Raport generat automat")
     canvas.restoreState()
 
+
 def creeaza_stiluri():
     styles = getSampleStyleSheet()
     s_normal = ParagraphStyle('SNormal', parent=styles['Normal'], fontName=FONT_REG, fontSize=9, leading=13, textColor=colors.black)
     s_bold = ParagraphStyle('SBold', parent=s_normal, fontName=FONT_BOLD)
-    s_small = ParagraphStyle('SSmall', parent=s_normal, fontSize=8, textColor=colors.HexColor("#475569"))
+    s_small = ParagraphStyle('SSmall', parent=s_normal, fontSize=8.2, leading=11.5, textColor=colors.HexColor("#334155"))
     s_sec_title = ParagraphStyle('SSecTitle', parent=s_normal, fontName=FONT_BOLD, fontSize=9.5, textColor=colors.HexColor("#334155"), spaceBefore=8, spaceAfter=2)
     return s_normal, s_bold, s_small, s_sec_title
+
 
 def formateaza_linii_cu_simbol(text):
     if not text:
         return "Nespecificat"
-    
+
     linii_brute = text.split('\n')
     linii_finale = []
-    
+
     for l in linii_brute:
         l_curat = l.strip()
         if not l_curat:
@@ -103,11 +259,12 @@ def formateaza_linii_cu_simbol(text):
             p_limpezit = p.strip()
             if p_limpezit:
                 linii_finale.append(f"• {p_limpezit}")
-                
+
     if not linii_finale:
         return text.replace("\n", "<br/>")
-        
+
     return "<br/>".join(linii_finale)
+
 
 def formateaza_adresa_pe_randuri(adresa: str) -> str:
     """Rupe adresa clientului pe rânduri compacte fără spații sau rânduri goale."""
@@ -126,6 +283,7 @@ def formateaza_adresa_pe_randuri(adresa: str) -> str:
     linii = [l.strip() for l in txt.split("<br/>") if l.strip()]
     return "<br/>".join(linii)
 
+
 def formateaza_termeni_plata_pe_randuri(termeni: str) -> str:
     """Împarte termenii de plată pe rânduri separate (după virgulă, ; sau Enter)."""
     if not termeni:
@@ -135,40 +293,42 @@ def formateaza_termeni_plata_pe_randuri(termeni: str) -> str:
         return str(termeni).strip()
     return "<br/>" + "<br/>".join([f"• {p}" for p in parti])
 
+
 def formateaza_numar_ro(valoare) -> str:
-    """Formatează numerele fără separator de mii, cu virgulă la zecimale și fără zerouri inutile (ex: 2560.00 -> 2560, 4.80 -> 4,8)."""
+    """Formatează numerele fără separator de mii, cu virgulă la zecimale și fără zerouri inutile."""
     try:
         num = float(valoare)
     except (TypeError, ValueError):
         return str(valoare or "0")
-    
+
     num_rot = round(num, 2)
     if num_rot == int(num_rot):
         return str(int(num_rot))
-    
+
     s_dec = f"{num_rot:.2f}".rstrip("0").rstrip(".")
     return s_dec.replace(".", ",")
+
 
 # ------------------------------------------------------------------------------
 # 1. RAPORT INTERVENȚIE TEHNICĂ (STANDARD / MECANIC)
 # ------------------------------------------------------------------------------
 def genereaza_pdf(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=65, bottomMargin=35)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=58, bottomMargin=35)
     elements = []
     s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
     setari = get_date_firma_mea()
 
-    elements.append(Paragraph(f"<b>{setari.get('nume_firma_mea', '')}</b> | CUI: {setari.get('cui_mea', '')} | Reg. Com.: {setari.get('reg_com_mea', '')}", s_normal))
-    elements.append(Paragraph(f"Adresă: {setari.get('adresa_mea', '')} | Bancă: {setari.get('banca_mea', '')} | IBAN: {setari.get('iban_mea', '')} | SWIFT: {setari.get('swep_mea', '')}", s_small))
-    elements.append(Spacer(1, 8))
-
-    t_nr = Table([
-        [Paragraph(f"<b>Nr. Înregistrare: #{data.get('id', '')}</b>", s_normal),
-         Paragraph(f"<b>Data: {str(data.get('data', ''))[:10]}</b>", ParagraphStyle('Right', parent=s_normal, alignment=2))]
-    ], colWidths=[265, 270])
-    t_nr.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,0), 0.8, colors.HexColor("#CBD5E1")), ('BOTTOMPADDING', (0,0), (-1,0), 4)]))
-    elements.append(t_nr)
+    elements.append(_construieste_antet_cu_sigla(
+        setari=setari,
+        titlu_dreapta="RAPORT DE INTERVENȚIE",
+        nr_text=f"#{data.get('id', '')}",
+        data_text=str(data.get('data', ''))[:10],
+        s_normal=s_normal,
+        s_bold=s_bold,
+        s_small=s_small,
+        include_banca_iban=False,
+    ))
     elements.append(Spacer(1, 8))
 
     durata_min = int(data.get('durata') or 0)
@@ -219,8 +379,10 @@ def genereaza_pdf(data):
 
     piese_list = data.get('piese_json', [])
     if isinstance(piese_list, str):
-        try: piese_list = json.loads(piese_list)
-        except: piese_list = []
+        try:
+            piese_list = json.loads(piese_list)
+        except Exception:
+            piese_list = []
 
     p_rows = [[Paragraph("<b>Denumire Piesă</b>", s_bold), Paragraph("<b>Cantitate</b>", s_bold), Paragraph("<b>Tip / Status</b>", s_bold)]]
     if piese_list:
@@ -249,42 +411,46 @@ def genereaza_pdf(data):
     elements.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
     tehnician_def = setari.get('tehnician_implicit') or 'Tehnician Nexus'
     semnaturi_data = [
-        [Paragraph("<b>EFECTUAT DE (TEHNICIAN)</b>", ParagraphStyle('C', parent=s_bold, alignment=1)),
-         Paragraph("<b>VERIFICAT / RECEPȚIONAT DE</b>", ParagraphStyle('C', parent=s_bold, alignment=1))],
-        [Paragraph(f"Nume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph(f"Nume: {data.get('verificator') or 'Client'}", ParagraphStyle('C', parent=s_normal, alignment=1))],
+        [Paragraph("<b>EFECTUAT DE (TEHNICIAN)</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER)),
+         Paragraph("<b>VERIFICAT / RECEPȚIONAT DE</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))],
+        [Paragraph(f"Nume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph(f"Nume: {data.get('verificator') or 'Client'}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))],
         [Spacer(1, 18), Spacer(1, 18)],
-        [Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1))]
+        [Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))]
     ]
     t_semn = Table(semnaturi_data, colWidths=[265, 270])
     elements.append(t_semn)
 
-    doc.build(elements, onFirstPage=lambda c, d: draw_header_footer(c, d, "RAPORT DE INTERVENȚIE TEHNICĂ"),
-              onLaterPages=lambda c, d: draw_header_footer(c, d, "RAPORT DE INTERVENȚIE TEHNICĂ"))
+    doc.build(
+        elements,
+        onFirstPage=lambda c, d: draw_header_footer(c, d, "RAPORT DE INTERVENȚIE TEHNICĂ"),
+        onLaterPages=lambda c, d: draw_header_footer(c, d, "RAPORT DE INTERVENȚIE TEHNICĂ")
+    )
     buffer.seek(0)
     return buffer.getvalue()
+
 
 # ------------------------------------------------------------------------------
 # 2. RAPORT REPARAȚIE ELECTRONICĂ / MECATRONICĂ
 # ------------------------------------------------------------------------------
 def genereaza_pdf_electronic(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=65, bottomMargin=35)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=58, bottomMargin=35)
     elements = []
     s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
     setari = get_date_firma_mea()
 
-    elements.append(Paragraph(f"<b>{setari.get('nume_firma_mea', '')}</b> | CUI: {setari.get('cui_mea', '')} | Reg. Com.: {setari.get('reg_com_mea', '')}", s_normal))
-    elements.append(Paragraph(f"Adresă: {setari.get('adresa_mea', '')} | Bancă: {setari.get('banca_mea', '')} | IBAN: {setari.get('iban_mea', '')} | SWIFT: {setari.get('swep_mea', '')}", s_small))
-    elements.append(Spacer(1, 8))
-
-    t_nr = Table([
-        [Paragraph(f"<b>Nr. Fișă Electronică: #{data.get('id', '')}</b>", s_normal),
-         Paragraph(f"<b>Data: {str(data.get('data', ''))[:10]}</b>", ParagraphStyle('Right', parent=s_normal, alignment=2))]
-    ], colWidths=[265, 270])
-    t_nr.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,0), 0.8, colors.HexColor("#CBD5E1")), ('BOTTOMPADDING', (0,0), (-1,0), 4)]))
-    elements.append(t_nr)
+    elements.append(_construieste_antet_cu_sigla(
+        setari=setari,
+        titlu_dreapta="RAPORT ELECTRONICĂ",
+        nr_text=f"#{data.get('id', '')}",
+        data_text=str(data.get('data', ''))[:10],
+        s_normal=s_normal,
+        s_bold=s_bold,
+        s_small=s_small,
+        include_banca_iban=False,
+    ))
     elements.append(Spacer(1, 8))
 
     detalii_data = [
@@ -335,63 +501,59 @@ def genereaza_pdf_electronic(data):
     elements.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
     tehnician_def = setari.get('tehnician_implicit') or 'Tehnician Nexus'
     semnaturi_data = [
-        [Paragraph("<b>EFECTUAT DE (TEHNICIAN ELECTRONICĂ)</b>", ParagraphStyle('C', parent=s_bold, alignment=1)),
-         Paragraph("<b>VERIFICAT / RECEPȚIONAT DE</b>", ParagraphStyle('C', parent=s_bold, alignment=1))],
-        [Paragraph(f"Nume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph(f"Nume: {data.get('verificator') or 'Client'}", ParagraphStyle('C', parent=s_normal, alignment=1))],
+        [Paragraph("<b>EFECTUAT DE (TEHNICIAN ELECTRONICĂ)</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER)),
+         Paragraph("<b>VERIFICAT / RECEPȚIONAT DE</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))],
+        [Paragraph(f"Nume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph(f"Nume: {data.get('verificator') or 'Client'}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))],
         [Spacer(1, 18), Spacer(1, 18)],
-        [Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1))]
+        [Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))]
     ]
     elements.append(Table(semnaturi_data, colWidths=[265, 270]))
 
-    doc.build(elements, onFirstPage=lambda c, d: draw_header_footer(c, d, "RAPORT REPARAȚIE ELECTRONICĂ"),
-              onLaterPages=lambda c, d: draw_header_footer(c, d, "RAPORT REPARAȚIE ELECTRONICĂ"))
+    doc.build(
+        elements,
+        onFirstPage=lambda c, d: draw_header_footer(c, d, "RAPORT REPARAȚIE ELECTRONICĂ"),
+        onLaterPages=lambda c, d: draw_header_footer(c, d, "RAPORT REPARAȚIE ELECTRONICĂ")
+    )
     buffer.seek(0)
     return buffer.getvalue()
+
 
 # ------------------------------------------------------------------------------
 # 3. OFERTĂ DE PREȚ COMERCIALĂ
 # ------------------------------------------------------------------------------
 def genereaza_pdf_oferta(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=65, bottomMargin=35)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=58, bottomMargin=35)
     elements = []
     s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
     s_client_compact = ParagraphStyle('SClientCompact', parent=s_normal, fontSize=9, leading=10.8, textColor=colors.black)
     s_cond_title = ParagraphStyle('SCondTitle', parent=s_bold, fontSize=10, leading=12.5, textColor=colors.HexColor("#0F172A"))
     s_cond_item = ParagraphStyle('SCondItem', parent=s_normal, fontSize=9.5, leading=13, textColor=colors.HexColor("#0F172A"))
-    s_center_nr = ParagraphStyle('SCenterNr', parent=s_bold, fontSize=10.5, leading=13, alignment=1)
     setari = get_date_firma_mea()
     moneda = data.get('moneda', 'EUR')
     este_revizuita = bool(data.get('este_revizuita', False))
 
     titlu_banner = "OFERTĂ DE PREȚ COMERCIALĂ (REVIZUITĂ)" if este_revizuita else "OFERTĂ DE PREȚ COMERCIALĂ"
+    nr_afisare = str(data.get('numar_oferta') or data.get('id') or '')
+    if este_revizuita:
+        nr_afisare = f"#{nr_afisare} (REVIZUITĂ)"
+    elif nr_afisare and not nr_afisare.startswith("#"):
+        nr_afisare = f"#{nr_afisare}"
 
-    # 1. DATE FIRMĂ PRESTATOARE
-    elements.append(Paragraph(f"<b>{setari.get('nume_firma_mea', '')}</b> | CUI: {setari.get('cui_mea', '')} | Reg. Com.: {setari.get('reg_com_mea', '')}", s_normal))
-    elements.append(Paragraph(f"Adresă: {setari.get('adresa_mea', '')} | Bancă: {setari.get('banca_mea', '')} | IBAN: {setari.get('iban_mea', '')} | SWIFT: {setari.get('swep_mea', '')}", s_small))
+    elements.append(_construieste_antet_cu_sigla(
+        setari=setari,
+        titlu_dreapta="OFERTĂ DE PREȚ",
+        nr_text=nr_afisare,
+        data_text=str(data.get('data', ''))[:10],
+        s_normal=s_normal,
+        s_bold=s_bold,
+        s_small=s_small,
+        include_banca_iban=True,
+    ))
     elements.append(Spacer(1, 8))
 
-    # 2. NUMĂR OFERTĂ CENTRAT & DATA LA DREAPTA
-    nr_afisare = data.get('numar_oferta') or data.get('id', '')
-    et_rev = " — <font color='#B91C1C'>REVIZUITĂ</font>" if este_revizuita else ""
-    t_nr = Table([
-        [
-            "",
-            Paragraph(f"<b>OFERTĂ DE PREȚ Nr: #{nr_afisare}{et_rev}</b>", s_center_nr),
-            Paragraph(f"<b>Data: {str(data.get('data', ''))[:10]}</b>", ParagraphStyle('Right', parent=s_normal, alignment=2))
-        ]
-    ], colWidths=[125, 285, 125])
-    t_nr.setStyle(TableStyle([
-        ('LINEBELOW', (0,0), (-1,0), 0.8, colors.HexColor("#CBD5E1")),
-        ('BOTTOMPADDING', (0,0), (-1,0), 4),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ]))
-    elements.append(t_nr)
-    elements.append(Spacer(1, 8))
-
-    # 3. BENEFICIAR / CLIENT & CONDIȚII COMERCIALE (mutată +2cm la dreapta, include cursul valutar)
     adresa_formatata = formateaza_adresa_pe_randuri(data.get('adresa_client', ''))
     valabilitate_txt = str(data.get('valabilitate') or setari.get('valabilitate_implicita') or '15 zile')
     termeni_plata_formatat = formateaza_termeni_plata_pe_randuri(
@@ -440,7 +602,6 @@ def genereaza_pdf_oferta(data):
     elements.append(t_detalii)
     elements.append(Spacer(1, 10))
 
-    # 4. DESTINATAR (În atenția) & FORMULĂ ADRESARE (fără rubrica Obiect)
     in_atentia = str(data.get('in_atentia', '')).strip()
     if in_atentia and in_atentia != "În atenția":
         elements.append(Paragraph(f"<b>{in_atentia}</b>", s_bold))
@@ -451,9 +612,7 @@ def genereaza_pdf_oferta(data):
         elements.append(Paragraph(formula_adresare.replace("\n", "<br/>"), s_normal))
         elements.append(Spacer(1, 8))
 
-    # 5. DATE IDENTIFICARE ECHIPAMENT (pe un singur rând, fără cuvântul "Utilaj:", omite câmpurile nule/goale, despărțite cu ;)
     parti_echipament = []
-
     val_utilaj = str(data.get("utilaj")).strip() if data.get("utilaj") is not None else ""
     if val_utilaj and val_utilaj.lower() not in ("none", "nan", "null"):
         parti_echipament.append(val_utilaj)
@@ -473,7 +632,6 @@ def genereaza_pdf_oferta(data):
         elements.append(Paragraph(linie_echipament, s_normal))
         elements.append(Spacer(1, 8))
 
-    # 6. TABEL ARTICOLE / SERVICII (conversie automată din RON în EUR dacă e cazul)
     elements.append(Paragraph("DETALIERE ARTICOLE / SERVICII", s_sec_title))
     elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
 
@@ -483,9 +641,9 @@ def genereaza_pdf_oferta(data):
         Paragraph("<b>Denumire Articol / Serviciu</b>", s_bold),
         Paragraph("<b>UM</b>", s_bold),
         Paragraph("<b>Cant.</b>", s_bold),
-        Paragraph(f"<b>Preț Unitar<br/>({moneda})</b>", ParagraphStyle('R', parent=s_bold, alignment=2)),
-        Paragraph(f"<b>Valoare<br/>({moneda})</b>", ParagraphStyle('R', parent=s_bold, alignment=2)),
-        Paragraph("<b>Termen<br/>livrare</b>", ParagraphStyle('C', parent=s_bold, alignment=1))
+        Paragraph(f"<b>Preț Unitar<br/>({moneda})</b>", ParagraphStyle('R', parent=s_bold, alignment=TA_RIGHT)),
+        Paragraph(f"<b>Valoare<br/>({moneda})</b>", ParagraphStyle('R', parent=s_bold, alignment=TA_RIGHT)),
+        Paragraph("<b>Termen<br/>livrare</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))
     ]]
 
     subtotal = 0.0
@@ -513,9 +671,9 @@ def genereaza_pdf_oferta(data):
             Paragraph(str(art.get('Descriere', '')), s_normal),
             Paragraph(str(art.get('UM', 'buc')), s_normal),
             Paragraph(formateaza_numar_ro(cant), s_normal),
-            Paragraph(formateaza_numar_ro(pret), ParagraphStyle('R', parent=s_normal, alignment=2)),
-            Paragraph(formateaza_numar_ro(valoare), ParagraphStyle('R', parent=s_normal, alignment=2)),
-            Paragraph(termen_livrare, ParagraphStyle('C', parent=s_normal, alignment=1))
+            Paragraph(formateaza_numar_ro(pret), ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT)),
+            Paragraph(formateaza_numar_ro(valoare), ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT)),
+            Paragraph(termen_livrare, ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))
         ])
 
     t_articole = Table(t_rows, colWidths=[28, 222, 35, 42, 72, 78, 58])
@@ -528,7 +686,6 @@ def genereaza_pdf_oferta(data):
     elements.append(t_articole)
     elements.append(Spacer(1, 8))
 
-    # 7. TOTALURI FINANCIARE
     cota_tva_procent = float(
         data.get('cota_tva')
         if data.get('cota_tva') is not None
@@ -538,9 +695,9 @@ def genereaza_pdf_oferta(data):
     total_general = round(subtotal + tva, 2)
 
     t_totaluri = Table([
-        ["", Paragraph("<b>Subtotal fără TVA:</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(subtotal)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=2))],
-        ["", Paragraph(f"<b>TVA ({formateaza_numar_ro(cota_tva_procent)}%):</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(tva)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=2))],
-        ["", Paragraph("<b>TOTAL GENERAL:</b>", ParagraphStyle('Big', parent=s_bold, fontSize=10)), Paragraph(f"<b>{formateaza_numar_ro(total_general)} {moneda}</b>", ParagraphStyle('BigR', parent=s_bold, fontSize=10, alignment=2))]
+        ["", Paragraph("<b>Subtotal fără TVA:</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(subtotal)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT))],
+        ["", Paragraph(f"<b>TVA ({formateaza_numar_ro(cota_tva_procent)}%):</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(tva)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT))],
+        ["", Paragraph("<b>TOTAL GENERAL:</b>", ParagraphStyle('Big', parent=s_bold, fontSize=10)), Paragraph(f"<b>{formateaza_numar_ro(total_general)} {moneda}</b>", ParagraphStyle('BigR', parent=s_bold, fontSize=10, alignment=TA_RIGHT))]
     ], colWidths=[260, 155, 120])
     t_totaluri.setStyle(TableStyle([
         ('LINEABOVE', (1,2), (2,2), 1, colors.HexColor("#1E293B")),
@@ -550,7 +707,6 @@ def genereaza_pdf_oferta(data):
     elements.append(t_totaluri)
     elements.append(Spacer(1, 10))
 
-    # 8. MENȚIUNI / OBSERVAȚII
     if data.get('observatii'):
         elements.append(Paragraph("MENȚIUNI / OBSERVAȚII", s_sec_title))
         elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
@@ -558,7 +714,6 @@ def genereaza_pdf_oferta(data):
         obs_formatat = "<br/>".join([l if l.startswith("-") or l.startswith("•") else f"- {l}" for l in linii_obs])
         elements.append(Paragraph(obs_formatat, s_normal))
 
-    # 9. SEMNĂTURI (ÎNTOCMIT / EMIS DE & ACCEPTAT / BENEFICIAR — SEMNĂTURĂ ELECTRONICĂ, FĂRĂ ȘTAMPILĂ)
     intocmit_de_txt = str(data.get('intocmit_de') or setari.get('intocmit_de_implicit') or 'Echipa Nexus Industrial').strip()
     acceptat_de_txt = str(data.get('acceptat_de') or '').strip()
     reprez_beneficiar = acceptat_de_txt if acceptat_de_txt else str(data.get('client', ''))
@@ -566,13 +721,13 @@ def genereaza_pdf_oferta(data):
     elements.append(Spacer(1, 18))
     elements.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
     semnaturi_data = [
-        [Paragraph("<b>ÎNTOCMIT / EMIS DE</b>", ParagraphStyle('C', parent=s_bold, alignment=1)),
-         Paragraph("<b>ACCEPTAT / BENEFICIAR</b>", ParagraphStyle('C', parent=s_bold, alignment=1))],
-        [Paragraph(f"Reprezentant: {intocmit_de_txt}", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph(f"Reprezentant: {reprez_beneficiar}", ParagraphStyle('C', parent=s_normal, alignment=1))],
+        [Paragraph("<b>ÎNTOCMIT / EMIS DE</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER)),
+         Paragraph("<b>ACCEPTAT / BENEFICIAR</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))],
+        [Paragraph(f"Reprezentant: {intocmit_de_txt}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph(f"Reprezentant: {reprez_beneficiar}", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))],
         [Spacer(1, 16), Spacer(1, 16)],
-        [Paragraph("Semnătură electronică: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1)),
-         Paragraph("Semnătură electronică: ___________________", ParagraphStyle('C', parent=s_normal, alignment=1))]
+        [Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER)),
+         Paragraph("Semnătură: ___________________", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))]
     ]
     elements.append(Table(semnaturi_data, colWidths=[265, 270]))
 
@@ -583,7 +738,6 @@ def genereaza_pdf_oferta(data):
     )
     buffer.seek(0)
     return buffer.getvalue()
-    
 
 
 # ------------------------------------------------------------------------------
@@ -591,33 +745,28 @@ def genereaza_pdf_oferta(data):
 # ------------------------------------------------------------------------------
 def genereaza_pdf_mentenanta(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=28, leftMargin=28, topMargin=62, bottomMargin=32)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=28, leftMargin=28, topMargin=58, bottomMargin=32)
     elements = []
     s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
     s_tbl = ParagraphStyle('SMentTbl', parent=s_normal, fontSize=8.3, leading=11)
     s_tbl_bold = ParagraphStyle('SMentTblBold', parent=s_bold, fontSize=8.3, leading=11)
-    s_tbl_center = ParagraphStyle('SMentTblCenter', parent=s_tbl, alignment=1)
+    s_tbl_center = ParagraphStyle('SMentTblCenter', parent=s_tbl, alignment=TA_CENTER)
     setari = get_date_firma_mea()
 
-    # Antet prestator
-    elements.append(Paragraph(
-        f"<b>{setari.get('nume_firma_mea', '')}</b> | CUI: {setari.get('cui_mea', '')} | Reg. Com.: {setari.get('reg_com_mea', '')}",
-        s_normal
-    ))
-    elements.append(Paragraph(
-        f"Adresă: {setari.get('adresa_mea', '')} | Bancă: {setari.get('banca_mea', '')} | IBAN: {setari.get('iban_mea', '')}",
-        s_small
+    elements.append(_construieste_antet_cu_sigla(
+        setari=setari,
+        titlu_dreapta="FIȘĂ MENTENANȚĂ",
+        nr_text=f"#{data.get('id', '')}",
+        data_text=str(data.get('data_interventie', ''))[:10],
+        s_normal=s_normal,
+        s_bold=s_bold,
+        s_small=s_small,
+        include_banca_iban=False,
     ))
     elements.append(Spacer(1, 6))
 
-    # Tabel identificare echipament & stare
-    data_int_str = str(data.get('data_interventie', ''))[:10]
     urmat_str = str(data.get('urmatoarea_revizie') or '-')[:10]
     id_rows = [
-        [
-            Paragraph(f"<b>Nr. Fișă Intervenție:</b> #{data.get('id', '')}", s_tbl),
-            Paragraph(f"<b>Data Intervenției:</b> {data_int_str}", s_tbl)
-        ],
         [
             Paragraph(f"<b>Beneficiar / Client:</b> {data.get('firma_nume', '')}", s_tbl),
             Paragraph(f"<b>Punct de Lucru / Oraș:</b> {data.get('punct_lucru', '')}", s_tbl)
@@ -647,14 +796,13 @@ def genereaza_pdf_mentenanta(data):
     t_id.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-        ('BACKGROUND', (0, 6), (-1, 6), colors.HexColor("#EEF2FF")),
-        ('SPAN', (0, 6), (1, 6)),
+        ('BACKGROUND', (0, 5), (-1, 5), colors.HexColor("#EEF2FF")),
+        ('SPAN', (0, 5), (1, 5)),
         ('PADDING', (0, 0), (-1, -1), 4),
     ]))
     elements.append(t_id)
     elements.append(Spacer(1, 8))
 
-    # Secțiuni checklist
     checklist = data.get("checklist_json") or {}
     if isinstance(checklist, str):
         try:
@@ -676,7 +824,6 @@ def genereaza_pdf_mentenanta(data):
         sec_data = checklist.get(s_key)
         if not sec_data:
             continue
-        # Sărim peste sistemele dezactivate pe utilaj (Varianta 4A)
         if sec_data.get("activ") is False:
             continue
 
@@ -686,7 +833,7 @@ def genereaza_pdf_mentenanta(data):
         randuri = sec_data.get("randuri", [])
         tbl_rows = [[
             Paragraph("<b>Specificație Operațiune</b>", s_tbl_bold),
-            Paragraph("<b>Conformitate</b>", ParagraphStyle('CC', parent=s_tbl_bold, alignment=1)),
+            Paragraph("<b>Conformitate</b>", ParagraphStyle('CC', parent=s_tbl_bold, alignment=TA_CENTER)),
             Paragraph("<b>Observații / Valori Măsurate</b>", s_tbl_bold)
         ]]
 
@@ -722,15 +869,13 @@ def genereaza_pdf_mentenanta(data):
 
         elements.append(Spacer(1, 6))
 
-    # Secțiunea 7: Recomandări IIoT & Recepție
     recomandari_iiot = str(data.get("recomandari_iiot") or "").strip()
     elements.append(Paragraph("7. RECOMANDĂRI TEHNICE, AUDIT UPGRADE / IIoT & RECEPȚIE LUCRĂRI", s_sec_title))
     elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=4))
     elements.append(Paragraph(
-        recomandari_iiot.replace("\n", "<br/>") if recomandari_iiot else "Fără recomandări suplimentare.",s_normal))
+        recomandari_iiot.replace("\n", "<br/>") if recomandari_iiot else "Fără recomandări suplimentare.", s_normal))
     elements.append(Spacer(1, 14))
 
-    # Semnături
     tehnician_def = setari.get('tehnician_implicit') or 'Tehnician Nexus'
     nume_beneficiar = str(data.get('verificator') or 'Client').strip()
     functie_ben = str(data.get('functie_verificator') or '').strip()
@@ -738,17 +883,17 @@ def genereaza_pdf_mentenanta(data):
 
     semnaturi_data = [
         [
-            Paragraph("<b>PRESTATOR (INGINER / TEHNICIAN SERVICE)</b>", ParagraphStyle('C1', parent=s_tbl_bold, alignment=1)),
-            Paragraph("<b>BENEFICIAR / CLIENT (VERIFICAT & RECEPȚIONAT)</b>", ParagraphStyle('C2', parent=s_tbl_bold, alignment=1))
+            Paragraph("<b>PRESTATOR (INGINER / TEHNICIAN SERVICE)</b>", ParagraphStyle('C1', parent=s_tbl_bold, alignment=TA_CENTER)),
+            Paragraph("<b>BENEFICIAR / CLIENT (VERIFICAT & RECEPȚIONAT)</b>", ParagraphStyle('C2', parent=s_tbl_bold, alignment=TA_CENTER))
         ],
         [
-            Paragraph(f"Nume & Prenume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C3', parent=s_tbl, alignment=1)),
-            Paragraph(f"Nume & Prenume: {nume_beneficiar}{linie_functie}", ParagraphStyle('C4', parent=s_tbl, alignment=1))
+            Paragraph(f"Nume & Prenume: {data.get('tehnician') or tehnician_def}", ParagraphStyle('C3', parent=s_tbl, alignment=TA_CENTER)),
+            Paragraph(f"Nume & Prenume: {nume_beneficiar}{linie_functie}", ParagraphStyle('C4', parent=s_tbl, alignment=TA_CENTER))
         ],
         [Spacer(1, 16), Spacer(1, 16)],
         [
-            Paragraph("Semnătură: ___________________________", ParagraphStyle('C5', parent=s_tbl, alignment=1)),
-            Paragraph("Semnătură / Ștampilă: ___________________", ParagraphStyle('C6', parent=s_tbl, alignment=1))
+            Paragraph("Semnătură: ___________________________", ParagraphStyle('C5', parent=s_tbl, alignment=TA_CENTER)),
+            Paragraph("Semnătură: ___________________________", ParagraphStyle('C6', parent=s_tbl, alignment=TA_CENTER))
         ]
     ]
     t_semn = Table(semnaturi_data, colWidths=[269, 270])

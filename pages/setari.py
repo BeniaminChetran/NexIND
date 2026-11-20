@@ -8,12 +8,45 @@ from repositories.tarife_repository import TarifeRepository
 from repositories.fraze_repository import FrazeRepository
 from config import db_cursor
 
+
+def _ensure_contact_cols():
+    """Asigură existența coloanelor telefon_1, telefon_2, email_1, email_2 în tabela setari."""
+    try:
+        with db_cursor() as c:
+            c.execute("""
+                ALTER TABLE setari
+                ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT ''
+            """)
+    except Exception:
+        pass
+
+
+def _get_setari_safe() -> dict:
+    _ensure_contact_cols()
+    date = dict(SetariRepository.get_setari() or {})
+    try:
+        with db_cursor() as c:
+            c.execute("SELECT telefon_1, telefon_2, email_1, email_2 FROM setari LIMIT 1")
+            row = c.fetchone()
+            if row:
+                for k in ("telefon_1", "telefon_2", "email_1", "email_2"):
+                    if row.get(k) is not None and not date.get(k):
+                        date[k] = row.get(k)
+    except Exception:
+        pass
+    return date
+
+
 def _get_tarife_safe():
     if hasattr(TarifeRepository, "get_all"):
         return TarifeRepository.get_all()
     with db_cursor() as c:
         c.execute("SELECT * FROM tarife_implicite ORDER BY id ASC")
         return c.fetchall()
+
 
 def _insert_tarif_safe(descriere: str, pret: float, moneda_um: str):
     if hasattr(TarifeRepository, "insert"):
@@ -28,11 +61,13 @@ def _insert_tarif_safe(descriere: str, pret: float, moneda_um: str):
             (descriere, float(pret), moneda_um)
         )
 
+
 def _update_pret_tarif_safe(tarif_id: int, nou_pret: float):
     if hasattr(TarifeRepository, "update_pret"):
         return TarifeRepository.update_pret(tarif_id, float(nou_pret))
     with db_cursor() as c:
         c.execute("UPDATE tarife_implicite SET pret = %s WHERE id = %s", (float(nou_pret), tarif_id))
+
 
 def _delete_tarif_safe(tarif_id: int):
     if hasattr(TarifeRepository, "delete"):
@@ -40,12 +75,14 @@ def _delete_tarif_safe(tarif_id: int):
     with db_cursor() as c:
         c.execute("DELETE FROM tarife_implicite WHERE id = %s", (tarif_id,))
 
+
 def _get_fraze_safe():
     if hasattr(FrazeRepository, "get_all"):
         return FrazeRepository.get_all()
     with db_cursor() as c:
         c.execute("SELECT * FROM fraze ORDER BY id ASC")
         return c.fetchall()
+
 
 def _insert_fraza_safe(titlu: str, continut: str):
     if hasattr(FrazeRepository, "insert"):
@@ -59,16 +96,18 @@ def _insert_fraza_safe(titlu: str, continut: str):
             (titlu, continut)
         )
 
+
 def _delete_fraza_safe(fraza_id: int):
     if hasattr(FrazeRepository, "delete"):
         return FrazeRepository.delete(fraza_id)
     with db_cursor() as c:
         c.execute("DELETE FROM fraze WHERE id = %s", (fraza_id,))
 
+
 def render_setari():
     st.subheader("⚙️ Setări Generale Firmă, TVA & Configurări Documente")
 
-    setari_curente = SetariRepository.get_setari()
+    setari_curente = _get_setari_safe()
     parola_sistem = str(setari_curente.get("pass") or "").strip()
     acces_deblocat = bool(st.session_state.get("is_unlocked", False)) or (not parola_sistem)
 
@@ -103,6 +142,32 @@ def render_setari():
                 banca_mea = st.text_input("Bancă", value=setari_curente.get("banca_mea", ""))
                 iban_mea = st.text_input("Cont IBAN", value=setari_curente.get("iban_mea", ""))
                 swep_mea = st.text_input("Cod SWIFT / BIC", value=setari_curente.get("swep_mea", ""))
+
+            st.markdown("---")
+            st.markdown("##### Date de Contact Firmă (2 Telefoane & 2 Adrese de Email)")
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                telefon_1 = st.text_input(
+                    "Telefon 1",
+                    value=setari_curente.get("telefon_1", ""),
+                    placeholder="ex: +40 7xx xxx xxx"
+                )
+                telefon_2 = st.text_input(
+                    "Telefon 2",
+                    value=setari_curente.get("telefon_2", ""),
+                    placeholder="ex: +40 7xx xxx xxx"
+                )
+            with cc2:
+                email_1 = st.text_input(
+                    "Email 1",
+                    value=setari_curente.get("email_1", ""),
+                    placeholder="ex: contact@nexind.ro"
+                )
+                email_2 = st.text_input(
+                    "Email 2",
+                    value=setari_curente.get("email_2", ""),
+                    placeholder="ex: oferte@nexind.ro"
+                )
 
             st.markdown("---")
             st.markdown("##### Valori Implicite pentru Oferte de Preț & Rapoarte Tehnice")
@@ -145,6 +210,10 @@ def render_setari():
                     "banca_mea": banca_mea,
                     "iban_mea": iban_mea,
                     "swep_mea": swep_mea,
+                    "telefon_1": telefon_1.strip(),
+                    "telefon_2": telefon_2.strip(),
+                    "email_1": email_1.strip(),
+                    "email_2": email_2.strip(),
                     "cota_tva": float(cota_tva),
                     "valabilitate_implicita": valabilitate_implicita.strip() or "15 zile",
                     "termeni_plata_impliciti": termeni_plata_impliciti.strip() or "5 zile de la emiterea facturii",
@@ -153,7 +222,7 @@ def render_setari():
                     "clauze_subsol_implicite": clauze_subsol_implicite.strip(),
                 })
                 SetariRepository.save_setari(date_actualizate)
-                st.success("✅ Setările firmei, TVA-ul și valorile implicite au fost salvate!")
+                st.success("✅ Setările firmei, contactele, TVA-ul și valorile implicite au fost salvate!")
                 st.rerun()
 
         # ---------------------------------------------------------
@@ -210,7 +279,7 @@ def render_setari():
                         "RON/ora", "RON/km", "RON/buc", "RON/set"
                     ]
                 )
-            
+
             if st.form_submit_button("➕ Adaugă Tarif", type="primary"):
                 if desc_tarif.strip():
                     _insert_tarif_safe(desc_tarif.strip(), pret_tarif, moneda_um)
