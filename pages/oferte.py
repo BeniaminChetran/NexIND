@@ -124,6 +124,31 @@ def extrage_nume_persoana_firma(client_obj: dict) -> str:
             return str(val).strip()
     return ""
 
+def _sincronizeaza_editor_inainte_de_adaugare():
+    """Preia modificările nesalvate din widget-ul st.data_editor înainte de a adăuga un rând nou de sus."""
+    counter = st.session_state.get("editor_reset_counter", 0)
+    w_key = f"editor_linii_oferta_unic_{counter}"
+    base_df = st.session_state.get("df_oferta_editor")
+    if base_df is None or w_key not in st.session_state:
+        return base_df
+    delta = st.session_state[w_key]
+    if not isinstance(delta, dict):
+        return base_df
+    df_work = base_df.copy().reset_index(drop=True)
+    for row_idx_str, changes in delta.get("edited_rows", {}).items():
+        r_idx = int(row_idx_str)
+        if 0 <= r_idx < len(df_work):
+            for col_k, val_v in changes.items():
+                if col_k in df_work.columns:
+                    df_work.at[r_idx, col_k] = val_v
+    del_rows = sorted([int(i) for i in delta.get("deleted_rows", []) if 0 <= int(i) < len(df_work)], reverse=True)
+    if del_rows:
+        df_work = df_work.drop(index=del_rows).reset_index(drop=True)
+    added_rows = delta.get("added_rows", [])
+    if added_rows:
+        df_work = pd.concat([df_work, pd.DataFrame(added_rows)], ignore_index=True)
+    return df_work
+
 def _init_sau_reseteaza_draft_oferta(valabilitate_def: str, termeni_plata_def: str, intocmit_de_def: str, moneda: str = "EUR"):
     """Creează sau resetează complet starea persistentă a ofertei în lucru."""
     st.session_state["oferta_draft"] = {
@@ -179,14 +204,19 @@ def render_oferte():
 
     # Migrare automată a coloanelor în sesiune și asigurarea coloanei unice Ordine (1..N)
     if "df_oferta_editor" in st.session_state:
-        df_ex = st.session_state["df_oferta_editor"].copy().reset_index(drop=True)
+        df_ex = st.session_state["df_oferta_editor"]
+        schimbat_ex = False
         if "Pret Unitar (RON)" in df_ex.columns and "Pret Unitar" not in df_ex.columns:
             df_ex = df_ex.rename(columns={"Pret Unitar (RON)": "Pret Unitar"})
+            schimbat_ex = True
         if "Moneda" not in df_ex.columns:
             df_ex["Moneda"] = "RON"
+            schimbat_ex = True
         if "Ordine" not in df_ex.columns:
             df_ex.insert(0, "Ordine", range(1, len(df_ex) + 1))
-        st.session_state["df_oferta_editor"] = df_ex
+            schimbat_ex = True
+        if schimbat_ex:
+            st.session_state["df_oferta_editor"] = df_ex.reset_index(drop=True)
 
     draft = st.session_state["oferta_draft"]
 
@@ -384,7 +414,8 @@ def render_oferte():
             pret_vanzare = round(pret_achiz * (1.0 + adaos_client / 100.0), 2)
             cod_p = str(p_info.get("cod_producator") or "").strip()
             desc_p = f"{p_info['denumire']} ({cod_p})" if cod_p else str(p_info["denumire"])
-            next_ord = len(st.session_state["df_oferta_editor"]) + 1
+            df_baza_p = _sincronizeaza_editor_inainte_de_adaugare()
+            next_ord = len(df_baza_p) + 1
 
             linie_piesa = pd.DataFrame([{
                 "Ordine": next_ord,
@@ -396,7 +427,7 @@ def render_oferte():
                 "Termen livrare": str(termen_piesa or p_info.get("termen_livrare") or "1").strip()
             }])
             st.session_state["df_oferta_editor"] = pd.concat(
-                [st.session_state["df_oferta_editor"], linie_piesa], ignore_index=True
+                [df_baza_p, linie_piesa], ignore_index=True
             )
             st.session_state["editor_reset_counter"] += 1
             st.toast(f"✅ Piesa adăugată: {desc_p} ({pret_vanzare:.2f} {val_piesa})")
@@ -479,7 +510,8 @@ def render_oferte():
                         mon_um_brut = str(t_info.get('moneda_um') or 'RON').upper()
                         moneda_tarif = "EUR" if "EUR" in mon_um_brut else "RON"
                         um_normalizata = normalizeaza_um(mon_um_brut)
-                        next_ord = len(st.session_state["df_oferta_editor"]) + 1
+                        df_baza_s = _sincronizeaza_editor_inainte_de_adaugare()
+                        next_ord = len(df_baza_s) + 1
                         
                         linie_noua = pd.DataFrame([{
                             "Ordine": next_ord,
@@ -490,7 +522,7 @@ def render_oferte():
                             "Moneda": moneda_tarif,
                             "Termen livrare": termen_tarif
                         }])
-                        st.session_state["df_oferta_editor"] = pd.concat([st.session_state["df_oferta_editor"], linie_noua], ignore_index=True)
+                        st.session_state["df_oferta_editor"] = pd.concat([df_baza_s, linie_noua], ignore_index=True)
                         st.session_state["editor_reset_counter"] += 1
                         st.toast(f"✅ Adăugat: {t_info['descriere']} ({pret_unitar:.2f} {moneda_tarif})")
                         st.rerun()
@@ -520,10 +552,11 @@ def render_oferte():
         f"inserează un rând gol la mijloc, sau folosește **Ctrl+C / Ctrl+V** pe celule. Monedă finală: **{moneda_oferta}** (curs BNR: **{curs_valutar:.4f}**)."
     )
 
-    df_pt_editor = st.session_state["df_oferta_editor"].copy().reset_index(drop=True)
+    df_pt_editor = st.session_state["df_oferta_editor"].reset_index(drop=True)
     if "Ordine" not in df_pt_editor.columns:
         df_pt_editor.insert(0, "Ordine", range(1, len(df_pt_editor) + 1))
 
+    # Păstrăm baza stabilă (nu rescriem df_oferta_editor la fiecare rerun, altfel st.data_editor aruncă editările în memorie)
     edited_oferta_df = st.data_editor(
         df_pt_editor,
         num_rows="dynamic",
@@ -541,7 +574,7 @@ def render_oferte():
         use_container_width=True
     )
 
-    # Bară de control rapid: Aplică ordinea, Inserează rând gol la mijloc, Curăță rânduri goale
+    # Bară de control rapid: Aplică ordinea, Inserează rând gol la mijloc
     if not edited_oferta_df.empty:
         c_ord1, c_ins_pos, c_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
         if c_ord1.button("🔄 Aplică Ordinea & Renumerotează", key="btn_aplica_ordinea_oferta", use_container_width=True):
@@ -594,9 +627,8 @@ def render_oferte():
                     edited_oferta_df.at[idx_row, "Cantitate"] = MAX_ORE_TRANSPORT_ZI
                     depasire_transport = True
 
-    st.session_state["df_oferta_editor"] = edited_oferta_df.reset_index(drop=True)
-
     if depasire_transport:
+        st.session_state["df_oferta_editor"] = edited_oferta_df.reset_index(drop=True)
         st.warning(f"⚠️ Limita legală de condus este de maximum **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**. Cantitatea pentru **Ore transport** a fost limitată automat la **{int(MAX_ORE_TRANSPORT_ZI)}**.")
         st.session_state["editor_reset_counter"] += 1
         st.rerun()
@@ -867,7 +899,7 @@ def render_oferte():
                     st.session_state[hist_state_key] = df_art_vechi
 
                 st.markdown("##### ✏️ Editare & Reordonare Poziții / Prețuri (pentru Revizuire Ofertă):")
-                df_hist_curent = st.session_state[hist_state_key].copy().reset_index(drop=True)
+                df_hist_curent = st.session_state[hist_state_key].reset_index(drop=True)
                 df_art_editat_hist = st.data_editor(
                     df_hist_curent,
                     num_rows="dynamic",
@@ -883,7 +915,6 @@ def render_oferte():
                     key=f"hist_editor_{oid}_{st.session_state[hist_counter_key]}",
                     use_container_width=True
                 )
-                st.session_state[hist_state_key] = df_art_editat_hist.reset_index(drop=True)
 
                 if not df_art_editat_hist.empty:
                     ch_ord1, ch_ins_pos, ch_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
