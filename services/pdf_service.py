@@ -98,16 +98,34 @@ def get_date_firma_mea():
 
 
 def _extrage_linii_contact_dreapta(setari: dict) -> list[str]:
-    """Returnează telefoanele și emailurile completate (fiecare pe rândul său) pentru partea dreaptă."""
+    """Returnează telefoanele și emailurile completate din setări pentru partea dreaptă."""
+    if not isinstance(setari, dict):
+        return []
+
     linii = []
-    for k in ("telefon_1", "telefon_2"):
-        val = str((setari or {}).get(k) or "").strip()
-        if val:
-            linii.append(f"Tel: {val}")
-    for k in ("email_1", "email_2"):
-        val = str((setari or {}).get(k) or "").strip()
-        if val:
-            linii.append(f"Email: {val}")
+    chei_telefon = ("telefon_1", "telefon_2", "tel_1", "tel_2", "telefon", "tel", "nr_telefon")
+    chei_email = ("email_1", "email_2", "mail_1", "mail_2", "email", "mail", "adresa_email")
+
+    telefoane_vazute = set()
+    for k in chei_telefon:
+        val = str(setari.get(k) or "").strip()
+        if val and val.lower() not in ("none", "null", "nan"):
+            for parte in val.replace(";", "/").split("/"):
+                p_curat = parte.strip()
+                if p_curat and p_curat not in telefoane_vazute:
+                    telefoane_vazute.add(p_curat)
+                    linii.append(f"Tel: {p_curat}")
+
+    emailuri_vazute = set()
+    for k in chei_email:
+        val = str(setari.get(k) or "").strip()
+        if val and val.lower() not in ("none", "null", "nan"):
+            for parte in val.replace(";", ",").split(","):
+                e_curat = parte.strip()
+                if e_curat and e_curat.lower() not in emailuri_vazute:
+                    emailuri_vazute.add(e_curat.lower())
+                    linii.append(f"Email: {e_curat}")
+
     return linii
 
 
@@ -123,7 +141,7 @@ def _construieste_antet_cu_sigla(
 ) -> Table:
     """
     Stânga: sigla Nexind sus, dedesubt datele firmei (același font s_normal / s_bold).
-    Dreapta: titlul, numărul, data și dedesubt telefoanele și emailurile aliniate tabelar la dreapta (același font s_normal).
+    Dreapta: titlul, numărul, data și dedesubt telefoanele și emailurile aliniate la dreapta (același font s_normal).
     """
     stanga_elems = []
     logo_path = _gaseste_sigla_nexind()
@@ -197,27 +215,22 @@ def _construieste_antet_cu_sigla(
     linii_contact_dr = _extrage_linii_contact_dreapta(setari or {})
     if linii_contact_dr:
         dreapta_elems.append(Spacer(1, 1.5 * mm))
-        tbl_contact_dr = Table(
-            [[Paragraph(lc, style_meta_dr)] for lc in linii_contact_dr],
-            colWidths=[85 * mm],
-        )
-        tbl_contact_dr.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
-            ("TOPPADDING", (0, 0), (-1, -1), 0.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        dreapta_elems.append(tbl_contact_dr)
+        for lc in linii_contact_dr:
+            dreapta_elems.append(Paragraph(lc, style_meta_dr))
 
-    tbl = Table([[stanga_elems, dreapta_elems]], colWidths=[95 * mm, 87 * mm])
+    tbl = Table([[stanga_elems, dreapta_elems]], colWidths=[96 * mm, 92 * mm])
     tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (0, 0), "LEFT"),
         ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#CBD5E1")),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
     ]))
     return tbl
+
 
 
 def draw_header_footer(canvas, doc, titlu_document="RAPORT DE INTERVENȚIE TEHNICĂ", centreaza_titlu=False, font_size_titlu=14):
