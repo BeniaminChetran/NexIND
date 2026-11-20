@@ -13,7 +13,8 @@ def incarca_date_dashboard():
                 COALESCE(SUM(durata),0) AS minute,
                 COUNT(DISTINCT firma) AS clienti,
                 COUNT(DISTINCT masina) AS utilaje,
-                COUNT(*) FILTER (WHERE stare_finala='Oprită / Necesar piese') AS utilaje_oprite
+                COUNT(*) FILTER (WHERE stare_finala='Oprită / Necesar piese') AS utilaje_oprite,
+                COUNT(*) FILTER (WHERE LOWER(COALESCE(stare_finala, '')) LIKE '%supraveghere%') AS utilaje_supraveghere
             FROM reparatii
             WHERE DATE_TRUNC('month', data_creare) = DATE_TRUNC('month', CURRENT_DATE)
         """)
@@ -56,38 +57,61 @@ def incarca_date_dashboard():
 
 
 @st.cache_data(ttl=120)
-def incarca_utilaje_oprite_detaliat():
-    """Returnează doar utilajele oprite, motivul și firma la care se află."""
+def incarca_utilaje_dupa_stare(mod: str):
+    """
+    mod:
+      - 'oprite' -> utilaje oprite
+      - 'supraveghere' -> utilaje în stare 'Funcțională sub supraveghere'
+    """
     with db_cursor() as c:
-        c.execute("""
-            SELECT
-                id,
-                COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
-                COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS utilaj,
-                COALESCE(
-                    NULLIF(TRIM(defect), ''),
-                    NULLIF(TRIM(titlu), ''),
-                    'Nespecificat'
-                ) AS motiv_oprire,
-                COALESCE(stare_finala, 'Oprită / Necesar piese') AS stare,
-                TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
-            FROM reparatii
-            WHERE stare_finala = 'Oprită / Necesar piese'
-               OR LOWER(COALESCE(stare_finala, '')) LIKE '%oprit%'
-            ORDER BY data_creare DESC NULLS LAST, id DESC
-        """)
+        if mod == "supraveghere":
+            c.execute("""
+                SELECT
+                    id,
+                    COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
+                    COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS utilaj,
+                    COALESCE(
+                        NULLIF(TRIM(defect), ''),
+                        NULLIF(TRIM(solutie), ''),
+                        NULLIF(TRIM(titlu), ''),
+                        'Nespecificat'
+                    ) AS motiv_oprire,
+                    COALESCE(stare_finala, 'Funcțională sub supraveghere') AS stare,
+                    TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
+                FROM reparatii
+                WHERE LOWER(COALESCE(stare_finala, '')) LIKE '%supraveghere%'
+                ORDER BY data_creare DESC NULLS LAST, id DESC
+            """)
+        else:
+            c.execute("""
+                SELECT
+                    id,
+                    COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
+                    COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS utilaj,
+                    COALESCE(
+                        NULLIF(TRIM(defect), ''),
+                        NULLIF(TRIM(titlu), ''),
+                        'Nespecificat'
+                    ) AS motiv_oprire,
+                    COALESCE(stare_finala, 'Oprită / Necesar piese') AS stare,
+                    TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
+                FROM reparatii
+                WHERE stare_finala = 'Oprită / Necesar piese'
+                   OR LOWER(COALESCE(stare_finala, '')) LIKE '%oprit%'
+                ORDER BY data_creare DESC NULLS LAST, id DESC
+            """)
         rows = c.fetchall() or []
     return [dict(r) for r in rows]
 
 
-def marcheaza_utilaj_activ(reparatie_id: int, stare_noua: str = "Funcțională"):
+def actualizeaza_stare_reparatie(reparatie_id: int, stare_noua: str):
     with db_cursor() as c:
         c.execute(
             "UPDATE reparatii SET stare_finala = %s WHERE id = %s",
             (stare_noua, int(reparatie_id)),
         )
     incarca_date_dashboard.clear()
-    incarca_utilaje_oprite_detaliat.clear()
+    incarca_utilaje_dupa_stare.clear()
 
 
 @st.cache_data(ttl=120)
@@ -128,6 +152,36 @@ def incarca_clienti_inactivi(zile_inactivitate: int = 90):
     return [dict(r) for r in rows]
 
 
+def _randare_lista_utilaje_stare(items: list[dict], este_supraveghere: bool):
+    for item in items:
+        rep_id = item["id"]
+        col_info, col_act1, col_act2 = st.columns([5.2, 1.3, 1.3], vertical_alignment="center")
+        with col_info:
+            st.markdown(
+                f"<div style='font-size:13px; line-height:1.35;'>"
+                f"<b>{item['firma']}</b> — {item['utilaj']} "
+                f"<span style='color:#64748B;'>(#{rep_id} • {item['data_inregistrare']})</span><br/>"
+                f"<span style='font-size:12px; color:#475569;'><b>Motiv / Detalii:</b> {item['motiv_oprire']}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with col_act1:
+            if st.button("✅ Activ", key=f"btn_activ_{mod_key(este_supraveghere)}_{rep_id}", use_container_width=True):
+                actualizeaza_stare_reparatie(rep_id, "Funcțională")
+                st.toast(f"✅ #{rep_id} ({item['utilaj']}) trecut pe Funcțională!")
+                st.rerun()
+        with col_act2:
+            if not este_supraveghere:
+                if st.button("👀 Supraveghere", key=f"btn_supr_{rep_id}", use_container_width=True):
+                    actualizeaza_stare_reparatie(rep_id, "Funcțională sub supraveghere")
+                    st.toast(f"👀 #{rep_id} ({item['utilaj']}) trecut pe Funcțională sub supraveghere!")
+                    st.rerun()
+
+
+def mod_key(este_supraveghere: bool) -> str:
+    return "supr" if este_supraveghere else "oprit"
+
+
 def render_dashboard():
     col_title, col_refresh = st.columns([5, 1])
     with col_title:
@@ -135,7 +189,7 @@ def render_dashboard():
     with col_refresh:
         if st.button("🔄 Actualizează", use_container_width=True):
             incarca_date_dashboard.clear()
-            incarca_utilaje_oprite_detaliat.clear()
+            incarca_utilaje_dupa_stare.clear()
             incarca_clienti_inactivi.clear()
             st.rerun()
 
@@ -146,17 +200,19 @@ def render_dashboard():
     clienti_activi = kpi_res["clienti"] if kpi_res else 0
     utilaje_active = kpi_res["utilaje"] if kpi_res else 0
     utilaje_oprite = kpi_res["utilaje_oprite"] if kpi_res else 0
+    utilaje_supr = kpi_res["utilaje_supraveghere"] if kpi_res else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("🔧 Intervenții luna curentă", interventii_luna)
     c2.metric("⏱ Ore lucrate", ore_lucrate)
     c3.metric("🏢 Clienți activi", clienti_activi)
     c4.metric("⚙️ Utilaje active", utilaje_active)
     c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
+    c6.metric("👀 Sub supraveghere", utilaje_supr)
 
     st.session_state.setdefault("dash_sectiune_activa", None)
 
-    b1, b2, b3 = st.columns([1.6, 1.6, 1.0])
+    b1, b2, b3, b4 = st.columns([1.5, 1.7, 1.5, 1.0])
     with b1:
         if st.button(
             "🛑 Utilaje oprite",
@@ -169,6 +225,16 @@ def render_dashboard():
             )
     with b2:
         if st.button(
+            "👀 Sub supraveghere",
+            use_container_width=True,
+            type="primary" if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "secondary",
+            key="btn_dash_sub_supraveghere"
+        ):
+            st.session_state["dash_sectiune_activa"] = (
+                None if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "sub_supraveghere"
+            )
+    with b3:
+        if st.button(
             "💤 Clienți inactivi",
             use_container_width=True,
             type="primary" if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "secondary",
@@ -177,7 +243,7 @@ def render_dashboard():
             st.session_state["dash_sectiune_activa"] = (
                 None if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "clienti_inactivi"
             )
-    with b3:
+    with b4:
         if st.session_state["dash_sectiune_activa"] is not None and st.button("✖ Ascunde", use_container_width=True, key="btn_dash_ascunde"):
             st.session_state["dash_sectiune_activa"] = None
 
@@ -185,29 +251,27 @@ def render_dashboard():
 
     if sectiune_activa == "utilaje_oprite":
         st.markdown("---")
-        st.subheader("🛑 Utilaje Oprite — Motiv & Firmă")
-        date_oprite = incarca_utilaje_oprite_detaliat()
+        st.markdown("#### 🛑 Utilaje Oprite — Motiv & Firmă")
+        date_oprite = incarca_utilaje_dupa_stare("oprite")
         if date_oprite:
-            for item in date_oprite:
-                rep_id = item["id"]
-                col_info, col_act = st.columns([5.5, 1.5], vertical_alignment="center")
-                with col_info:
-                    st.markdown(
-                        f"**{item['firma']}** — *{item['utilaj']}* (`#{rep_id}`, {item['data_inregistrare']})  \n"
-                        f"**Motiv oprire:** {item['motiv_oprire']}"
-                    )
-                with col_act:
-                    if st.button("✅ Trece pe Activ", key=f"btn_activ_rep_{rep_id}", use_container_width=True):
-                        marcheaza_utilaj_activ(rep_id, "Funcțională")
-                        st.toast(f"✅ #{rep_id} ({item['utilaj']}) a fost trecut pe Activ!")
-                        st.rerun()
+            _randare_lista_utilaje_stare(date_oprite, este_supraveghere=False)
         else:
             st.info("Nu există utilaje oprite în acest moment.")
         return
 
+    if sectiune_activa == "sub_supraveghere":
+        st.markdown("---")
+        st.markdown("#### 👀 Funcțională sub supraveghere")
+        date_supr = incarca_utilaje_dupa_stare("supraveghere")
+        if date_supr:
+            _randare_lista_utilaje_stare(date_supr, este_supraveghere=True)
+        else:
+            st.info("Nu există utilaje în starea «Funcțională sub supraveghere».")
+        return
+
     if sectiune_activa == "clienti_inactivi":
         st.markdown("---")
-        st.subheader("💤 Clienți Inactivi")
+        st.markdown("#### 💤 Clienți Inactivi")
         zile_prag = st.selectbox(
             "Fără intervenții de cel puțin:",
             options=[30, 60, 90, 180],
