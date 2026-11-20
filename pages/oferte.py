@@ -879,7 +879,7 @@ def render_oferte():
 
                 if hist_state_key not in st.session_state:
                     df_art_vechi = pd.DataFrame(articole_salvate) if articole_salvate else pd.DataFrame(
-                        columns=["Ordine", "Descriere", "UM", "Cantitate", col_pret_hist, "Termen livrare"]
+                        columns=["Ordine", "Descriere", "UM", "Cantitate", "Pret Sursa", "Moneda Sursa", col_pret_hist, "Termen livrare"]
                     )
                     for c_name in list(df_art_vechi.columns):
                         if "Pret Unitar" in c_name and c_name != col_pret_hist:
@@ -889,6 +889,10 @@ def render_oferte():
                                 df_art_vechi = df_art_vechi.drop(columns=[c_name])
                     if col_pret_hist not in df_art_vechi.columns:
                         df_art_vechi[col_pret_hist] = 0.0
+                    if "Pret Sursa" not in df_art_vechi.columns:
+                        df_art_vechi["Pret Sursa"] = pd.to_numeric(df_art_vechi[col_pret_hist], errors="coerce").fillna(0.0)
+                    if "Moneda Sursa" not in df_art_vechi.columns:
+                        df_art_vechi["Moneda Sursa"] = moneda_of
                     if "Termen livrare" not in df_art_vechi.columns:
                         df_art_vechi["Termen livrare"] = ""
                     df_art_vechi = df_art_vechi.reset_index(drop=True)
@@ -896,9 +900,13 @@ def render_oferte():
                         df_art_vechi.insert(0, "Ordine", range(1, len(df_art_vechi) + 1))
                     else:
                         df_art_vechi["Ordine"] = range(1, len(df_art_vechi) + 1)
-                    st.session_state[hist_state_key] = df_art_vechi
+
+                    coloane_ordonate_h = ["Ordine", "Descriere", "UM", "Cantitate", "Pret Sursa", "Moneda Sursa", col_pret_hist, "Termen livrare"]
+                    alte_col_h = [c for c in df_art_vechi.columns if c not in coloane_ordonate_h]
+                    st.session_state[hist_state_key] = df_art_vechi[coloane_ordonate_h + alte_col_h]
 
                 st.markdown("##### ✏️ Editare & Reordonare Poziții / Prețuri (pentru Revizuire Ofertă):")
+                st.caption(f"💡 Modifică **Preț Sursa** și **Moneda Sursa** — coloana **{col_pret_hist}** și totalul PDF se recalculează automat folosind cursul BNR (**{curs_of:.4f}**).")
                 df_hist_curent = st.session_state[hist_state_key].reset_index(drop=True)
                 df_art_editat_hist = st.data_editor(
                     df_hist_curent,
@@ -909,12 +917,22 @@ def render_oferte():
                         "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False, width="large"),
                         "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"),
                         "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
-                        col_pret_hist: st.column_config.NumberColumn(f"Preț ({moneda_of})", min_value=0.0, format="%.2f", default=0.0, width="small"),
+                        "Pret Sursa": st.column_config.NumberColumn("Preț Sursa", min_value=0.0, format="%.2f", default=0.0, width="small"),
+                        "Moneda Sursa": st.column_config.SelectboxColumn("Moneda Sursa", options=["RON", "EUR"], default=moneda_of, width="small"),
+                        col_pret_hist: st.column_config.NumberColumn(f"Preț ({moneda_of}) [Auto]", min_value=0.0, format="%.2f", default=0.0, disabled=True, width="small"),
                         "Termen livrare": st.column_config.TextColumn("Termen livrare", default="1", width="small")
                     },
                     key=f"hist_editor_{oid}_{st.session_state[hist_counter_key]}",
                     use_container_width=True
                 )
+
+                # Sincronizăm automat Preț Unitar (moneda ofertei) din Preț Sursa + Moneda Sursa
+                if not df_art_editat_hist.empty:
+                    df_art_editat_hist = df_art_editat_hist.copy()
+                    for idx_h, r_h in df_art_editat_hist.iterrows():
+                        p_src_val = float(pd.to_numeric(r_h.get("Pret Sursa"), errors="coerce") or 0.0)
+                        m_src_val = str(r_h.get("Moneda Sursa") or moneda_of).strip().upper()
+                        df_art_editat_hist.at[idx_h, col_pret_hist] = converteste_in_moneda_oferta(p_src_val, m_src_val, moneda_of, curs_of)
 
                 # Previzualizare LIVE a totalului recalculat în Istoric la orice modificare de preț / cantitate
                 if not df_art_editat_hist.empty:
@@ -960,6 +978,8 @@ def render_oferte():
                             "Descriere": "",
                             "UM": "buc",
                             "Cantitate": 1.0,
+                            "Pret Sursa": 0.0,
+                            "Moneda Sursa": moneda_of,
                             col_pret_hist: 0.0,
                             "Termen livrare": "1"
                         }])
@@ -985,7 +1005,12 @@ def render_oferte():
                             df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
 
                         df_h_val["Cantitate"] = pd.to_numeric(df_h_val["Cantitate"], errors="coerce").fillna(0.0)
-                        df_h_val[col_pret_hist] = pd.to_numeric(df_h_val[col_pret_hist], errors="coerce").fillna(0.0)
+                        df_h_val["Pret Sursa"] = pd.to_numeric(df_h_val["Pret Sursa"], errors="coerce").fillna(0.0)
+                        df_h_val["Moneda Sursa"] = df_h_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
+                        df_h_val[col_pret_hist] = [
+                            converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
+                            for p_s, m_s in zip(df_h_val["Pret Sursa"], df_h_val["Moneda Sursa"])
+                        ]
 
                         df_h_sync = df_h_val.copy()
                         df_h_sync["Ordine"] = range(1, len(df_h_sync) + 1)
@@ -1040,6 +1065,13 @@ def render_oferte():
                         if "Ordine" in df_h_cur_val.columns:
                             df_h_cur_val["Ordine"] = pd.to_numeric(df_h_cur_val["Ordine"], errors="coerce").fillna(999)
                             df_h_cur_val = df_h_cur_val.sort_values(by="Ordine", kind="mergesort")
+                        df_h_cur_val["Cantitate"] = pd.to_numeric(df_h_cur_val["Cantitate"], errors="coerce").fillna(0.0)
+                        df_h_cur_val["Pret Sursa"] = pd.to_numeric(df_h_cur_val["Pret Sursa"], errors="coerce").fillna(0.0)
+                        df_h_cur_val["Moneda Sursa"] = df_h_cur_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
+                        df_h_cur_val[col_pret_hist] = [
+                            converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
+                            for p_s, m_s in zip(df_h_cur_val["Pret Sursa"], df_h_cur_val["Moneda Sursa"])
+                        ]
                         linii_cur = df_h_cur_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_c in linii_cur:
                             if este_ore_transport(l_c.get("Descriere")) and float(l_c.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
