@@ -188,7 +188,19 @@ def render_dashboard():
         st.subheader("🛑 Utilaje Oprite — Motiv & Firmă")
         date_oprite = incarca_utilaje_oprite_detaliat()
         if date_oprite:
-            st.dataframe(pd.DataFrame(date_oprite), use_container_width=True, hide_index=True)
+            for item in date_oprite:
+                rep_id = item["id"]
+                col_info, col_act = st.columns([5.5, 1.5], vertical_alignment="center")
+                with col_info:
+                    st.markdown(
+                        f"**{item['firma']}** — *{item['utilaj']}* (`#{rep_id}`, {item['data_inregistrare']})  \n"
+                        f"**Motiv oprire:** {item['motiv_oprire']}"
+                    )
+                with col_act:
+                    if st.button("✅ Trece pe Activ", key=f"btn_activ_rep_{rep_id}", use_container_width=True):
+                        marcheaza_utilaj_activ(rep_id, "Funcțională")
+                        st.toast(f"✅ #{rep_id} ({item['utilaj']}) a fost trecut pe Activ!")
+                        st.rerun()
         else:
             st.info("Nu există utilaje oprite în acest moment.")
         return
