@@ -117,26 +117,28 @@ def actualizeaza_stare_reparatie(reparatie_id: int, stare_noua: str):
 @st.cache_data(ttl=120)
 def incarca_clienti_inactivi(zile_inactivitate: int = 90):
     """Returnează doar clienții inactivi (fără activitate în ultimele N zile)."""
-    with db_cursor() as c:
-        try:
+    zile = int(zile_inactivitate)
+
+    try:
+        with db_cursor() as c:
             c.execute("""
                 SELECT
                     f.nume AS "Client / Firmă",
-                    COALESCE(NULLIF(TRIM(f.cui), ''), '-') AS "CUI",
                     TO_CHAR(MAX(r.data_creare), 'YYYY-MM-DD') AS "Ultima intervenție"
                 FROM firme f
                 LEFT JOIN reparatii r ON LOWER(TRIM(r.firma)) = LOWER(TRIM(f.nume))
-                GROUP BY f.id, f.nume, f.cui
+                GROUP BY f.id, f.nume
                 HAVING MAX(r.data_creare) IS NULL
-                    OR MAX(r.data_creare) < CURRENT_DATE - (%s * INTERVAL '1 day')
+                    OR MAX(r.data_creare) < (CURRENT_DATE - make_interval(days => %s))::timestamp
                 ORDER BY f.nume ASC
-            """, (int(zile_inactivitate),))
+            """, (zile,))
             rows = c.fetchall() or []
             if rows:
                 return [dict(r) for r in rows]
-        except Exception:
-            pass
+    except Exception:
+        pass
 
+    with db_cursor() as c:
         c.execute("""
             SELECT
                 TRIM(firma) AS "Client / Firmă",
@@ -145,10 +147,11 @@ def incarca_clienti_inactivi(zile_inactivitate: int = 90):
             FROM reparatii
             WHERE firma IS NOT NULL AND TRIM(firma) <> ''
             GROUP BY TRIM(firma)
-            HAVING MAX(data_creare) < CURRENT_DATE - (%s * INTERVAL '1 day')
+            HAVING MAX(data_creare) < (CURRENT_DATE - make_interval(days => %s))::timestamp
             ORDER BY MAX(data_creare) ASC
-        """, (int(zile_inactivitate),))
+        """, (zile,))
         rows = c.fetchall() or []
+
     return [dict(r) for r in rows]
 
 
