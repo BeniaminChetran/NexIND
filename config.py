@@ -49,17 +49,37 @@ db_pool = init_connection_pool()
 # ------------------------------------------------------------------------------
 @contextmanager
 def get_connection():
-    """Gestionează conexiunea din pool cu commit/rollback automat."""
+    """Gestionează conexiunea din pool cu verificare conexiune activă și commit/rollback automat."""
     conn = db_pool.getconn()
     try:
+        # Verifică dacă conexiunea a fost închisă sau a picat pe server
+        if conn.closed:
+            db_pool.putconn(conn, close=True)
+            conn = db_pool.getconn()
+        else:
+            try:
+                with conn.cursor() as chk_cur:
+                    chk_cur.execute("SELECT 1")
+            except psycopg2.OperationalError:
+                db_pool.putconn(conn, close=True)
+                conn = db_pool.getconn()
+
         yield conn
         conn.commit()
     except Exception as e:
-        conn.rollback()
+        try:
+            if conn and not conn.closed:
+                conn.rollback()
+        except Exception:
+            pass
         logger.error(f"Eroare în transacția DB, rollback efectuat: {e}")
         raise e
     finally:
-        db_pool.putconn(conn)
+        if conn is not None:
+            try:
+                db_pool.putconn(conn, close=bool(conn.closed))
+            except Exception:
+                pass
 
 @contextmanager
 def db_cursor(cursor_factory=psycopg2.extras.RealDictCursor):
