@@ -177,13 +177,15 @@ def render_oferte():
     if "oferta_draft" not in st.session_state:
         _init_sau_reseteaza_draft_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, "EUR")
 
-    # Migrare automată dacă exista un dataframe vechi în sesiune fără coloana Moneda
+    # Migrare automată a coloanelor în sesiune și asigurarea coloanei unice Ordine (1..N)
     if "df_oferta_editor" in st.session_state:
-        df_ex = st.session_state["df_oferta_editor"]
+        df_ex = st.session_state["df_oferta_editor"].copy().reset_index(drop=True)
         if "Pret Unitar (RON)" in df_ex.columns and "Pret Unitar" not in df_ex.columns:
             df_ex = df_ex.rename(columns={"Pret Unitar (RON)": "Pret Unitar"})
         if "Moneda" not in df_ex.columns:
             df_ex["Moneda"] = "RON"
+        if "Ordine" not in df_ex.columns:
+            df_ex.insert(0, "Ordine", range(1, len(df_ex) + 1))
         st.session_state["df_oferta_editor"] = df_ex
 
     draft = st.session_state["oferta_draft"]
@@ -288,6 +290,7 @@ def render_oferte():
     )
     draft["formula_adresare"] = formula_adresare
 
+    grila_activa_utilaj = None
     with st.expander("🔧 Detalii Utilaj / Echipament (din lista de mașini a firmei)", expanded=True):
         masini_dict = {m['denumire']: m for m in masini_firma}
         optiuni_masini = ["-- Fără utilaj / Introducere manuală --"] + list(masini_dict.keys())
@@ -300,12 +303,17 @@ def render_oferte():
         )
         draft["sel_masina"] = sel_masina_of
 
+        if sel_masina_of != "-- Fără utilaj / Introducere manuală --" and sel_masina_of in masini_dict:
+            m_selectat_obj = masini_dict[sel_masina_of]
+            grila_activa_utilaj = MasiniRepository.determina_grila_efectiva(m_selectat_obj)
+            st.info(f"💶 **Grilă tarifare activă pentru acest utilaj:** **{grila_activa_utilaj}** ({m_selectat_obj.get('total_interventii', 0)}/{m_selectat_obj.get('prag_interventii', 20)} intervenții)")
+
         if draft.get("ultima_masina_selectata") != sel_masina_of:
             draft["ultima_masina_selectata"] = sel_masina_of
             if sel_masina_of != "-- Fără utilaj / Introducere manuală --" and sel_masina_of in masini_dict:
                 m_obj = masini_dict[sel_masina_of]
                 draft["utilaj"] = str(m_obj.get("denumire") or "")
-                draft["utilaj_tip"] = str(m_obj.get("tip") or m_obj.get("model") or "")
+                draft["utilaj_tip"] = str(m_obj.get("tip_masina") or m_obj.get("tip") or m_obj.get("model") or "")
                 draft["utilaj_serie"] = str(m_obj.get("serie") or m_obj.get("seria") or m_obj.get("nr_serie") or "")
                 draft["utilaj_an"] = str(m_obj.get("an_fabricatie") or m_obj.get("an") or "")
             else:
@@ -394,10 +402,31 @@ def render_oferte():
             st.toast(f"✅ Piesa adăugată: {desc_p} ({pret_vanzare:.2f} {val_piesa})")
             st.rerun()
 
-    st.markdown("##### 🚗 / 🛠️ Adăugare Rapidă Servicii & Transport (Tarife Implicite în RON)")
+    st.markdown("##### 🚗 / 🛠️ Adăugare Rapidă Servicii & Transport (Tarife Implicite)")
     with st.expander("Selectează din lista de tarife standard configurate în Setări", expanded=True):
         tarife_disponibile = TarifeRepository.get_all()
-        tarife_dict = {f"{t['descriere']} ({float(t['pret']):.2f} {t['moneda_um']})": t for t in tarife_disponibile}
+
+        opt_filtru_grila = ["Toate grilele", "Nivel A", "Nivel B"]
+        default_idx_grila = opt_filtru_grila.index(grila_activa_utilaj) if grila_activa_utilaj in opt_filtru_grila else 0
+        filtru_grila_sel = st.radio(
+            "Filtrare listă tarife după grilă:",
+            options=opt_filtru_grila,
+            index=default_idx_grila,
+            horizontal=True,
+            key="radio_filtru_grila_tarife"
+        )
+        if filtru_grila_sel != "Toate grilele":
+            tarife_filtrate = [
+                t for t in tarife_disponibile
+                if str(t.get("nivel_grila") or "Nivel A").strip() == filtru_grila_sel
+            ]
+        else:
+            tarife_filtrate = tarife_disponibile
+
+        tarife_dict = {
+            f"[{t.get('nivel_grila') or 'Nivel A'}] {t['descriere']} ({float(t['pret']):.2f} {t['moneda_um']})": t
+            for t in tarife_filtrate
+        }
 
         def on_schimbare_serviciu():
             cheie_aleasa = st.session_state.get("sel_tarif_standard", "-- Alege din listă --")
@@ -486,23 +515,74 @@ def render_oferte():
     """, unsafe_allow_html=True)
 
     st.markdown("##### 📋 Tabel Poziții Ofertă (Prețuri pe linie în RON sau EUR)")
-    st.caption(f"💡 Fiecare poziție păstrează propria monedă (**RON** sau **EUR**). La calculul final și în PDF, toate liniile sunt unificate automat în **{moneda_oferta}** folosind cursul BNR (**{curs_valutar:.4f}**).")
-    
+    st.caption(
+        f"💡 **Reordonare / Inserare la mijloc:** Schimbă numărul în coloana **Ordine** (ex. scrie `2` la poziția de jos și apasă **🔄 Aplică Ordinea**), "
+        f"inserează un rând gol la mijloc, sau folosește **Ctrl+C / Ctrl+V** pe celule. Monedă finală: **{moneda_oferta}** (curs BNR: **{curs_valutar:.4f}**)."
+    )
+
+    df_pt_editor = st.session_state["df_oferta_editor"].copy().reset_index(drop=True)
+    if "Ordine" not in df_pt_editor.columns:
+        df_pt_editor.insert(0, "Ordine", range(1, len(df_pt_editor) + 1))
+
     edited_oferta_df = st.data_editor(
-        st.session_state["df_oferta_editor"],
+        df_pt_editor,
         num_rows="dynamic",
+        hide_index=True,
         column_config={
-            "Ordine": st.column_config.NumberColumn("Ordine", min_value=1, step=1, format="%d", default=1),
-            "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=True),
-            "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km"], default="buc"),
-            "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.01, format="%.2f", default=1.0),
-            "Pret Unitar": st.column_config.NumberColumn("Preț Unitar", min_value=0.0, format="%.2f", default=0.0),
-            "Moneda": st.column_config.SelectboxColumn("Moneda", options=["RON", "EUR"], default="RON"),
-            "Termen livrare": st.column_config.TextColumn("Termen livrare", default="")
+            "Ordine": st.column_config.NumberColumn("Ordine", min_value=1, step=1, format="%d", default=len(df_pt_editor) + 1, width="small"),
+            "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False, width="large"),
+            "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"),
+            "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
+            "Pret Unitar": st.column_config.NumberColumn("Preț Unitar", min_value=0.0, format="%.2f", default=0.0, width="small"),
+            "Moneda": st.column_config.SelectboxColumn("Moneda", options=["RON", "EUR"], default="EUR", width="small"),
+            "Termen livrare": st.column_config.TextColumn("Termen livrare", default="1", width="small")
         },
         key=f"editor_linii_oferta_unic_{st.session_state['editor_reset_counter']}",
         use_container_width=True
     )
+
+    # Bară de control rapid: Aplică ordinea, Inserează rând gol la mijloc, Curăță rânduri goale
+    if not edited_oferta_df.empty:
+        c_ord1, c_ins_pos, c_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
+        if c_ord1.button("🔄 Aplică Ordinea & Renumerotează", key="btn_aplica_ordinea_oferta", use_container_width=True):
+            df_sortat = edited_oferta_df.copy()
+            df_sortat = df_sortat[df_sortat["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+            df_sortat["Ordine"] = pd.to_numeric(df_sortat["Ordine"], errors="coerce").fillna(999)
+            df_sortat = df_sortat.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
+            df_sortat["Ordine"] = range(1, len(df_sortat) + 1)
+            st.session_state["df_oferta_editor"] = df_sortat
+            st.session_state["editor_reset_counter"] += 1
+            st.rerun()
+
+        nr_randuri_cur = len(edited_oferta_df)
+        poz_inserare = c_ins_pos.number_input(
+            "La poziția (Nr.)",
+            min_value=1,
+            max_value=nr_randuri_cur + 1,
+            value=min(2, nr_randuri_cur + 1),
+            step=1,
+            key="num_poz_inserare_oferta"
+        )
+        if c_ins_btn.button("➕ Inserează rând gol la mijloc", key="btn_insert_row_mid_oferta", use_container_width=True):
+            df_curent = edited_oferta_df.reset_index(drop=True)
+            idx_split = int(poz_inserare) - 1
+            rand_gol = pd.DataFrame([{
+                "Ordine": int(poz_inserare),
+                "Descriere": "",
+                "UM": "buc",
+                "Cantitate": 1.0,
+                "Pret Unitar": 0.0,
+                "Moneda": moneda_oferta,
+                "Termen livrare": "1"
+            }])
+            df_nou = pd.concat(
+                [df_curent.iloc[:idx_split], rand_gol, df_curent.iloc[idx_split:]],
+                ignore_index=True
+            )
+            df_nou["Ordine"] = range(1, len(df_nou) + 1)
+            st.session_state["df_oferta_editor"] = df_nou
+            st.session_state["editor_reset_counter"] += 1
+            st.rerun()
 
     # Validare și plafonare automată la max 10 ore/zi pentru Ore transport
     depasire_transport = False
@@ -514,7 +594,7 @@ def render_oferte():
                     edited_oferta_df.at[idx_row, "Cantitate"] = MAX_ORE_TRANSPORT_ZI
                     depasire_transport = True
 
-    st.session_state["df_oferta_editor"] = edited_oferta_df
+    st.session_state["df_oferta_editor"] = edited_oferta_df.reset_index(drop=True)
 
     if depasire_transport:
         st.warning(f"⚠️ Limita legală de condus este de maximum **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**. Cantitatea pentru **Ore transport** a fost limitată automat la **{int(MAX_ORE_TRANSPORT_ZI)}**.")
@@ -523,7 +603,7 @@ def render_oferte():
 
     # Previzualizare calcul financiar unificat într-o singură monedă finală (moneda_oferta)
     if not edited_oferta_df.empty:
-        df_calc = edited_oferta_df.dropna(subset=["Descriere"])
+        df_calc = edited_oferta_df[edited_oferta_df["Descriere"].fillna("").astype(str).str.strip() != ""]
         sub_final_prev = 0.0
         for _, r in df_calc.iterrows():
             cant_p = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 0.0)
@@ -582,7 +662,7 @@ def render_oferte():
                 st.error("⚠️ Vă rugăm să selectați o firmă client înainte de a salva oferta!")
                 return
 
-            df_valid = edited_oferta_df.dropna(subset=["Descriere"]).copy()
+            df_valid = edited_oferta_df[edited_oferta_df["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
             if df_valid.empty:
                 st.error("Adăugați cel puțin un articol în tabel.")
                 return
@@ -602,15 +682,15 @@ def render_oferte():
             subtotal = 0.0
 
             for _, r in df_valid.iterrows():
-                cant_item = float(r.get("Cantitate") or 1.0)
-                pret_sursa = float(r.get("Pret Unitar") or 0.0)
+                cant_item = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 1.0)
+                pret_sursa = float(pd.to_numeric(r.get("Pret Unitar"), errors="coerce") or 0.0)
                 moneda_sursa = str(r.get("Moneda") or "RON").strip().upper()
                 pret_unitar_final = converteste_in_moneda_oferta(pret_sursa, moneda_sursa, moneda_oferta, curs_valutar)
 
                 subtotal += round(cant_item * pret_unitar_final, 2)
                 linii_valide.append({
-                    "Descriere": str(r.get("Descriere", "")),
-                    "UM": str(r.get("UM", "buc")),
+                    "Descriere": str(r.get("Descriere", "")).strip(),
+                    "UM": str(r.get("UM") or "buc"),
                     "Cantitate": cant_item,
                     "Pret Sursa": round(pret_sursa, 2),
                     "Moneda Sursa": moneda_sursa,
@@ -778,10 +858,11 @@ def render_oferte():
                 df_art_editat_hist = st.data_editor(
                     df_art_vechi,
                     num_rows="dynamic",
+                    hide_index=True,
                     column_config={
-                        "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=True),
-                        "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km"], default="buc"),
-                        "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.01, format="%.2f", default=1.0),
+                        "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False),
+                        "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc"),
+                        "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0),
                         col_pret_hist: st.column_config.NumberColumn(f"Preț ({moneda_of})", min_value=0.0, format="%.2f", default=0.0),
                         "Termen livrare": st.column_config.TextColumn("Termen livrare", default="")
                     },
@@ -799,7 +880,7 @@ def render_oferte():
                 c_hbtn1, c_hbtn2 = st.columns(2)
                 with c_hbtn1:
                     if st.button(f"🔄 Salvează Revizia & Generează PDF Revizuit #{nr_of}", type="primary", key=f"rev_pdf_hist_{oid}", use_container_width=True):
-                        linii_rev = df_art_editat_hist.dropna(subset=["Descriere"]).to_dict(orient="records")
+                        linii_rev = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].to_dict(orient="records")
                         for l_r in linii_rev:
                             if este_ore_transport(l_r.get("Descriere")) and float(l_r.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
                                 st.error(f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
@@ -842,7 +923,7 @@ def render_oferte():
 
                 with c_hbtn2:
                     if st.button(f"📥 Generează PDF Ofertă #{nr_of} (forma curentă)", key=f"dl_pdf_hist_{oid}", use_container_width=True):
-                        linii_cur = df_art_editat_hist.dropna(subset=["Descriere"]).to_dict(orient="records")
+                        linii_cur = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].to_dict(orient="records")
                         for l_c in linii_cur:
                             if este_ore_transport(l_c.get("Descriere")) and float(l_c.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
                                 st.error(f"⚠️ Activitatea **{l_c.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
