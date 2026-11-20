@@ -61,15 +61,16 @@ def incarca_utilaje_oprite_detaliat():
     with db_cursor() as c:
         c.execute("""
             SELECT
-                COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS "Firmă",
-                COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS "Utilaj",
+                id,
+                COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
+                COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS utilaj,
                 COALESCE(
                     NULLIF(TRIM(defect), ''),
                     NULLIF(TRIM(titlu), ''),
                     'Nespecificat'
-                ) AS "Motiv oprire",
-                COALESCE(stare_finala, 'Oprită / Necesar piese') AS "Stare",
-                TO_CHAR(data_creare, 'YYYY-MM-DD') AS "Data înregistrare"
+                ) AS motiv_oprire,
+                COALESCE(stare_finala, 'Oprită / Necesar piese') AS stare,
+                TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
             FROM reparatii
             WHERE stare_finala = 'Oprită / Necesar piese'
                OR LOWER(COALESCE(stare_finala, '')) LIKE '%oprit%'
@@ -77,6 +78,16 @@ def incarca_utilaje_oprite_detaliat():
         """)
         rows = c.fetchall() or []
     return [dict(r) for r in rows]
+
+
+def marcheaza_utilaj_activ(reparatie_id: int, stare_noua: str = "Funcțională"):
+    with db_cursor() as c:
+        c.execute(
+            "UPDATE reparatii SET stare_finala = %s WHERE id = %s",
+            (stare_noua, int(reparatie_id)),
+        )
+    incarca_date_dashboard.clear()
+    incarca_utilaje_oprite_detaliat.clear()
 
 
 @st.cache_data(ttl=120)
