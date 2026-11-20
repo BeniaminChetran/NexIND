@@ -21,7 +21,7 @@ def render_simulator_preturi():
     st.subheader("🧮 Calculator Rapid Prețuri Vânzare (Piese & Servicii)")
     st.caption(
         "Simulează instantaneu prețul de vânzare pentru unul sau mai multe produse/servicii "
-        "(cu adaosul comercial al clientului, grila utilajului, conversie EUR/RON la curs BNR și TVA), fără a salva o ofertă."
+        "(cu grila utilajului, conversie EUR/RON la curs BNR și TVA), fără a salva o ofertă."
     )
 
     firme_list = FirmeRepository.get_all()
@@ -29,41 +29,50 @@ def render_simulator_preturi():
     piese_catalog = PieseRepository.get_all()
     tarife_disponibile = TarifeRepository.get_all()
     setari_firma = SetariRepository.get_setari()
+
     cota_tva_procent = float(setari_firma.get("cota_tva") if setari_firma.get("cota_tva") is not None else 21.0)
+    adaos_implicit_db = float(
+        setari_firma.get("adaos_comercial_implicit")
+        if setari_firma.get("adaos_comercial_implicit") is not None
+        else 35.0
+    )
 
     if "sim_curs_bnr" not in st.session_state:
         st.session_state["sim_curs_bnr"] = obtine_curs_bnr()
     if "df_sim_cos" not in st.session_state:
         st.session_state["df_sim_cos"] = pd.DataFrame(
-            columns=["Tip", "Descriere", "UM", "Cantitate", "Pret Achizitie/Baza", "Adaos %", "Pret Unitar", "Moneda"]
+            columns=["Tip", "Descriere", "UM", "Cantitate", "Pret Unitar", "Moneda"]
         )
+    else:
+        cols_ok = ["Tip", "Descriere", "UM", "Cantitate", "Pret Unitar", "Moneda"]
+        df_old = st.session_state["df_sim_cos"]
+        if any(c not in cols_ok for c in df_old.columns):
+            for c in cols_ok:
+                if c not in df_old.columns:
+                    df_old[c] = "" if c in ("Tip", "Descriere", "UM", "Moneda") else 0.0
+            st.session_state["df_sim_cos"] = df_old[cols_ok].copy()
+
     if "sim_editor_counter" not in st.session_state:
         st.session_state["sim_editor_counter"] = 0
 
-    # 1. Parametri generali de calcul (Client / Adaos, Utilaj / Grilă, Monedă finală, Curs BNR)
-    c_top1, c_top2, c_top3 = st.columns([2.2, 1.3, 1.5], vertical_alignment="bottom")
+    # 1. Parametri generali de calcul — adaosul provine strict din DB (firme.adaos_comercial sau setari.adaos_comercial_implicit) și rămâne complet invizibil
+    c_top1, c_top2 = st.columns([2.5, 1.5], vertical_alignment="bottom")
     with c_top1:
-        opt_firme = ["-- Client Standard (Adaos manual) --"] + list(firme_dict.keys())
-        sel_firma_sim = st.selectbox("Client (pentru preluare automată adaos & utilaje)", options=opt_firme, key="sim_sel_firma")
-        if sel_firma_sim != "-- Client Standard (Adaos manual) --":
+        opt_firme = ["-- Client Standard --"] + list(firme_dict.keys())
+        sel_firma_sim = st.selectbox("Client (opțional, pentru utilaje și tarifare dedicată)", options=opt_firme, key="sim_sel_firma")
+        if sel_firma_sim != "-- Client Standard --":
             client_obj = firme_dict[sel_firma_sim]
-            adaos_implicit = float(client_obj.get("adaos_comercial", 20.0) or 20.0)
+            val_adaos_firma = client_obj.get("adaos_comercial")
+            if val_adaos_firma is not None and str(val_adaos_firma).strip() != "":
+                adaos_aplicat = float(val_adaos_firma)
+            else:
+                adaos_aplicat = adaos_implicit_db
             masini_firma = MasiniRepository.get_by_firma(client_obj["id"])
         else:
-            adaos_implicit = 20.0
+            adaos_aplicat = adaos_implicit_db
             masini_firma = []
 
     with c_top2:
-        adaos_sim = st.number_input(
-            "Adaos comercial piese (%)",
-            min_value=0.0,
-            max_value=500.0,
-            value=adaos_implicit,
-            step=1.0,
-            key=f"sim_adaos_{sel_firma_sim}"
-        )
-
-    with c_top3:
         moneda_finala = st.selectbox("Monedă afișare preț final", options=["EUR", "RON"], index=0, key="sim_moneda_finala")
 
     c_sub1, c_sub2, c_sub3 = st.columns([2.5, 1.5, 1.0], vertical_alignment="bottom")
@@ -106,13 +115,9 @@ def render_simulator_preturi():
     with tab_piesa:
         piese_dict = {}
         for p in piese_catalog:
-            val_p = str(p.get("valuta_achizitie") or "RON").strip().upper()
-            if val_p not in ("RON", "EUR"):
-                val_p = "RON"
             cod_p = str(p.get("cod_producator") or "").strip()
             nume_afis = f"{p['denumire']} ({cod_p})" if cod_p else p["denumire"]
-            label_p = f"{nume_afis} | Achiziție: {float(p.get('pret_achizitie') or 0):.2f} {val_p}"
-            piese_dict[label_p] = p
+            piese_dict[nume_afis] = p
 
         cp1, cp2, cp3 = st.columns([3, 1, 1.2], vertical_alignment="bottom")
         with cp1:
@@ -128,16 +133,15 @@ def render_simulator_preturi():
             if val_src not in ("RON", "EUR"):
                 val_src = "RON"
             pret_ach = float(p_obj.get("pret_achizitie") or 0.0)
-            pret_vanz_src = round(pret_ach * (1.0 + adaos_sim / 100.0), 2)
+            pret_vanz_src = round(pret_ach * (1.0 + adaos_aplicat / 100.0), 2)
             pret_unit_final = converteste_in_moneda_oferta(pret_vanz_src, val_src, moneda_finala, curs_sim)
             val_fara_tva = round(pret_unit_final * float(cant_p_sim), 2)
             val_cu_tva = round(val_fara_tva * (1.0 + cota_tva_procent / 100.0), 2)
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Preț Achiziție", f"{pret_ach:,.2f} {val_src}")
-            m2.metric(f"Preț Vânzare (+{adaos_sim:g}%)", f"{pret_unit_final:,.2f} {moneda_finala} / buc")
-            m3.metric(f"Total ({cant_p_sim:g} buc) fără TVA", f"{val_fara_tva:,.2f} {moneda_finala}")
-            m4.metric(f"Total cu TVA ({cota_tva_procent:g}%)", f"{val_cu_tva:,.2f} {moneda_finala}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Preț Unitar Vânzare", f"{pret_unit_final:,.2f} {moneda_finala} / buc")
+            m2.metric(f"Total ({cant_p_sim:g} buc) fără TVA", f"{val_fara_tva:,.2f} {moneda_finala}")
+            m3.metric(f"Total cu TVA ({cota_tva_procent:g}%)", f"{val_cu_tva:,.2f} {moneda_finala}")
 
             if add_p_sim:
                 cod_p = str(p_obj.get("cod_producator") or "").strip()
@@ -147,8 +151,6 @@ def render_simulator_preturi():
                     "Descriere": desc_p,
                     "UM": "buc",
                     "Cantitate": float(cant_p_sim),
-                    "Pret Achizitie/Baza": pret_ach,
-                    "Adaos %": float(adaos_sim),
                     "Pret Unitar": pret_vanz_src,
                     "Moneda": val_src
                 }])
@@ -204,8 +206,6 @@ def render_simulator_preturi():
                     "Descriere": t_obj["descriere"],
                     "UM": um_t,
                     "Cantitate": float(cant_t_sim),
-                    "Pret Achizitie/Baza": pret_t_baza,
-                    "Adaos %": 0.0,
                     "Pret Unitar": pret_t_baza,
                     "Moneda": mon_t_src
                 }])
@@ -213,7 +213,7 @@ def render_simulator_preturi():
                 st.session_state["sim_editor_counter"] += 1
                 st.toast(f"✅ Adăugat în simulare: {t_obj['descriere']}")
 
-    # 3. Coș de simulare multi-reper (poți combina piese + manoperă + transport și vezi totalul instant)
+    # 3. Coș de simulare multi-reper (fără preț achiziție sau adaos %)
     st.markdown("---")
     c_cos1, c_cos2 = st.columns([4, 1], vertical_alignment="center")
     with c_cos1:
@@ -221,7 +221,7 @@ def render_simulator_preturi():
     with c_cos2:
         if st.button("🗑️ Golește lista", key="sim_btn_clear", use_container_width=True):
             st.session_state["df_sim_cos"] = pd.DataFrame(
-                columns=["Tip", "Descriere", "UM", "Cantitate", "Pret Achizitie/Baza", "Adaos %", "Pret Unitar", "Moneda"]
+                columns=["Tip", "Descriere", "UM", "Cantitate", "Pret Unitar", "Moneda"]
             )
             st.session_state["sim_editor_counter"] += 1
             st.rerun()
@@ -235,8 +235,6 @@ def render_simulator_preturi():
             "Descriere": st.column_config.TextColumn("Denumire Produs / Serviciu", width="large"),
             "UM": st.column_config.SelectboxColumn("UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"),
             "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
-            "Pret Achizitie/Baza": st.column_config.NumberColumn("Preț Bază", min_value=0.0, format="%.2f", default=0.0, width="small"),
-            "Adaos %": st.column_config.NumberColumn("Adaos %", min_value=0.0, format="%.1f", default=0.0, width="small"),
             "Pret Unitar": st.column_config.NumberColumn("Preț Vânzare", min_value=0.0, format="%.2f", default=0.0, width="small"),
             "Moneda": st.column_config.SelectboxColumn("Moneda", options=["RON", "EUR"], default="EUR", width="small"),
         },

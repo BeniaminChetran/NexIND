@@ -103,7 +103,7 @@ def render_setari():
                 swep_mea = st.text_input("Cod SWIFT / BIC", value=setari_curente.get("swep_mea", ""))
 
             st.markdown("---")
-            st.markdown("##### Valori Implicite pentru Oferte de Preț & Rapoarte Tehnice")
+            st.markdown("##### Valori Implicite pentru Oferte de Preț, Calculator & Rapoarte Tehnice")
             co1, co2 = st.columns(2)
             with co1:
                 valabilitate_implicita = st.text_input(
@@ -113,6 +113,15 @@ def render_setari():
                 intocmit_de_implicit = st.text_input(
                     "Întocmit de — Oferte de preț (implicit)",
                     value=setari_curente.get("intocmit_de_implicit") or "Echipa Nexus Industrial"
+                )
+                adaos_comercial_implicit = st.number_input(
+                    "Adaos comercial implicit piese — Client Standard (%)",
+                    min_value=0.0,
+                    max_value=500.0,
+                    value=float(setari_curente.get("adaos_comercial_implicit") if setari_curente.get("adaos_comercial_implicit") is not None else 35.0),
+                    step=1.0,
+                    format="%.2f",
+                    help="Se aplică automat în Calculatorul Rapid de Prețuri pentru Client Standard sau pentru firmele fără adaos definit."
                 )
             with co2:
                 termeni_plata_impliciti = st.text_input(
@@ -124,6 +133,13 @@ def render_setari():
                     "Tehnician implicit (Rapoarte Intervenție & Electronice)",
                     value=setari_curente.get("tehnician_implicit") or "Tehnician Nexus"
                 )
+
+            clauze_subsol_implicite = st.text_area(
+                "Mențiuni / Clauze implicite subsol ofertă (folosește {MONEDA} pentru EUR/RON automat)",
+                value=str(setari_curente.get("clauze_subsol_implicite") or ""),
+                height=120,
+                help="Acest text se încarcă automat la orice ofertă nouă. Folosește {MONEDA} acolo unde dorești să apară EUR sau RON."
+            )
 
             submitted_firma = st.form_submit_button("💾 Salvează Setările", type="primary")
             if submitted_firma:
@@ -140,10 +156,12 @@ def render_setari():
                     "valabilitate_implicita": valabilitate_implicita.strip() or "15 zile",
                     "termeni_plata_impliciti": termeni_plata_impliciti.strip() or "5 zile de la emiterea facturii",
                     "intocmit_de_implicit": intocmit_de_implicit.strip() or "Echipa Nexus Industrial",
-                    "tehnician_implicit": tehnician_implicit.strip() or "Tehnician Nexus"
+                    "tehnician_implicit": tehnician_implicit.strip() or "Tehnician Nexus",
+                    "clauze_subsol_implicite": clauze_subsol_implicite.strip(),
+                    "adaos_comercial_implicit": float(adaos_comercial_implicit)
                 })
                 SetariRepository.save_setari(date_actualizate)
-                st.success("✅ Setările firmei, TVA-ul și valorile implicite au fost salvate!")
+                st.success("✅ Setările firmei, TVA-ul, adaosul implicit și valorile implicite au fost salvate!")
                 st.rerun()
 
     # ---------------------------------------------------------

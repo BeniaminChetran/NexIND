@@ -38,7 +38,8 @@ class SetariRepository(BaseRepository):
             "termeni_plata_impliciti": "5 zile de la emiterea facturii",
             "intocmit_de_implicit": "Echipa Nexus Industrial",
             "tehnician_implicit": "Tehnician Nexus",
-            "clauze_subsol_implicite": DEFAULT_CLAUZE_SUBSOL
+            "clauze_subsol_implicite": DEFAULT_CLAUZE_SUBSOL,
+            "adaos_comercial_implicit": 35.0
         }
         if res:
             for k, v in defaults.items():
@@ -49,7 +50,8 @@ class SetariRepository(BaseRepository):
                         "termeni_plata_impliciti",
                         "intocmit_de_implicit",
                         "tehnician_implicit",
-                        "clauze_subsol_implicite"
+                        "clauze_subsol_implicite",
+                        "adaos_comercial_implicit"
                     ):
                         res[k] = v
             return res
@@ -63,6 +65,9 @@ class SetariRepository(BaseRepository):
         clauze_subsol = data.get("clauze_subsol_implicite")
         if clauze_subsol is None:
             clauze_subsol = existing.get("clauze_subsol_implicite", DEFAULT_CLAUZE_SUBSOL)
+        adaos_imp = data.get("adaos_comercial_implicit")
+        if adaos_imp is None:
+            adaos_imp = existing.get("adaos_comercial_implicit", 35.0)
         with db_cursor() as c:
             c.execute("DELETE FROM setari")
             c.execute("""
@@ -71,9 +76,10 @@ class SetariRepository(BaseRepository):
                     iban_mea, swep_mea, smtp_server, smtp_port, smtp_user, 
                     smtp_pass, google_sheet_url, email_tehnician, cota_tva, pass,
                     valabilitate_implicita, termeni_plata_impliciti,
-                    intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite
+                    intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite,
+                    adaos_comercial_implicit
                 ) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 data.get('nume_firma_mea'), data.get('cui_mea'), data.get('reg_com_mea'),
                 data.get('adresa_mea'), data.get('banca_mea'), data.get('iban_mea'),
@@ -85,7 +91,8 @@ class SetariRepository(BaseRepository):
                 data.get('termeni_plata_impliciti', '5 zile de la emiterea facturii'),
                 data.get('intocmit_de_implicit', 'Echipa Nexus Industrial'),
                 data.get('tehnician_implicit', 'Tehnician Nexus'),
-                clauze_subsol
+                clauze_subsol,
+                float(adaos_imp)
             ))
         logger.info("Setările au fost salvate în baza de date.")
 
