@@ -1,5 +1,5 @@
 #----------------------------------
-#-------piese.py-------------------
+#-------pages/piese.py-------------
 #----------------------------------
 
 import ast
@@ -180,10 +180,9 @@ def _delete_tarif_safe(tarif_id: int):
 # ------------------------------------------------------------------
 @st.cache_data(ttl=120)
 def _obtine_corpus_utilizare_istoric() -> str:
-    """Colectează toate textele din oferte, intervenții, reparații electronice și componența utilajelor pentru a detecta piesele neutilizate."""
+    """Colectează toate textele din oferte, intervenții, reparații electronice și componența utilajelor."""
     fragmente = []
 
-    # 1. Oferte emise / salvate (articole_json)
     try:
         with db_cursor() as c:
             c.execute("SELECT articole_json, titlu FROM oferte")
@@ -197,7 +196,6 @@ def _obtine_corpus_utilizare_istoric() -> str:
     except Exception:
         pass
 
-    # 2. Reparații / intervenții service
     try:
         with db_cursor() as c:
             c.execute("SELECT * FROM reparatii LIMIT 2000")
@@ -206,7 +204,6 @@ def _obtine_corpus_utilizare_istoric() -> str:
     except Exception:
         pass
 
-    # 3. Reparații electronice
     try:
         with db_cursor() as c:
             c.execute("SELECT * FROM reparatii_electronice LIMIT 2000")
@@ -215,7 +212,6 @@ def _obtine_corpus_utilizare_istoric() -> str:
     except Exception:
         pass
 
-    # 4. Mașini (piese_necesare, piese_inlocuite, componenta_sisteme_json)
     try:
         with db_cursor() as c:
             c.execute("SELECT piese_necesare, piese_inlocuite, componenta_sisteme_json FROM masini")
@@ -276,9 +272,10 @@ def render_piese():
     ])
 
     # ==================================================================
-    # TAB 1: CATALOG PIESE DE SCHIMB (ADAUGARE & CAUTARE RAPIDA)
+    # TAB 1: CATALOG PIESE DE SCHIMB (FRAGMENT IZOLAT — FĂRĂ RERUN GLOBAL)
     # ==================================================================
-    with tab_piese:
+    @st.fragment
+    def _fragment_catalog_piese():
         masini = [m['denumire'] for m in MasiniRepository.get_all()]
         sel_m = st.selectbox(
             "Selectează Mașina (Filtrare listă & Asociere piesă nouă)",
@@ -338,7 +335,6 @@ def render_piese():
                             })
                             _obtine_corpus_utilizare_istoric.clear()
                             st.success(f"✅ Piesa '{denumire}' a fost salvată (Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou})!")
-                            st.rerun()
 
         st.markdown("---")
         st.subheader("🔍 Căutare Rapidă, Editare & Ștergere Piese")
@@ -353,7 +349,6 @@ def render_piese():
         with c_search2:
             if st.button("🧹 Resetează", key="btn_reset_cautare_piese", use_container_width=True):
                 st.session_state["termen_cautare_piese"] = ""
-                st.rerun()
 
         piese_baza = PieseRepository.get_filtrate(sel_m) or []
         cuvinte_cautate = [c for c in termen_cautare.split() if c]
@@ -446,20 +441,22 @@ def render_piese():
                                         "valuta_achizitie": mod_valuta
                                     })
                                     _obtine_corpus_utilizare_istoric.clear()
-                                    st.success(f"✅ Modificări salvate! Preț nou: **{mod_pret_calc:.2f} {mod_valuta}**")
-                                    st.rerun()
+                                    st.toast(f"✅ Salvat: {mod_den.strip()} -> {mod_pret_calc:.2f} {mod_valuta}")
                             if bt2.form_submit_button("🗑️ Șterge Piesa", key=f"del_{pid}"):
                                 PieseRepository.delete(pid)
                                 _obtine_corpus_utilizare_istoric.clear()
-                                st.success("Piesa a fost ștearsă!")
-                                st.rerun()
+                                st.toast("🗑️ Piesa a fost ștearsă!")
             else:
                 st.warning(f"Nu s-a găsit nicio piesă care să conțină expresia **'{termen_cautare}'**.")
 
+    with tab_piese:
+        _fragment_catalog_piese()
+
     # ==================================================================
-    # TAB 2: TARIFE STANDARD (NIVEL A & NIVEL B) CU EDITARE UM
+    # TAB 2: TARIFE STANDARD (FRAGMENT IZOLAT — FĂRĂ RERUN GLOBAL)
     # ==================================================================
-    with tab_tarife_grile:
+    @st.fragment
+    def _fragment_tarife_grile():
         st.markdown("##### 💶 Tarife Standard pentru Servicii & Activități (Grila Nivel A & Grila Nivel B)")
         st.caption(
             "Gestionează tarifele standard pe cele două nivele de grilă (**Nivel A** și **Nivel B**). "
@@ -468,251 +465,259 @@ def render_piese():
 
         if not acces_permis:
             st.warning("🔒 Tarifele standard sunt protejate cu parolă. Mergi la **SistemAdmin → 🔑 Deblocare** pentru a le vizualiza sau modifica.")
-        else:
-            with st.expander("➕ Adaugă Tarif Nou în Grila Nivel A / Nivel B", expanded=False):
-                with st.form("form_add_tarif_piese_tab", clear_on_submit=True):
-                    ct1, ct2, ct3, ct4 = st.columns([3, 1.3, 1.4, 1.4], vertical_alignment="bottom")
-                    with ct1:
-                        desc_t_nou = st.text_input("Descriere serviciu / activitate *", placeholder="ex: Manoperă intervenție CNC / Ora de transport")
-                    with ct2:
-                        nivel_t_nou = st.selectbox("Nivel Grilă", options=OPT_NIVELE_GRILA, index=0)
-                    with ct3:
-                        pret_t_nou = st.number_input("Preț unitar", min_value=0.0, step=5.0, format="%.2f")
-                    with ct4:
-                        um_t_nou = st.selectbox("Monedă / UM", options=OPT_MONEDA_UM_TARIFE, index=0)
+            return
 
-                    if st.form_submit_button("💾 Adaugă Tarif", type="primary"):
-                        if not desc_t_nou.strip():
-                            st.error("⚠️ Introduceți descrierea serviciului / activității!")
-                        else:
-                            _insert_tarif_safe(desc_t_nou.strip(), pret_t_nou, um_t_nou, nivel_t_nou)
-                            st.success(f"✅ Tarif adăugat: **{desc_t_nou.strip()}** [{nivel_t_nou}] — {pret_t_nou:.2f} {um_t_nou}")
-                            st.rerun()
+        with st.expander("➕ Adaugă Tarif Nou în Grila Nivel A / Nivel B", expanded=False):
+            with st.form("form_add_tarif_piese_tab", clear_on_submit=True):
+                ct1, ct2, ct3, ct4 = st.columns([3, 1.3, 1.4, 1.4], vertical_alignment="bottom")
+                with ct1:
+                    desc_t_nou = st.text_input("Descriere serviciu / activitate *", placeholder="ex: Manoperă intervenție CNC / Ora de transport")
+                with ct2:
+                    nivel_t_nou = st.selectbox("Nivel Grilă", options=OPT_NIVELE_GRILA, index=0)
+                with ct3:
+                    pret_t_nou = st.number_input("Preț unitar", min_value=0.0, step=5.0, format="%.2f")
+                with ct4:
+                    um_t_nou = st.selectbox("Monedă / UM", options=OPT_MONEDA_UM_TARIFE, index=0)
 
-            tarife_all = _get_tarife_all_safe()
-            c_ft1, c_ft2 = st.columns([2, 2], vertical_alignment="bottom")
-            with c_ft1:
-                filtru_grila_t = st.radio(
-                    "Filtrează după nivel grilă:",
-                    options=["Toate grilele", "Nivel A", "Nivel B"],
-                    horizontal=True,
-                    key="piese_tab_filtru_grila"
+                if st.form_submit_button("💾 Adaugă Tarif", type="primary"):
+                    if not desc_t_nou.strip():
+                        st.error("⚠️ Introduceți descrierea serviciului / activității!")
+                    else:
+                        _insert_tarif_safe(desc_t_nou.strip(), pret_t_nou, um_t_nou, nivel_t_nou)
+                        st.toast(f"✅ Tarif adăugat: {desc_t_nou.strip()} [{nivel_t_nou}]")
+
+        tarife_all = _get_tarife_all_safe()
+        c_ft1, c_ft2 = st.columns([2, 2], vertical_alignment="bottom")
+        with c_ft1:
+            filtru_grila_t = st.radio(
+                "Filtrează după nivel grilă:",
+                options=["Toate grilele", "Nivel A", "Nivel B"],
+                horizontal=True,
+                key="piese_tab_filtru_grila"
+            )
+        with c_ft2:
+            filtru_lipsa_t = st.checkbox(
+                "⚠️ Arată doar tarifele fără preț (0.00) sau fără UM",
+                value=False,
+                key="piese_tab_tarife_incomplete"
+            )
+
+        tarife_afis = []
+        for t in tarife_all:
+            niv = str(t.get("nivel_grila") or "Nivel A").strip()
+            if niv not in OPT_NIVELE_GRILA:
+                niv = "Nivel A"
+            if filtru_grila_t != "Toate grilele" and niv != filtru_grila_t:
+                continue
+            pret_t = float(t.get("pret") or 0.0)
+            um_t = str(t.get("moneda_um") or "").strip()
+            if filtru_lipsa_t and not (pret_t <= 0 or not um_t or "/" not in um_t):
+                continue
+            tarife_afis.append(t)
+
+        if not tarife_afis:
+            st.info("Nu există tarife care să corespundă filtrelor selectate.")
+            return
+
+        st.caption(f"Se afișează **{len(tarife_afis)}** tarife:")
+        for t in tarife_afis:
+            tid = t["id"]
+            niv_cur = str(t.get("nivel_grila") or "Nivel A").strip()
+            if niv_cur not in OPT_NIVELE_GRILA:
+                niv_cur = "Nivel A"
+            um_cur = str(t.get("moneda_um") or "EUR/ora").strip()
+            opt_um_row = list(OPT_MONEDA_UM_TARIFE)
+            if um_cur and um_cur not in opt_um_row:
+                opt_um_row.insert(0, um_cur)
+            elif not um_cur:
+                opt_um_row.insert(0, "-- Fără UM --")
+
+            with st.form(f"form_row_tarif_{tid}"):
+                col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(
+                    [3.2, 1.3, 1.3, 1.5, 0.7, 0.7], vertical_alignment="center"
                 )
-            with c_ft2:
-                filtru_lipsa_t = st.checkbox(
-                    "⚠️ Arată doar tarifele fără preț (0.00) sau fără UM",
-                    value=False,
-                    key="piese_tab_tarife_incomplete"
+                nou_desc_t = col_t1.text_input(
+                    "Descriere",
+                    value=str(t.get("descriere") or ""),
+                    key=f"pt_desc_tarif_{tid}",
+                    label_visibility="collapsed"
                 )
+                nou_niv_t = col_t2.selectbox(
+                    "Grilă",
+                    options=OPT_NIVELE_GRILA,
+                    index=OPT_NIVELE_GRILA.index(niv_cur),
+                    key=f"pt_niv_tarif_{tid}",
+                    label_visibility="collapsed"
+                )
+                nou_pret_t = col_t3.number_input(
+                    "Preț",
+                    value=float(t.get("pret") or 0.0),
+                    min_value=0.0,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"pt_pret_tarif_{tid}",
+                    label_visibility="collapsed"
+                )
+                nou_um_t = col_t4.selectbox(
+                    "UM",
+                    options=opt_um_row,
+                    index=opt_um_row.index(um_cur) if um_cur in opt_um_row else 0,
+                    key=f"pt_um_tarif_{tid}",
+                    label_visibility="collapsed"
+                )
+                if col_t5.form_submit_button("💾", help="Salvează modificările tarifului"):
+                    um_salvat = "" if nou_um_t == "-- Fără UM --" else nou_um_t
+                    _update_tarif_complet_safe(tid, nou_desc_t.strip(), nou_pret_t, um_salvat, nou_niv_t)
+                    st.toast(f"✅ Actualizat: {nou_desc_t.strip()} [{nou_niv_t}] -> {nou_pret_t:.2f} {um_salvat}")
+                if col_t6.form_submit_button("🗑️", help="Șterge tariful"):
+                    _delete_tarif_safe(tid)
+                    st.toast("🗑️ Tarif șters.")
 
-            tarife_afis = []
-            for t in tarife_all:
-                niv = str(t.get("nivel_grila") or "Nivel A").strip()
-                if niv not in OPT_NIVELE_GRILA:
-                    niv = "Nivel A"
-                if filtru_grila_t != "Toate grilele" and niv != filtru_grila_t:
-                    continue
-                pret_t = float(t.get("pret") or 0.0)
-                um_t = str(t.get("moneda_um") or "").strip()
-                if filtru_lipsa_t and not (pret_t <= 0 or not um_t or "/" not in um_t):
-                    continue
-                tarife_afis.append(t)
-
-            if not tarife_afis:
-                st.info("Nu există tarife care să corespundă filtrelor selectate.")
-            else:
-                st.caption(f"Se afișează **{len(tarife_afis)}** tarife:")
-                for t in tarife_afis:
-                    tid = t["id"]
-                    niv_cur = str(t.get("nivel_grila") or "Nivel A").strip()
-                    if niv_cur not in OPT_NIVELE_GRILA:
-                        niv_cur = "Nivel A"
-                    um_cur = str(t.get("moneda_um") or "EUR/ora").strip()
-                    opt_um_row = list(OPT_MONEDA_UM_TARIFE)
-                    if um_cur and um_cur not in opt_um_row:
-                        opt_um_row.insert(0, um_cur)
-                    elif not um_cur:
-                        opt_um_row.insert(0, "-- Fără UM --")
-
-                    col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(
-                        [3.2, 1.3, 1.3, 1.5, 0.7, 0.7], vertical_alignment="center"
-                    )
-                    nou_desc_t = col_t1.text_input(
-                        "Descriere",
-                        value=str(t.get("descriere") or ""),
-                        key=f"pt_desc_tarif_{tid}",
-                        label_visibility="collapsed"
-                    )
-                    nou_niv_t = col_t2.selectbox(
-                        "Grilă",
-                        options=OPT_NIVELE_GRILA,
-                        index=OPT_NIVELE_GRILA.index(niv_cur),
-                        key=f"pt_niv_tarif_{tid}",
-                        label_visibility="collapsed"
-                    )
-                    nou_pret_t = col_t3.number_input(
-                        "Preț",
-                        value=float(t.get("pret") or 0.0),
-                        min_value=0.0,
-                        step=1.0,
-                        format="%.2f",
-                        key=f"pt_pret_tarif_{tid}",
-                        label_visibility="collapsed"
-                    )
-                    nou_um_t = col_t4.selectbox(
-                        "UM",
-                        options=opt_um_row,
-                        index=opt_um_row.index(um_cur) if um_cur in opt_um_row else 0,
-                        key=f"pt_um_tarif_{tid}",
-                        label_visibility="collapsed"
-                    )
-                    if col_t5.button("💾", key=f"pt_save_tarif_{tid}", help="Salvează modificările tarifului"):
-                        um_salvat = "" if nou_um_t == "-- Fără UM --" else nou_um_t
-                        _update_tarif_complet_safe(tid, nou_desc_t.strip(), nou_pret_t, um_salvat, nou_niv_t)
-                        st.toast(f"✅ Actualizat: {nou_desc_t.strip()} [{nou_niv_t}] -> {nou_pret_t:.2f} {um_salvat}")
-                        st.rerun()
-                    if col_t6.button("🗑️", key=f"pt_del_tarif_{tid}", help="Șterge tariful"):
-                        _delete_tarif_safe(tid)
-                        st.toast("🗑️ Tarif șters.")
-                        st.rerun()
+    with tab_tarife_grile:
+        _fragment_tarife_grile()
 
     # ==================================================================
-    # TAB 3: CURĂȚENIE PREȚURI, UM & PIESE NEUTILIZATE NICIODATĂ
+    # TAB 3: CURĂȚENIE PREȚURI (FRAGMENT IZOLAT — FĂRĂ RERUN GLOBAL)
     # ==================================================================
-    with tab_audit_curatenie:
+    @st.fragment
+    def _fragment_audit_curatenie():
         st.markdown("##### 🧹 Audit & Curățenie Catalog Piese (Preț / UM lipsă & Repere neutilizate)")
 
         if not acces_permis:
             st.warning("🔒 Pentru a face curățenie în prețuri și a vedea valorile de achiziție, deblochează mai întâi sesiunea din **SistemAdmin → 🔑 Deblocare**.")
-        else:
-            toate_piesele = PieseRepository.get_all() or []
-            corpus_istoric = _obtine_corpus_utilizare_istoric()
+            return
 
-            piese_fara_pret_um = []
-            piese_neutilizate = []
+        toate_piesele = PieseRepository.get_all() or []
+        corpus_istoric = _obtine_corpus_utilizare_istoric()
 
-            for p in toate_piesele:
-                lipsa, motive = _are_lipsa_pret_sau_um(p)
-                if lipsa:
-                    p_copy = dict(p)
-                    p_copy["_motive_lipsa"] = ", ".join(motive)
-                    piese_fara_pret_um.append(p_copy)
+        piese_fara_pret_um = []
+        piese_neutilizate = []
 
-                if not _piesa_a_fost_utilizata(p, corpus_istoric):
-                    piese_neutilizate.append(p)
+        for p in toate_piesele:
+            lipsa, motive = _are_lipsa_pret_sau_um(p)
+            if lipsa:
+                p_copy = dict(p)
+                p_copy["_motive_lipsa"] = ", ".join(motive)
+                piese_fara_pret_um.append(p_copy)
 
-            m_c1, m_c2, m_c3 = st.columns(3)
-            m_c1.metric("Total piese în catalog", len(toate_piesele))
-            m_c2.metric("⚠️ Fără preț (0.00) sau fără UM", len(piese_fara_pret_um))
-            m_c3.metric("💤 Neutilizate niciodată (în oferte/intervenții)", len(piese_neutilizate))
+            if not _piesa_a_fost_utilizata(p, corpus_istoric):
+                piese_neutilizate.append(p)
 
-            st.markdown("---")
-            mod_audit = st.radio(
-                "Selectează lista de curățenie:",
-                options=[
-                    f"⚠️ Repere fără preț (0.00) sau fără UM ({len(piese_fara_pret_um)})",
-                    f"💤 Piese neutilizate niciodată ({len(piese_neutilizate)})",
-                    f"📋 Toate piesele din catalog ({len(toate_piesele)})"
-                ],
-                key="radio_mod_audit_piese"
+        m_c1, m_c2, m_c3 = st.columns(3)
+        m_c1.metric("Total piese în catalog", len(toate_piesele))
+        m_c2.metric("⚠️ Fără preț (0.00) sau fără UM", len(piese_fara_pret_um))
+        m_c3.metric("💤 Neutilizate niciodată (în oferte/intervenții)", len(piese_neutilizate))
+
+        st.markdown("---")
+        mod_audit = st.radio(
+            "Selectează lista de curățenie:",
+            options=[
+                f"⚠️ Repere fără preț (0.00) sau fără UM ({len(piese_fara_pret_um)})",
+                f"💤 Piese neutilizate niciodată ({len(piese_neutilizate)})",
+                f"📋 Toate piesele din catalog ({len(toate_piesele)})"
+            ],
+            key="radio_mod_audit_piese"
+        )
+
+        c_f1, c_f2 = st.columns([3, 1.5], vertical_alignment="bottom")
+        with c_f1:
+            filtru_txt_audit = st.text_input(
+                "Filtrează în această listă (denumire, cod, mașină):",
+                placeholder="ex: rulment, General, 0.00...",
+                key="txt_filtru_audit_piese"
+            ).strip().lower()
+        with c_f2:
+            doar_neutilizate_si_fara_pret = st.checkbox(
+                "Doar cele care sunt ȘI neutilizate ȘI fără preț",
+                value=False,
+                key="chk_intersectie_audit"
             )
 
-            c_f1, c_f2 = st.columns([3, 1.5], vertical_alignment="bottom")
-            with c_f1:
-                filtru_txt_audit = st.text_input(
-                    "Filtrează în această listă (denumire, cod, mașină):",
-                    placeholder="ex: rulment, General, 0.00...",
-                    key="txt_filtru_audit_piese"
-                ).strip().lower()
-            with c_f2:
-                doar_neutilizate_si_fara_pret = st.checkbox(
-                    "Doar cele care sunt ȘI neutilizate ȘI fără preț",
-                    value=False,
-                    key="chk_intersectie_audit"
-                )
+        if mod_audit.startswith("⚠️"):
+            lista_curenta = piese_fara_pret_um
+        elif mod_audit.startswith("💤"):
+            lista_curenta = piese_neutilizate
+        else:
+            lista_curenta = toate_piesele
 
-            if mod_audit.startswith("⚠️"):
-                lista_curenta = piese_fara_pret_um
-            elif mod_audit.startswith("💤"):
-                lista_curenta = piese_neutilizate
-            else:
-                lista_curenta = toate_piesele
+        if doar_neutilizate_si_fara_pret:
+            ids_neutilizate = {p["id"] for p in piese_neutilizate}
+            lista_curenta = [
+                p for p in lista_curenta
+                if p["id"] in ids_neutilizate and _are_lipsa_pret_sau_um(p)[0]
+            ]
 
-            if doar_neutilizate_si_fara_pret:
-                ids_neutilizate = {p["id"] for p in piese_neutilizate}
-                lista_curenta = [
-                    p for p in lista_curenta
-                    if p["id"] in ids_neutilizate and _are_lipsa_pret_sau_um(p)[0]
-                ]
+        if filtru_txt_audit:
+            lista_curenta = [
+                p for p in lista_curenta
+                if filtru_txt_audit in (
+                    f"{p.get('denumire', '')} {p.get('cod_producator', '')} "
+                    f"{p.get('cod_comercial', '')} {p.get('masina_montaj', '')}"
+                ).lower()
+            ]
 
-            if filtru_txt_audit:
-                lista_curenta = [
-                    p for p in lista_curenta
-                    if filtru_txt_audit in (
-                        f"{p.get('denumire', '')} {p.get('cod_producator', '')} "
-                        f"{p.get('cod_comercial', '')} {p.get('masina_montaj', '')}"
-                    ).lower()
-                ]
+        if not lista_curenta:
+            st.success("🎉 Nu există repere care să corespundă acestui filtru de curățenie!")
+            return
 
-            if not lista_curenta:
-                st.success("🎉 Nu există repere care să corespundă acestui filtru de curățenie!")
-            else:
-                st.info(f"Se afișează **{len(lista_curenta)}** repere (maxim 100 pe pagină). Poți actualiza rapid prețul / moneda / termenul sau șterge reperul:")
+        st.info(f"Se afișează **{len(lista_curenta)}** repere (maxim 100 pe pagină). Poți actualiza rapid prețul / moneda sau șterge reperul fără să îți reseteze pagina:")
 
-                for p in lista_curenta[:100]:
-                    pid = p["id"]
-                    pret_c = float(p.get("pret_achizitie") or 0.0)
-                    val_c = str(p.get("valuta_achizitie") or "").strip().upper()
-                    este_nefolosita = not _piesa_a_fost_utilizata(p, corpus_istoric)
-                    lipsa_flag, motive_list = _are_lipsa_pret_sau_um(p)
+        for p in lista_curenta[:100]:
+            pid = p["id"]
+            pret_c = float(p.get("pret_achizitie") or 0.0)
+            val_c = str(p.get("valuta_achizitie") or "").strip().upper()
+            este_nefolosita = not _piesa_a_fost_utilizata(p, corpus_istoric)
+            lipsa_flag, motive_list = _are_lipsa_pret_sau_um(p)
 
-                    badges = []
-                    if lipsa_flag:
-                        badges.append(f"⚠️ {', '.join(motive_list)}")
-                    if este_nefolosita:
-                        badges.append("💤 Neutilizată")
-                    badge_str = " | ".join(badges) if badges else "✅ OK"
+            badges = []
+            if lipsa_flag:
+                badges.append(f"⚠️ {', '.join(motive_list)}")
+            if este_nefolosita:
+                badges.append("💤 Neutilizată")
+            badge_str = " | ".join(badges) if badges else "✅ OK"
 
-                    cod_str = f" [{p.get('cod_producator')}]" if p.get("cod_producator") else ""
-                    titlu_row = f"🔩 {p.get('denumire', '')}{cod_str} ({p.get('masina_montaj') or 'General'}) — {badge_str}"
+            cod_str = f" [{p.get('cod_producator')}]" if p.get("cod_producator") else ""
+            titlu_row = f"🔩 {p.get('denumire', '')}{cod_str} ({p.get('masina_montaj') or 'General'}) — {badge_str}"
 
-                    with st.expander(titlu_row, expanded=False):
-                        ca1, ca2, ca3, ca4, ca5 = st.columns([2.5, 1.3, 1.2, 0.8, 0.8], vertical_alignment="bottom")
-                        with ca1:
-                            aud_den = st.text_input("Denumire", value=str(p.get("denumire") or ""), key=f"aud_den_{pid}")
-                        with ca2:
-                            aud_pret_txt = st.text_input(
-                                "Preț Achiziție",
-                                value=f"{pret_c:.2f}",
-                                key=f"aud_pret_{pid}"
-                            )
-                        with ca3:
-                            opt_v_aud = ["EUR", "RON"]
-                            idx_v_aud = opt_v_aud.index(val_c) if val_c in opt_v_aud else 0
-                            aud_val = st.selectbox("Monedă / UM", options=opt_v_aud, index=idx_v_aud, key=f"aud_val_{pid}")
-                        with ca4:
-                            if st.button("💾", key=f"aud_save_{pid}", help="Salvează prețul și moneda", use_container_width=True):
-                                pret_nou_aud, err_a = calculeaza_pret_din_expresie(aud_pret_txt, pret_c)
-                                if err_a:
-                                    st.error(err_a)
-                                else:
-                                    PieseRepository.update(pid, {
-                                        "denumire": aud_den.strip() or p.get("denumire", ""),
-                                        "cod_producator": p.get("cod_producator") or "",
-                                        "cod_comercial": p.get("cod_comercial") or "",
-                                        "subansamblu": p.get("subansamblu") or "",
-                                        "parametri": p.get("parametri") or "",
-                                        "termen_livrare": str(p.get("termen_livrare") or "1"),
-                                        "link_furnizor": p.get("link_furnizor") or "",
-                                        "pret_achizitie": pret_nou_aud,
-                                        "valuta_achizitie": aud_val
-                                    })
-                                    _obtine_corpus_utilizare_istoric.clear()
-                                    st.toast(f"✅ Salvat: {aud_den.strip()} -> {pret_nou_aud:.2f} {aud_val}")
-                                    st.rerun()
-                        with ca5:
-                            if st.button("🗑️", key=f"aud_del_{pid}", help="Șterge reperul", use_container_width=True):
-                                PieseRepository.delete(pid)
+            with st.expander(titlu_row, expanded=False):
+                with st.form(f"form_audit_row_{pid}"):
+                    ca1, ca2, ca3, ca4, ca5 = st.columns([2.5, 1.3, 1.2, 0.8, 0.8], vertical_alignment="bottom")
+                    with ca1:
+                        aud_den = st.text_input("Denumire", value=str(p.get("denumire") or ""), key=f"aud_den_{pid}")
+                    with ca2:
+                        aud_pret_txt = st.text_input(
+                            "Preț Achiziție",
+                            value=f"{pret_c:.2f}",
+                            key=f"aud_pret_{pid}"
+                        )
+                    with ca3:
+                        opt_v_aud = ["EUR", "RON"]
+                        idx_v_aud = opt_v_aud.index(val_c) if val_c in opt_v_aud else 0
+                        aud_val = st.selectbox("Monedă / UM", options=opt_v_aud, index=idx_v_aud, key=f"aud_val_{pid}")
+                    with ca4:
+                        if st.form_submit_button("💾", help="Salvează prețul și moneda", use_container_width=True):
+                            pret_nou_aud, err_a = calculeaza_pret_din_expresie(aud_pret_txt, pret_c)
+                            if err_a:
+                                st.error(err_a)
+                            else:
+                                PieseRepository.update(pid, {
+                                    "denumire": aud_den.strip() or p.get("denumire", ""),
+                                    "cod_producator": p.get("cod_producator") or "",
+                                    "cod_comercial": p.get("cod_comercial") or "",
+                                    "subansamblu": p.get("subansamblu") or "",
+                                    "parametri": p.get("parametri") or "",
+                                    "termen_livrare": str(p.get("termen_livrare") or "1"),
+                                    "link_furnizor": p.get("link_furnizor") or "",
+                                    "pret_achizitie": pret_nou_aud,
+                                    "valuta_achizitie": aud_val
+                                })
                                 _obtine_corpus_utilizare_istoric.clear()
-                                st.toast(f"🗑️ Reper șters: {p.get('denumire', '')}")
-                                st.rerun()
+                                st.toast(f"✅ Salvat: {aud_den.strip()} -> {pret_nou_aud:.2f} {aud_val}")
+                    with ca5:
+                        if st.form_submit_button("🗑️", help="Șterge reperul", use_container_width=True):
+                            PieseRepository.delete(pid)
+                            _obtine_corpus_utilizare_istoric.clear()
+                            st.toast(f"🗑️ Reper șters: {p.get('denumire', '')}")
+
+    with tab_audit_curatenie:
+        _fragment_audit_curatenie()
