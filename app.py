@@ -26,7 +26,7 @@ st.set_page_config(
     page_title="NexInd CMMS Enterprise Dashboard",
     page_icon=page_icon,
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 if os.path.exists(icon_android_path):
@@ -35,6 +35,20 @@ if os.path.exists(icon_android_path):
 # Inițializare stare globală de deblocare
 if "is_unlocked" not in st.session_state:
     st.session_state["is_unlocked"] = False
+
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {
+            display: none !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # Import pagini modulare
 from repositories.setari_repository import SetariRepository
@@ -86,7 +100,7 @@ seteaza_iconita_android(icon_android_path)
 
 def render_deblocare():
     st.subheader("🔐 SistemAdmin — Deblocare Editare Configurații Sisteme")
-    st.caption("Controlează accesul pentru adăugarea/ștergerea verificărilor tehnice pe sisteme și a elementelor din componența sistemelor.")
+    st.caption("Deblochează global toate zonele protejate cu parolă din aplicație: prețuri achiziție piese, furnizori, tarife standard (Nivel A & B), adaos comercial implicit, praguri și componența sistemelor.")
 
     setari = SetariRepository.get_setari()
     parola_salvata = str(setari.get("pass") or "").strip()
@@ -98,6 +112,7 @@ def render_deblocare():
         st.success("🔓 **Status curent: DEBLOCAT** — Ai permisiuni complete de adăugare și ștergere la verificările tehnice pe sisteme și la componența sistemelor.")
         if st.button("🔒 Blochează la loc elementele protejate", type="primary"):
             st.session_state["is_unlocked"] = False
+            st.session_state["preturi_deblocate"] = False
             st.toast("🔒 Elementele protejate au fost blocate.")
             st.rerun()
     else:
@@ -110,22 +125,21 @@ def render_deblocare():
                     st.error("Nu este definită o parolă în Setări.")
                 elif parola_introdusa == parola_salvata:
                     st.session_state["is_unlocked"] = True
+                    st.session_state["preturi_deblocate"] = True
                     st.toast("🔓 Sesiune deblocată cu succes!")
                     st.rerun()
                 else:
                     st.error("❌ Parolă incorectă!")
 
 
-st.sidebar.title("📌 Nexus Control Panel")
-st.sidebar.text("CMMS Enterprise v10.5.0")
-st.sidebar.markdown("---")
-if st.session_state.get("is_unlocked", False):
-    st.sidebar.success("🔓 Mod Editare: DEBLOCAT")
-else:
-    st.sidebar.warning("🔒 Mod Editare: BLOCAT")
-st.sidebar.info("Arhitectură Enterprise optimizată.")
-
-st.title("🛠️ NexInd CMMS Dashboard & Predictive")
+c_title, c_status = st.columns([4.2, 1.3], vertical_alignment="center")
+with c_title:
+    st.title("🛠️ NexInd CMMS Dashboard & Predictive")
+with c_status:
+    if st.session_state.get("is_unlocked", False):
+        st.success("🔓 Sistem: DEBLOCAT")
+    else:
+        st.warning("🔒 Sistem: BLOCAT")
 
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {

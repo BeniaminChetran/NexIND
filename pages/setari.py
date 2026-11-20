@@ -70,9 +70,7 @@ def render_setari():
 
     setari_curente = SetariRepository.get_setari()
     parola_sistem = str(setari_curente.get("pass") or "").strip()
-
-    if "preturi_deblocate" not in st.session_state:
-        st.session_state["preturi_deblocate"] = False
+    acces_deblocat = bool(st.session_state.get("is_unlocked", False)) or (not parola_sistem)
 
     tab_firma, tab_tarife, tab_fraze, tab_securitate = st.tabs([
         "🏢 Date Firmă, TVA & Valori Implicite",
@@ -164,32 +162,15 @@ def render_setari():
         st.markdown("---")
         st.markdown("##### 🔒 Adaos Comercial Implicit Piese (Client Standard)")
 
-        if not st.session_state.get("preturi_deblocate", False):
-            st.info("🔐 Adaosul comercial implicit este protejat cu parolă. Introdu parola pentru a-l vizualiza sau modifica.")
-            cp1, cp2 = st.columns([2.5, 1], vertical_alignment="bottom")
-            with cp1:
-                parola_introdusa = st.text_input(
-                    "Parolă deblocare",
-                    type="password",
-                    key="input_pass_adaos_implicit",
-                    placeholder="Introdu parola din Setări -> Securitate..."
-                )
-            with cp2:
-                if st.button("🔓 Deblochează Adaos", key="btn_unlock_adaos_imp", use_container_width=True):
-                    if not parola_sistem:
-                        st.warning("⚠️ Nu este setată nicio parolă în tab-ul 'Securitate & Email'. Setează o parolă mai întâi.")
-                    elif parola_introdusa == parola_sistem:
-                        st.session_state["preturi_deblocate"] = True
-                        st.rerun()
-                    else:
-                        st.error("❌ Parolă incorectă!")
+        if not acces_deblocat:
+            st.info("🔐 Adaosul comercial implicit este protejat cu parolă. Mergi la **SistemAdmin → 🔑 Deblocare** pentru a-l vizualiza sau modifica.")
         else:
             val_curenta_adaos = float(
                 setari_curente.get("adaos_comercial_implicit")
                 if setari_curente.get("adaos_comercial_implicit") is not None
                 else 35.0
             )
-            ca1, ca2, ca3 = st.columns([2.5, 1.2, 1.0], vertical_alignment="bottom")
+            ca1, ca2 = st.columns([3.0, 1.3], vertical_alignment="bottom")
             with ca1:
                 nou_adaos_implicit = st.number_input(
                     "Adaos comercial implicit piese — Client Standard (%)",
@@ -207,10 +188,6 @@ def render_setari():
                     date_actualizate["adaos_comercial_implicit"] = float(nou_adaos_implicit)
                     SetariRepository.save_setari(date_actualizate)
                     st.success(f"✅ Adaosul comercial implicit a fost salvat în baza de date ({nou_adaos_implicit:.2f}%)!")
-                    st.rerun()
-            with ca3:
-                if st.button("🔒 Blochează", key="btn_lock_adaos_imp", use_container_width=True):
-                    st.session_state["preturi_deblocate"] = False
                     st.rerun()
 
     # ---------------------------------------------------------

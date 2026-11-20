@@ -264,29 +264,10 @@ def render_piese():
 
     setari_info = SetariRepository.get_setari() or {}
     parola_setata = str(setari_info.get('pass', '')).strip()
+    acces_permis = bool(st.session_state.get("is_unlocked", False)) or (not parola_setata)
 
-    if "preturi_deblocate" not in st.session_state:
-        st.session_state["preturi_deblocate"] = False
-
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("🔒 **Date Achiziție, Tarife & Furnizori**")
-        if not st.session_state["preturi_deblocate"]:
-            parola_introdusa = st.text_input("Introdu parola din Setări", type="password", key="input_pass_piese")
-            if st.button("Deblochează Datele"):
-                if parola_setata and parola_introdusa == parola_setata:
-                    st.session_state["preturi_deblocate"] = True
-                    st.success("Date deblocate!")
-                    st.rerun()
-                else:
-                    st.error("Parolă incorectă sau nesetată în Setări.")
-        else:
-            st.success("🔓 Prețuri (EUR / RON), tarife și furnizori vizibili.")
-            if st.button("Blochează la loc"):
-                st.session_state["preturi_deblocate"] = False
-                st.rerun()
-
-    acces_permis = st.session_state["preturi_deblocate"] or (not parola_setata)
+    if not acces_permis:
+        st.info("🔒 Prețurile de achiziție, furnizorii, tarifele standard și curățenia de prețuri sunt protejate. Deblochează sesiunea din **SistemAdmin → 🔑 Deblocare**.")
 
     tab_piese, tab_tarife_grile, tab_audit_curatenie = st.tabs([
         "🔩 Catalog Piese de Schimb",
@@ -442,7 +423,7 @@ def render_piese():
                                         idx_val = opt_val.index(valuta_val) if valuta_val in opt_val else 1
                                         mod_valuta = st.selectbox("Monedă", options=opt_val, index=idx_val, key=f"val_{pid}")
                                 else:
-                                    st.info("🔒 Furnizorul și prețul de achiziție sunt ascunse. Deblochează din sidebar.")
+                                    st.info("🔒 Furnizorul și prețul de achiziție sunt ascunse. Deblochează din SistemAdmin → 🔑 Deblocare.")
                                     mod_link = p.get('link_furnizor', '') or ''
                                     mod_pret_expr = f"{pret_val:.2f}"
                                     mod_valuta = valuta_val
@@ -486,7 +467,7 @@ def render_piese():
         )
 
         if not acces_permis:
-            st.warning("🔒 Tarifele standard sunt protejate cu parolă. Introdu parola în bara laterală (stânga) pentru a le vizualiza sau modifica.")
+            st.warning("🔒 Tarifele standard sunt protejate cu parolă. Mergi la **SistemAdmin → 🔑 Deblocare** pentru a le vizualiza sau modifica.")
         else:
             with st.expander("➕ Adaugă Tarif Nou în Grila Nivel A / Nivel B", expanded=False):
                 with st.form("form_add_tarif_piese_tab", clear_on_submit=True):
@@ -602,7 +583,7 @@ def render_piese():
         st.markdown("##### 🧹 Audit & Curățenie Catalog Piese (Preț / UM lipsă & Repere neutilizate)")
 
         if not acces_permis:
-            st.warning("🔒 Pentru a face curățenie în prețuri și a vedea valorile de achiziție, introdu mai întâi parola în bara laterală (stânga).")
+            st.warning("🔒 Pentru a face curățenie în prețuri și a vedea valorile de achiziție, deblochează mai întâi sesiunea din **SistemAdmin → 🔑 Deblocare**.")
         else:
             toate_piesele = PieseRepository.get_all() or []
             corpus_istoric = _obtine_corpus_utilizare_istoric()
