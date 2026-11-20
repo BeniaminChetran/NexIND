@@ -916,6 +916,22 @@ def render_oferte():
                     use_container_width=True
                 )
 
+                # Previzualizare LIVE a totalului recalculat în Istoric la orice modificare de preț / cantitate
+                if not df_art_editat_hist.empty:
+                    df_h_calc = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+                    cant_ser = pd.to_numeric(df_h_calc["Cantitate"], errors="coerce").fillna(0.0)
+                    pret_ser = pd.to_numeric(df_h_calc[col_pret_hist], errors="coerce").fillna(0.0)
+                    sub_hist_prev = round(float((cant_ser * pret_ser).sum()), 2)
+                    tva_hist_prev = round(sub_hist_prev * (cota_tva_procent / 100.0), 2)
+                    tot_hist_prev = round(sub_hist_prev + tva_hist_prev, 2)
+
+                    st.info(
+                        f"🧮 **Total Recalculat (Previzualizare Live — {moneda_of}):** "
+                        f"**{sub_hist_prev:,.2f} {moneda_of}** fără TVA | "
+                        f"TVA ({cota_tva_procent:g}%): **{tva_hist_prev:,.2f} {moneda_of}** | "
+                        f"**TOTAL GENERAL: {tot_hist_prev:,.2f} {moneda_of}**"
+                    )
+
                 if not df_art_editat_hist.empty:
                     ch_ord1, ch_ins_pos, ch_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
                     if ch_ord1.button("🔄 Aplică Ordinea & Renumerotează", key=f"btn_ord_hist_{oid}", use_container_width=True):
@@ -966,14 +982,23 @@ def render_oferte():
                         df_h_val = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
                         if "Ordine" in df_h_val.columns:
                             df_h_val["Ordine"] = pd.to_numeric(df_h_val["Ordine"], errors="coerce").fillna(999)
-                            df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort")
+                            df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
+
+                        df_h_val["Cantitate"] = pd.to_numeric(df_h_val["Cantitate"], errors="coerce").fillna(0.0)
+                        df_h_val[col_pret_hist] = pd.to_numeric(df_h_val[col_pret_hist], errors="coerce").fillna(0.0)
+
+                        df_h_sync = df_h_val.copy()
+                        df_h_sync["Ordine"] = range(1, len(df_h_sync) + 1)
+                        st.session_state[hist_state_key] = df_h_sync
+                        st.session_state[hist_counter_key] += 1
+
                         linii_rev = df_h_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_r in linii_rev:
                             if este_ore_transport(l_r.get("Descriere")) and float(l_r.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
                                 st.error(f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
                                 st.stop()
 
-                        sub_rev = sum(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)) for l in linii_rev)
+                        sub_rev = round(sum(round(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)), 2) for l in linii_rev), 2)
                         tva_rev = round(sub_rev * (cota_tva_procent / 100.0), 2)
                         tot_rev = round(sub_rev + tva_rev, 2)
 
@@ -999,14 +1024,15 @@ def render_oferte():
                             "curs_valutar": curs_of,
                             "cota_tva": float(cota_tva_procent),
                             "articole": linii_rev,
-                            "subtotal": round(sub_rev, 2),
+                            "subtotal": sub_rev,
                             "tva": tva_rev,
                             "total_general": tot_rev,
                             "este_revizuita": True
                         }
                         st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf_rev)
                         st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}_REVIZUITA.pdf"
-                        st.success(f"Oferta #{nr_of} a fost salvată ca REVIZUITĂ!")
+                        st.session_state[f"msg_rev_ok_{oid}"] = f"✅ Oferta #{nr_of} a fost recalculată și salvată ca REVIZUITĂ ({tot_rev:,.2f} {moneda_of})!"
+                        st.rerun()
 
                 with c_hbtn2:
                     if st.button(f"📥 Generează PDF Ofertă #{nr_of} (forma curentă)", key=f"dl_pdf_hist_{oid}", use_container_width=True):
@@ -1053,6 +1079,9 @@ def render_oferte():
                         st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf)
                         sufix = "_REVIZUITA" if este_rev else ""
                         st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}{sufix}.pdf"
+
+                if st.session_state.get(f"msg_rev_ok_{oid}"):
+                    st.success(st.session_state[f"msg_rev_ok_{oid}"])
 
                 if st.session_state.get(f"pdf_hist_bytes_{oid}"):
                     st.download_button(
