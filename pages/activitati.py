@@ -13,6 +13,18 @@ from repositories.reparatii_repository import ReparatiiRepository
 from repositories.setari_repository import SetariRepository
 from services.pdf_service import genereaza_pdf
 from services.sync_service import background_sync_task
+from services.email_service import trimite_email_raport
+
+
+def _extrage_email_client(firma_obj: dict) -> str:
+    if not firma_obj:
+        return ""
+    for k in ("email_client", "email", "mail", "adresa_email"):
+        val = str(firma_obj.get(k) or "").strip()
+        if val:
+            return val
+    return ""
+
 
 def _init_sau_reseteaza_act_draft(tehnician_def: str):
     st.session_state["act_draft"] = {
@@ -35,10 +47,11 @@ def _init_sau_reseteaza_act_draft(tehnician_def: str):
     st.session_state["df_piese_editor"] = pd.DataFrame(columns=["Piesa", "Cantitate", "Tip"])
     st.session_state["act_editor_counter"] = st.session_state.get("act_editor_counter", 0) + 1
 
+
 def render_activitati():
     st.subheader("📝 Activități Zilnice & Raport Intervenție Tehnică")
 
-    setari_act = SetariRepository.get_setari()
+    setari_act = SetariRepository.get_setari() or {}
     tehnician_def = setari_act.get("tehnician_implicit") or "Tehnician Nexus"
 
     if "act_draft" not in st.session_state:
@@ -49,26 +62,56 @@ def render_activitati():
         st.session_state["ultimul_id_salvat"] = None
     if "ultimul_pdf_bytes" not in st.session_state:
         st.session_state["ultimul_pdf_bytes"] = None
+    if "ultim_email_client" not in st.session_state:
+        st.session_state["ultim_email_client"] = ""
+    if "ultim_firma_raport" not in st.session_state:
+        st.session_state["ultim_firma_raport"] = ""
+    if "email_raport_trimis" not in st.session_state:
+        st.session_state["email_raport_trimis"] = False
 
     draft = st.session_state["act_draft"]
 
     if st.session_state["raport_salvat"]:
-        st.success("✅ Activitate salvată cu succes! E-mailul a fost trimis în fundal.")
-        col_act1, col_act2 = st.columns(2)
+        rid_s = st.session_state["ultimul_id_salvat"]
+        st.success(f"✅ Raportul #{rid_s} a fost salvat în baza de date! Verifică raportul, apoi confirmă trimiterea pe email.")
+
+        col_act1, col_act2, col_act3 = st.columns([1.4, 1.8, 1.3])
         with col_act1:
             if st.session_state["ultimul_pdf_bytes"]:
                 st.download_button(
                     label="📥 Descarcă Raport PDF",
                     data=st.session_state["ultimul_pdf_bytes"],
-                    file_name=f"Raport_{st.session_state['ultimul_id_salvat']}.pdf",
+                    file_name=f"Raport_{rid_s}.pdf",
                     mime="application/pdf",
-                    type="primary"
+                    type="secondary",
+                    use_container_width=True
                 )
         with col_act2:
-            if st.button("➕ Introdu o activitate nouă"):
+            if st.session_state["email_raport_trimis"]:
+                st.info("✉️ Raportul a fost confirmat și trimis pe email.")
+            else:
+                if st.button("✅ Confirmă Verificarea & Trimite Raportul pe Email", type="primary", use_container_width=True):
+                    ok_mail, info_mail = trimite_email_raport(
+                        destinatar_client=st.session_state.get("ultim_email_client", ""),
+                        subiect=f"Raport #{rid_s} - {st.session_state.get('ultim_firma_raport', '')}",
+                        corp_mesaj=f"Vă atașăm raportul de intervenție #{rid_s}.",
+                        pdf_bytes=st.session_state["ultimul_pdf_bytes"],
+                        nume_fisier=f"Raport_{rid_s}.pdf",
+                    )
+                    if ok_mail:
+                        st.session_state["email_raport_trimis"] = True
+                        st.success(f"✅ Email trimis cu succes! ({info_mail})")
+                        st.rerun()
+                    else:
+                        st.error(f"⚠️ Eroare la trimiterea emailului: {info_mail}")
+        with col_act3:
+            if st.button("➕ Activitate nouă", use_container_width=True):
                 st.session_state["raport_salvat"] = False
                 st.session_state["ultimul_id_salvat"] = None
                 st.session_state["ultimul_pdf_bytes"] = None
+                st.session_state["ultim_email_client"] = ""
+                st.session_state["ultim_firma_raport"] = ""
+                st.session_state["email_raport_trimis"] = False
                 _init_sau_reseteaza_act_draft(tehnician_def)
                 st.rerun()
         return
@@ -96,13 +139,14 @@ def render_activitati():
     with c_sel1:
         sel_firma = st.selectbox("1. Alege Firma", options=optiuni_firme, index=idx_curent)
         draft["sel_firma"] = sel_firma
-    
+
     if sel_firma == "-- Alege firma --":
         st.info("ℹ️ Vă rugăm să selectați o firmă din listă pentru a continua.")
         return
 
     firma_obj = firme_dict[sel_firma]
     persoana_contact_firma = firma_obj.get('nume_persoana') or firma_obj.get('persoana_contact') or "Client"
+    email_client_sel = _extrage_email_client(firma_obj)
 
     if draft.get("ultima_firma") != sel_firma:
         draft["ultima_firma"] = sel_firma
@@ -111,11 +155,11 @@ def render_activitati():
     masini_db = MasiniRepository.get_by_firma(firma_obj['id'])
     masini_nume = [m['denumire'] for m in masini_db] if masini_db else ["Nicio mașină"]
     idx_masina = masini_nume.index(draft["sel_masina"]) if draft.get("sel_masina") in masini_nume else 0
-    
+
     with c_sel2:
         sel_masina = st.selectbox("2. Alege Mașina", options=masini_nume, index=idx_masina)
         draft["sel_masina"] = sel_masina
-    
+
     subansambluri, erori = [], []
     if masini_db and sel_masina != "Nicio mașină":
         m_match = next((m for m in masini_db if m['denumire'] == sel_masina), None)
@@ -128,17 +172,17 @@ def render_activitati():
     with c_sel3:
         sel_subansamblu = st.selectbox("3. Subansamblu", options=opt_sub, index=idx_sub)
         draft["sel_sub"] = sel_subansamblu
-    
+
     st.markdown("---")
-    
+
     piese_catalog = [p['denumire'] for p in PieseRepository.get_all()]
     if "df_piese_editor" not in st.session_state:
         st.session_state["df_piese_editor"] = pd.DataFrame(columns=["Piesa", "Cantitate", "Tip"])
 
     st.markdown("##### 🔩 Piese Utilizate / Necesare")
     edited_df = st.data_editor(
-        st.session_state["df_piese_editor"], 
-        num_rows="dynamic", 
+        st.session_state["df_piese_editor"],
+        num_rows="dynamic",
         column_config={
             "Piesa": st.column_config.SelectboxColumn("Piesă", options=piese_catalog, required=True),
             "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=1, default=1),
@@ -185,7 +229,7 @@ def render_activitati():
     c_t1, c_t2 = st.columns(2)
     tehnician = c_t1.text_input("Tehnician", value=str(draft.get("tehnician", tehnician_def)))
     draft["tehnician"] = tehnician
-    
+
     opt_verif = list(dict.fromkeys([persoana_contact_firma, "Client"]))
     idx_verif = opt_verif.index(draft["verificator"]) if draft.get("verificator") in opt_verif else 0
     verificator = c_t2.selectbox("Verificat de", options=opt_verif, index=idx_verif)
@@ -213,34 +257,30 @@ def render_activitati():
         rid = ReparatiiRepository.insert(data_rep)
         if rid:
             pdf_bytes = genereaza_pdf({
-                "id": rid, "client": sel_firma, "masina": sel_masina, "durata": durata_min, 
-                "stare_finala": stare_fin, "piese_json": [{"piesa": p.get("Piesa"), "cantitate": p.get("Cantitate"), "tip": p.get("Tip")} for p in piese_valide], 
-                "titlu": titlu_lucrare, "simptom": simptom, "defect": defect, "solutie": solutie, 
-                "optimizari": optimizari, "tehnician": tehnician, "verificator": verificator, 
+                "id": rid, "client": sel_firma, "masina": sel_masina, "durata": durata_min,
+                "stare_finala": stare_fin, "piese_json": [{"piesa": p.get("Piesa"), "cantitate": p.get("Cantitate"), "tip": p.get("Tip")} for p in piese_valide],
+                "titlu": titlu_lucrare, "simptom": simptom, "defect": defect, "solutie": solutie,
+                "optimizari": optimizari, "tehnician": tehnician, "verificator": verificator,
                 "data": datetime.now(), "tip_interventie": tip_interventie
             })
-            
+
             st.session_state["ultimul_id_salvat"] = rid
             st.session_state["ultimul_pdf_bytes"] = pdf_bytes
+            st.session_state["ultim_email_client"] = email_client_sel
+            st.session_state["ultim_firma_raport"] = sel_firma
+            st.session_state["email_raport_trimis"] = False
 
-            threading.Thread(target=background_sync_task, args=(
-                {
-                    "status": "nefacturat", 
-                    "id": str(rid), 
-                    "data": datetime.now().strftime("%Y-%m-%d"), 
-                    "tip_interventie": tip_interventie, 
-                    "ora": f"{durata_min} min", 
-                    "firma": sel_firma, 
-                    "masina": sel_masina,
-                    "tehnician": tehnician,
-                    "verificator": verificator
-                },
-                firma_obj.get('email', ''), 
-                f"Raport #{rid} - {sel_firma}", 
-                f"Vă atașăm raportul #{rid}.", 
-                pdf_bytes, 
-                f"Raport_{rid}.pdf"
-            ), daemon=True).start()
+            threading.Thread(target=background_sync_task, args=({
+                "status": "nefacturat",
+                "id": str(rid),
+                "data": datetime.now().strftime("%Y-%m-%d"),
+                "tip_interventie": tip_interventie,
+                "ora": f"{durata_min} min",
+                "firma": sel_firma,
+                "masina": sel_masina,
+                "tehnician": tehnician,
+                "verificator": verificator
+            },), daemon=True).start()
 
             _init_sau_reseteaza_act_draft(tehnician_def)
             st.session_state["raport_salvat"] = True

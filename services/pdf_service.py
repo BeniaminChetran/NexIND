@@ -88,6 +88,7 @@ def get_date_firma_mea():
         "telefon_2": "",
         "email_1": "",
         "email_2": "",
+        "email_tehnician": "",
         "cota_tva": 21.0,
         "valabilitate_implicita": "15 zile",
         "termeni_plata_impliciti": "5 zile de la emiterea facturii",
@@ -96,29 +97,17 @@ def get_date_firma_mea():
     }
 
 
-def _extrage_contacte_si_swift(setari: dict) -> list[str]:
-    """Returnează liniile separate pentru SWIFT, telefoane și emailuri (doar dacă există)."""
+def _extrage_linii_contact_dreapta(setari: dict) -> list[str]:
+    """Returnează telefoanele și emailurile completate (fiecare pe rândul său) pentru partea dreaptă."""
     linii = []
-    swift = str((setari or {}).get("swep_mea") or "").strip()
-    if swift:
-        linii.append(f"SWIFT: {swift}")
-
-    telefoane = [
-        str((setari or {}).get(k) or "").strip()
-        for k in ("telefon_1", "telefon_2")
-        if str((setari or {}).get(k) or "").strip()
-    ]
-    if telefoane:
-        linii.append(f"Tel: {' | '.join(telefoane)}")
-
-    emailuri = [
-        str((setari or {}).get(k) or "").strip()
-        for k in ("email_1", "email_2")
-        if str((setari or {}).get(k) or "").strip()
-    ]
-    if emailuri:
-        linii.append(f"Email: {' | '.join(emailuri)}")
-
+    for k in ("telefon_1", "telefon_2"):
+        val = str((setari or {}).get(k) or "").strip()
+        if val:
+            linii.append(f"Tel: {val}")
+    for k in ("email_1", "email_2"):
+        val = str((setari or {}).get(k) or "").strip()
+        if val:
+            linii.append(f"Email: {val}")
     return linii
 
 
@@ -133,8 +122,8 @@ def _construieste_antet_cu_sigla(
     include_banca_iban: bool = False,
 ) -> Table:
     """
-    Stânga: sigla Nexind sus, dedesubt datele firmei, iar SWIFT, telefoanele și emailurile fiecare pe rândul său.
-    Dreapta: titlul, numărul și data aliniate mai la dreapta.
+    Stânga: sigla Nexind sus, dedesubt datele firmei (același font s_normal / s_bold).
+    Dreapta: titlul, numărul, data și dedesubt telefoanele și emailurile aliniate tabelar la dreapta (același font s_normal).
     """
     stanga_elems = []
     logo_path = _gaseste_sigla_nexind()
@@ -153,6 +142,7 @@ def _construieste_antet_cu_sigla(
     adresa = str((setari or {}).get("adresa_mea") or "").strip()
     banca = str((setari or {}).get("banca_mea") or "").strip()
     iban = str((setari or {}).get("iban_mea") or "").strip()
+    swift = str((setari or {}).get("swep_mea") or "").strip()
 
     if nume:
         stanga_elems.append(Paragraph(f"<b>{nume}</b>", s_bold))
@@ -163,10 +153,10 @@ def _construieste_antet_cu_sigla(
     if reg_com:
         fiscal.append(f"Reg. Com.: {reg_com}")
     if fiscal:
-        stanga_elems.append(Paragraph(" | ".join(fiscal), s_small))
+        stanga_elems.append(Paragraph(" | ".join(fiscal), s_normal))
 
     if adresa:
-        stanga_elems.append(Paragraph(f"Adresă: {adresa}", s_small))
+        stanga_elems.append(Paragraph(f"Adresă: {adresa}", s_normal))
 
     if include_banca_iban:
         banca_parts = []
@@ -174,11 +164,12 @@ def _construieste_antet_cu_sigla(
             banca_parts.append(f"Bancă: {banca}")
         if iban:
             banca_parts.append(f"IBAN: {iban}")
+        if swift:
+            banca_parts.append(f"SWIFT: {swift}")
         if banca_parts:
-            stanga_elems.append(Paragraph(" | ".join(banca_parts), s_small))
-
-    for linie_extra in _extrage_contacte_si_swift(setari or {}):
-        stanga_elems.append(Paragraph(linie_extra, s_small))
+            stanga_elems.append(Paragraph(" | ".join(banca_parts), s_normal))
+    elif swift:
+        stanga_elems.append(Paragraph(f"SWIFT: {swift}", s_normal))
 
     style_titlu_dr = ParagraphStyle(
         "TitluDreapta",
@@ -191,8 +182,8 @@ def _construieste_antet_cu_sigla(
     style_meta_dr = ParagraphStyle(
         "MetaDreapta",
         parent=s_normal,
-        fontSize=9.5,
-        leading=13,
+        fontSize=s_normal.fontSize,
+        leading=s_normal.leading,
         alignment=TA_RIGHT,
     )
 
@@ -202,6 +193,22 @@ def _construieste_antet_cu_sigla(
         Paragraph(f"<b>Nr.:</b> {nr_text}", style_meta_dr),
         Paragraph(f"<b>Data:</b> {data_text}", style_meta_dr),
     ]
+
+    linii_contact_dr = _extrage_linii_contact_dreapta(setari or {})
+    if linii_contact_dr:
+        dreapta_elems.append(Spacer(1, 1.5 * mm))
+        tbl_contact_dr = Table(
+            [[Paragraph(lc, style_meta_dr)] for lc in linii_contact_dr],
+            colWidths=[85 * mm],
+        )
+        tbl_contact_dr.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        dreapta_elems.append(tbl_contact_dr)
 
     tbl = Table([[stanga_elems, dreapta_elems]], colWidths=[95 * mm, 87 * mm])
     tbl.setStyle(TableStyle([
