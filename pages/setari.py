@@ -69,6 +69,10 @@ def render_setari():
     st.subheader("⚙️ Setări Generale Firmă, TVA & Configurări Documente")
 
     setari_curente = SetariRepository.get_setari()
+    parola_sistem = str(setari_curente.get("pass") or "").strip()
+
+    if "preturi_deblocate" not in st.session_state:
+        st.session_state["preturi_deblocate"] = False
 
     tab_firma, tab_tarife, tab_fraze, tab_securitate = st.tabs([
         "🏢 Date Firmă, TVA & Valori Implicite",
@@ -103,7 +107,7 @@ def render_setari():
                 swep_mea = st.text_input("Cod SWIFT / BIC", value=setari_curente.get("swep_mea", ""))
 
             st.markdown("---")
-            st.markdown("##### Valori Implicite pentru Oferte de Preț, Calculator & Rapoarte Tehnice")
+            st.markdown("##### Valori Implicite pentru Oferte de Preț & Rapoarte Tehnice")
             co1, co2 = st.columns(2)
             with co1:
                 valabilitate_implicita = st.text_input(
@@ -113,15 +117,6 @@ def render_setari():
                 intocmit_de_implicit = st.text_input(
                     "Întocmit de — Oferte de preț (implicit)",
                     value=setari_curente.get("intocmit_de_implicit") or "Echipa Nexus Industrial"
-                )
-                adaos_comercial_implicit = st.number_input(
-                    "Adaos comercial implicit piese — Client Standard (%)",
-                    min_value=0.0,
-                    max_value=500.0,
-                    value=float(setari_curente.get("adaos_comercial_implicit") if setari_curente.get("adaos_comercial_implicit") is not None else 35.0),
-                    step=1.0,
-                    format="%.2f",
-                    help="Se aplică automat în Calculatorul Rapid de Prețuri pentru Client Standard sau pentru firmele fără adaos definit."
                 )
             with co2:
                 termeni_plata_impliciti = st.text_input(
@@ -158,11 +153,65 @@ def render_setari():
                     "intocmit_de_implicit": intocmit_de_implicit.strip() or "Echipa Nexus Industrial",
                     "tehnician_implicit": tehnician_implicit.strip() or "Tehnician Nexus",
                     "clauze_subsol_implicite": clauze_subsol_implicite.strip(),
-                    "adaos_comercial_implicit": float(adaos_comercial_implicit)
                 })
                 SetariRepository.save_setari(date_actualizate)
-                st.success("✅ Setările firmei, TVA-ul, adaosul implicit și valorile implicite au fost salvate!")
+                st.success("✅ Setările firmei, TVA-ul și valorile implicite au fost salvate!")
                 st.rerun()
+
+        # ---------------------------------------------------------
+        # SECȚIUNE PROTEJATĂ CU PAROLĂ: ADAOS COMERCIAL IMPLICIT
+        # ---------------------------------------------------------
+        st.markdown("---")
+        st.markdown("##### 🔒 Adaos Comercial Implicit Piese (Client Standard)")
+
+        if not st.session_state.get("preturi_deblocate", False):
+            st.info("🔐 Adaosul comercial implicit este protejat cu parolă. Introdu parola pentru a-l vizualiza sau modifica.")
+            cp1, cp2 = st.columns([2.5, 1], vertical_alignment="bottom")
+            with cp1:
+                parola_introdusa = st.text_input(
+                    "Parolă deblocare",
+                    type="password",
+                    key="input_pass_adaos_implicit",
+                    placeholder="Introdu parola din Setări -> Securitate..."
+                )
+            with cp2:
+                if st.button("🔓 Deblochează Adaos", key="btn_unlock_adaos_imp", use_container_width=True):
+                    if not parola_sistem:
+                        st.warning("⚠️ Nu este setată nicio parolă în tab-ul 'Securitate & Email'. Setează o parolă mai întâi.")
+                    elif parola_introdusa == parola_sistem:
+                        st.session_state["preturi_deblocate"] = True
+                        st.rerun()
+                    else:
+                        st.error("❌ Parolă incorectă!")
+        else:
+            val_curenta_adaos = float(
+                setari_curente.get("adaos_comercial_implicit")
+                if setari_curente.get("adaos_comercial_implicit") is not None
+                else 35.0
+            )
+            ca1, ca2, ca3 = st.columns([2.5, 1.2, 1.0], vertical_alignment="bottom")
+            with ca1:
+                nou_adaos_implicit = st.number_input(
+                    "Adaos comercial implicit piese — Client Standard (%)",
+                    min_value=0.0,
+                    max_value=500.0,
+                    value=val_curenta_adaos,
+                    step=1.0,
+                    format="%.2f",
+                    key="num_adaos_comercial_implicit_db",
+                    help="Se citește din baza de date (setari.adaos_comercial_implicit) și se aplică în Calculatorul Rapid de Prețuri."
+                )
+            with ca2:
+                if st.button("💾 Salvează Adaos", key="btn_save_adaos_imp", type="primary", use_container_width=True):
+                    date_actualizate = dict(setari_curente)
+                    date_actualizate["adaos_comercial_implicit"] = float(nou_adaos_implicit)
+                    SetariRepository.save_setari(date_actualizate)
+                    st.success(f"✅ Adaosul comercial implicit a fost salvat în baza de date ({nou_adaos_implicit:.2f}%)!")
+                    st.rerun()
+            with ca3:
+                if st.button("🔒 Blochează", key="btn_lock_adaos_imp", use_container_width=True):
+                    st.session_state["preturi_deblocate"] = False
+                    st.rerun()
 
     # ---------------------------------------------------------
     # TAB 2: TARIFE STANDARD (EUR & RON)
