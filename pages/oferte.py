@@ -106,10 +106,8 @@ def converteste_in_moneda_oferta(pret_unitar: float, moneda_linie: str, moneda_t
 def get_text_clauze_implicite(moneda: str, setari_firma: dict = None) -> str:
     """Citește textul implicit din baza de date (Setări) și înlocuiește placeholder-ul {MONEDA}."""
     fallback = (
-        "Oferta de preț este exprimată în {MONEDA}, nu conține piese de schimb și este valabilă 15 zile.
-"
-        "Costul pieselor de schimb se va transmite după constatare/diagnosticare.
-"
+        "Oferta de preț este exprimată în {MONEDA}, nu conține piese de schimb și este valabilă 15 zile.\n"
+        "Costul pieselor de schimb se va transmite după constatare/diagnosticare.\n"
         "În funcție de complexitatea lucrărilor, durata intervenției poate suferi modificări. Acestea vă vor fi comunicate la fața locului."
     )
     if setari_firma is None:
@@ -740,8 +738,7 @@ def render_oferte():
         if st.button("➕ Inserează", key="btn_add_fraza_lista", use_container_width=True):
             if fraza_selectata != "-- Selectează clauza --":
                 text_curent = str(draft.get("observatii", "")).strip()
-                draft["observatii"] = f"{text_curent}
-{fraza_selectata}" if text_curent else fraza_selectata
+                draft["observatii"] = f"{text_curent}\n{fraza_selectata}" if text_curent else fraza_selectata
                 st.rerun()
 
     observatii = st.text_area(
