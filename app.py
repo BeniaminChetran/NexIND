@@ -157,7 +157,7 @@ MENIU_STRUCTURA = {
     },
     "📦 Nomenclatoare & Stocuri": {
         "📦 Piese": render_piese,
-        "⚙️ Mașini": render_masini,
+        "🦾 Mașini": render_masini,
         "🏢 Firme": render_firme,
     },
     "🗂️ Arhivă & Docs": {
