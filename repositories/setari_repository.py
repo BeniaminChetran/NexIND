@@ -13,9 +13,26 @@ DEFAULT_CLAUZE_SUBSOL = (
     "În funcție de complexitatea lucrărilor, durata intervenției poate suferi modificări. Acestea vă vor fi comunicate la fața locului."
 )
 
+
 class SetariRepository(BaseRepository):
     @classmethod
+    def _ensure_columns(cls):
+        from config import db_cursor
+        try:
+            with db_cursor() as c:
+                c.execute("""
+                    ALTER TABLE setari
+                    ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT ''
+                """)
+        except Exception:
+            pass
+
+    @classmethod
     def get_setari(cls):
+        cls._ensure_columns()
         query = "SELECT * FROM setari LIMIT 1"
         res = cls().fetch_one(query)
         defaults = {
@@ -26,6 +43,10 @@ class SetariRepository(BaseRepository):
             "banca_mea": "",
             "iban_mea": "",
             "swep_mea": "",
+            "telefon_1": "",
+            "telefon_2": "",
+            "email_1": "",
+            "email_2": "",
             "smtp_server": "smtp.gmail.com",
             "smtp_port": 587,
             "smtp_user": "",
@@ -45,6 +66,10 @@ class SetariRepository(BaseRepository):
             for k, v in defaults.items():
                 if res.get(k) is None or str(res.get(k)).strip() == "":
                     if k in (
+                        "telefon_1",
+                        "telefon_2",
+                        "email_1",
+                        "email_2",
                         "cota_tva",
                         "valabilitate_implicita",
                         "termeni_plata_impliciti",
@@ -60,6 +85,7 @@ class SetariRepository(BaseRepository):
     @classmethod
     def save_setari(cls, data: dict):
         from config import db_cursor
+        cls._ensure_columns()
         existing = cls.get_setari()
         parola_curenta = data.get("pass") if data.get("pass") is not None else existing.get("pass", "")
         clauze_subsol = data.get("clauze_subsol_implicite")
@@ -68,22 +94,30 @@ class SetariRepository(BaseRepository):
         adaos_imp = data.get("adaos_comercial_implicit")
         if adaos_imp is None:
             adaos_imp = existing.get("adaos_comercial_implicit", 35.0)
+
+        telefon_1 = str(data.get("telefon_1") if data.get("telefon_1") is not None else existing.get("telefon_1", "")).strip()
+        telefon_2 = str(data.get("telefon_2") if data.get("telefon_2") is not None else existing.get("telefon_2", "")).strip()
+        email_1 = str(data.get("email_1") if data.get("email_1") is not None else existing.get("email_1", "")).strip()
+        email_2 = str(data.get("email_2") if data.get("email_2") is not None else existing.get("email_2", "")).strip()
+
         with db_cursor() as c:
             c.execute("DELETE FROM setari")
             c.execute("""
                 INSERT INTO setari (
                     nume_firma_mea, cui_mea, reg_com_mea, adresa_mea, banca_mea, 
-                    iban_mea, swep_mea, smtp_server, smtp_port, smtp_user, 
-                    smtp_pass, google_sheet_url, email_tehnician, cota_tva, pass,
+                    iban_mea, swep_mea, telefon_1, telefon_2, email_1, email_2,
+                    smtp_server, smtp_port, smtp_user, smtp_pass, google_sheet_url,
+                    email_tehnician, cota_tva, pass,
                     valabilitate_implicita, termeni_plata_impliciti,
                     intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite,
                     adaos_comercial_implicit
                 ) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 data.get('nume_firma_mea'), data.get('cui_mea'), data.get('reg_com_mea'),
                 data.get('adresa_mea'), data.get('banca_mea'), data.get('iban_mea'),
-                data.get('swep_mea'), data.get('smtp_server'), data.get('smtp_port'),
+                data.get('swep_mea'), telefon_1, telefon_2, email_1, email_2,
+                data.get('smtp_server'), data.get('smtp_port'),
                 data.get('smtp_user'), data.get('smtp_pass'), data.get('google_sheet_url'),
                 data.get('email_tehnician'), float(data.get('cota_tva', 21.0)),
                 parola_curenta,

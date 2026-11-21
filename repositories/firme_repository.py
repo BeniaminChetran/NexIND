@@ -5,8 +5,22 @@
 import logging
 import streamlit as st
 from repositories.base_repository import BaseRepository
+from repositories.setari_repository import SetariRepository
 
 logger = logging.getLogger("NexIndCMMS.FirmeRepository")
+
+
+def _rezolva_adaos(data: dict) -> float:
+    val = data.get("adaos_comercial")
+    if val is not None and str(val).strip() != "":
+        return float(val)
+    setari = SetariRepository.get_setari() or {}
+    imp = setari.get("adaos_comercial_implicit")
+    try:
+        return float(imp) if imp is not None and str(imp).strip() != "" else 35.0
+    except (TypeError, ValueError):
+        return 35.0
+
 
 class FirmeRepository(BaseRepository):
     @staticmethod
@@ -26,21 +40,23 @@ class FirmeRepository(BaseRepository):
             logger.error("Tentativă de inserare firmă fără nume.")
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
 
+        adaos_val = _rezolva_adaos(data)
+
         query = """
             INSERT INTO firme (nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial) 
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            nume.strip(), 
-            data.get('cui'), 
+            nume.strip(),
+            data.get('cui'),
             data.get('reg_com'),
-            data.get('adresa'), 
-            data.get('banca'), 
+            data.get('adresa'),
+            data.get('banca'),
             data.get('cont'),
-            data.get('nume_persoana'), 
-            data.get('email'), 
+            data.get('nume_persoana'),
+            data.get('email'),
             data.get('telefon'),
-            data.get('adaos_comercial', 20.00)
+            adaos_val
         )
         cls().execute(query, params)
         cls.get_all.clear()
@@ -55,6 +71,8 @@ class FirmeRepository(BaseRepository):
         if not nume or not str(nume).strip():
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
 
+        adaos_val = _rezolva_adaos(data)
+
         query = """
             UPDATE firme 
             SET nume_firma=%s, cui=%s, reg_com=%s, adresa=%s, banca=%s, cont=%s, nume_persoana=%s, email=%s, telefon=%s, adaos_comercial=%s 
@@ -64,7 +82,7 @@ class FirmeRepository(BaseRepository):
             nume.strip(), data.get('cui'), data.get('reg_com'),
             data.get('adresa'), data.get('banca'), data.get('cont'),
             data.get('nume_persoana'), data.get('email'), data.get('telefon'),
-            data.get('adaos_comercial', 20.00),
+            adaos_val,
             firma_id
         )
         cls().execute(query, params)
