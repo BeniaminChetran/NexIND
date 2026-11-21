@@ -175,19 +175,28 @@ MENIU_STRUCTURA = {
     },
 }
 
+categorii_lista = list(MENIU_STRUCTURA.keys())
+if st.session_state.get("nav_categorie_principala") not in categorii_lista:
+    st.session_state["nav_categorie_principala"] = categorii_lista[0]
+
 col_cat, col_sub = st.columns([1.3, 1.7])
 with col_cat:
     categorie_sel = st.selectbox(
         "Meniu Principal",
-        options=list(MENIU_STRUCTURA.keys()),
-        key="nav_categorie_principala"
+        options=categorii_lista,
+        key="nav_categorie_principala",
     )
+
+submeniuri = MENIU_STRUCTURA[categorie_sel]
+submeniuri_lista = list(submeniuri.keys())
+if st.session_state.get("nav_submeniu_activ") not in submeniuri_lista:
+    st.session_state["nav_submeniu_activ"] = submeniuri_lista[0]
+
 with col_sub:
-    submeniuri = MENIU_STRUCTURA[categorie_sel]
     submeniu_sel = st.selectbox(
         "Sub-modul",
-        options=list(submeniuri.keys()),
-        key=f"nav_submeniu_{categorie_sel}"
+        options=submeniuri_lista,
+        key="nav_submeniu_activ",
     )
 
 st.markdown("---")
