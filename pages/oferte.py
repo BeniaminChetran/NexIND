@@ -3,6 +3,7 @@
 #----------------------------------
 
 import re
+import unicodedata
 import streamlit as st
 import pandas as pd
 import json
@@ -69,16 +70,27 @@ def obtine_curs_bnr():
 
     return 5.35
 
+def _normalizeaza_text_fara_diacritice(text: str) -> str:
+    """Normalizează textul la lowercase și elimină diacriticele printr-o singură transformare Unicode."""
+    raw = str(text or "").strip().lower()
+    decomposed = unicodedata.normalize("NFKD", raw)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
 def este_ore_transport(descriere: str) -> bool:
-    txt = str(descriere or "").strip().lower()
-    for a, b in [("ă", "a"), ("â", "a"), ("î", "i"), ("ș", "s"), ("ş", "s"), ("ț", "t"), ("ţ", "t")]:
-        txt = txt.replace(a, b)
+    txt = _normalizeaza_text_fara_diacritice(descriere)
     return (
         ("ore transport" in txt)
         or ("ora transport" in txt)
         or ("ora de transport" in txt)
         or ("ore de transport" in txt)
     )
+
+def _valideaza_si_plafoneaza_ore_transport(descriere: str, cantitate: float, max_ore: float = MAX_ORE_TRANSPORT_ZI) -> tuple[float, bool]:
+    """Validează cantitatea pentru ore transport și returnează (cantitate_valida, a_fost_plafonata)."""
+    cant = float(cantitate or 0.0)
+    if este_ore_transport(descriere) and cant > max_ore:
+        return float(max_ore), True
+    return cant, False
 
 def normalizeaza_um(um_brut: str) -> str:
     um_curat = um_brut.replace("Eur/", "").replace("EUR/", "").replace("RON/", "").strip().lower()
@@ -479,10 +491,8 @@ def render_oferte():
             def on_schimbare_serviciu():
                 cheie_aleasa = st.session_state.get("sel_tarif_standard", "-- Alege din listă --")
                 if cheie_aleasa != "-- Alege din listă --" and cheie_aleasa in tarife_dict:
-                    desc_curata = str(tarife_dict[cheie_aleasa]["descriere"]).strip().lower()
-                    for a, b in [("ă", "a"), ("â", "a"), ("î", "i"), ("ș", "s"), ("ş", "s"), ("ț", "t"), ("ţ", "t")]:
-                        desc_curata = desc_curata.replace(a, b)
-                    if desc_curata.startswith("ora de") or desc_curata.startswith("ore de") or este_ore_transport(desc_curata):
+                    desc_norm = _normalizeaza_text_fara_diacritice(tarife_dict[cheie_aleasa]["descriere"])
+                    if desc_norm.startswith("ora de") or desc_norm.startswith("ore de") or este_ore_transport(desc_norm):
                         st.session_state["cant_tarif_std"] = None
 
             if "cant_tarif_std" not in st.session_state:
@@ -520,9 +530,8 @@ def render_oferte():
                         t_info = tarife_dict[sel_tarif_key]
                         if cant_tarif is None or float(cant_tarif) <= 0:
                             st.warning("⚠️ Vă rugăm să introduceți cantitatea înainte de a adăuga!")
-                        elif este_ore_transport(t_info['descriere']) and float(cant_tarif) > MAX_ORE_TRANSPORT_ZI:
-                            st.error(f"⚠️ Limita legală este de maximum {int(MAX_ORE_TRANSPORT_ZI)} ore de transport / zi!")
                         else:
+                            cant_valida, _ = _valideaza_si_plafoneaza_ore_transport(t_info['descriere'], float(cant_tarif))
                             pret_unitar = round(float(t_info['pret']), 2)
                             mon_um_brut = str(t_info.get('moneda_um') or 'RON').upper()
                             moneda_tarif = "EUR" if "EUR" in mon_um_brut else "RON"
@@ -534,7 +543,7 @@ def render_oferte():
                                 "Ordine": next_ord,
                                 "Descriere": t_info['descriere'],
                                 "UM": um_normalizata,
-                                "Cantitate": float(cant_tarif),
+                                "Cantitate": cant_valida,
                                 "Pret Unitar": pret_unitar,
                                 "Moneda": moneda_tarif,
                                 "Termen livrare": termen_tarif
@@ -641,11 +650,11 @@ def render_oferte():
         depasire_transport = False
         if not edited_oferta_df.empty and {"Descriere", "Cantitate"}.issubset(edited_oferta_df.columns):
             for idx_row, row_val in edited_oferta_df.iterrows():
-                if este_ore_transport(row_val.get("Descriere")):
-                    cant_val = float(pd.to_numeric(row_val.get("Cantitate"), errors="coerce") or 0.0)
-                    if cant_val > MAX_ORE_TRANSPORT_ZI:
-                        edited_oferta_df.at[idx_row, "Cantitate"] = MAX_ORE_TRANSPORT_ZI
-                        depasire_transport = True
+                cant_raw = float(pd.to_numeric(row_val.get("Cantitate"), errors="coerce") or 0.0)
+                cant_val, plafonat = _valideaza_si_plafoneaza_ore_transport(row_val.get("Descriere"), cant_raw)
+                if plafonat:
+                    edited_oferta_df.at[idx_row, "Cantitate"] = cant_val
+                    depasire_transport = True
 
         if depasire_transport:
             st.session_state["df_oferta_editor"] = edited_oferta_df.reset_index(drop=True)
@@ -724,7 +733,8 @@ def render_oferte():
                 return
 
             for _, r_chk in df_valid.iterrows():
-                if este_ore_transport(r_chk.get("Descriere")) and float(r_chk.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
+                _, plafonat_chk = _valideaza_si_plafoneaza_ore_transport(r_chk.get("Descriere"), float(r_chk.get("Cantitate", 0)))
+                if plafonat_chk:
                     st.error(f"⚠️ Activitatea **{r_chk.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
                     return
 
@@ -1077,7 +1087,8 @@ def render_oferte():
 
                         linii_rev = df_h_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_r in linii_rev:
-                            if este_ore_transport(l_r.get("Descriere")) and float(l_r.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
+                            _, plafonat_r = _valideaza_si_plafoneaza_ore_transport(l_r.get("Descriere"), float(l_r.get("Cantitate", 0)))
+                            if plafonat_r:
                                 st.error(f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
                                 st.stop()
 
@@ -1138,7 +1149,8 @@ def render_oferte():
                         ]
                         linii_cur = df_h_cur_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
                         for l_c in linii_cur:
-                            if este_ore_transport(l_c.get("Descriere")) and float(l_c.get("Cantitate", 0)) > MAX_ORE_TRANSPORT_ZI:
+                            _, plafonat_c = _valideaza_si_plafoneaza_ore_transport(l_c.get("Descriere"), float(l_c.get("Cantitate", 0)))
+                            if plafonat_c:
                                 st.error(f"⚠️ Activitatea **{l_c.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
                                 st.stop()
 
@@ -1192,6 +1204,3 @@ def render_oferte():
                     )
     else:
         st.info("Nu există oferte care să corespundă filtrelor selectate.")
-```[cite: 48]
-
-Care este următorul punct pe care vrei să îl luăm în `pages/oferte.py`?
