@@ -38,7 +38,7 @@ if "is_unlocked" not in st.session_state:
     st.session_state["is_unlocked"] = False
 
 st.markdown(
-"""
+    """
     <style>
         [data-testid="stSidebar"],
         [data-testid="stSidebarCollapsedControl"],
@@ -46,20 +46,6 @@ st.markdown(
             display: none !important;
         }
     </style>
-    <script>
-        (function() {
-            const doc = window.parent.document;
-            function blockAutofillOnSelectboxes() {
-                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {
-                    inp.setAttribute('autocomplete', 'off');
-                    inp.setAttribute('data-lpignore', 'true');
-                    inp.setAttribute('data-1p-ignore', 'true');
-                });
-            }
-            blockAutofillOnSelectboxes();
-            new MutationObserver(blockAutofillOnSelectboxes).observe(doc.body, { childList: true, subtree: true });
-        })();
-    </script>
     """,
     unsafe_allow_html=True,
 )
@@ -116,7 +102,43 @@ def seteaza_iconita_android(cale_png: str):
         )
 
 
+def blocheaza_autofill_selectbox():
+    components.html(
+        """
+        <script>
+        (function() {
+            const doc = window.parent.document;
+            function applyAttr() {
+                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {
+                    if (!inp.dataset.nexindAutofillBlocked) {
+                        inp.dataset.nexindAutofillBlocked = "1";
+                        inp.setAttribute('autocomplete', 'off');
+                        inp.setAttribute('data-lpignore', 'true');
+                        inp.setAttribute('data-1p-ignore', 'true');
+                        inp.setAttribute('data-form-type', 'other');
+                    }
+                });
+            }
+            applyAttr();
+            if (!window.parent.__nexindSelectboxObserver) {
+                window.parent.__nexindSelectboxObserver = new MutationObserver(applyAttr);
+                window.parent.document.addEventListener('DOMContentLoaded', () => {
+                    window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
+                });
+                if (doc.body) {
+                    window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
+                }
+            }
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 seteaza_iconita_android(icon_android_path)
+blocheaza_autofill_selectbox()
 
 
 def render_deblocare():
