@@ -66,6 +66,7 @@ from pages.reparatii_electronice import render_reparatii_electronice
 from pages.oferte import render_oferte
 from pages.simulator_preturi import render_simulator_preturi
 from pages.setari import render_setari
+from pages.documentatie_gdrive import render_documentatie_gdrive
 
 
 def seteaza_iconita_android(cale_png: str):
@@ -161,7 +162,7 @@ MENIU_STRUCTURA = {
         "🏢 Firme": render_firme,
     },
     "🗂️ Arhivă & Docs": {
-        "📚 Index & Căutare Docs (GDrive)":render_tab_index_documentatie_gdrive,
+        "📚 Index & Căutare Docs (GDrive)":render_documentatie_gdrive,
         "📋 Istoric": render_istoric,
         "📄 Documentații": render_documentatii,
     },

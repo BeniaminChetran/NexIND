@@ -1,0 +1,286 @@
+#----------------------------------------------
+#--- TAB NOU IN ARHIVA&DOCS: INDEX GDRIVE -----
+#----------------------------------------------
+
+import pandas as pd
+import streamlit as st
+from repositories.documentatie_repository import (
+    DocumentatieRepository,
+    TAGURI_DOCUMENTATIE,
+    CATEGORII_DOCUMENTATIE,
+)
+from services.gdrive_service import (
+    extrage_drive_id,
+    listeaza_fisiere_folder,
+    extrage_text_pdf_drive,
+)
+
+
+def _incarca_lista_masini_scurta() -> dict[int, str]:
+    """Returnează un dicționar {id_masina: denumire} fără să crape dacă repository-ul nu e importat."""
+    try:
+        from repositories.masini_repository import MasiniRepository
+        masini = MasiniRepository.get_all() or []
+        return {
+            int(m["id"]): str(m.get("denumire") or f"Mașina #{m['id']}")
+            for m in masini
+            if m.get("id") is not None
+        }
+    except Exception:
+        return {}
+
+
+def render_documentatie_gdrive():
+    st.markdown("### 📚 Index Documentație Tehnică (Cont Google Drive)")
+    st.caption(
+        "Indexează secțiuni de manuale ([ERR], [SCH], [PRM], [TST], [MEC], [SOL]), intervale de pagini, "
+        "coduri de eroare HMI / Driver-VFD și notițe (inclusiv pentru poze și PDF-uri scanate)."
+    )
+
+    masini_map = _incarca_lista_masini_scurta()
+    opt_masini = ["", *masini_map.keys()]
+
+    # --- 1. LISTARE RAPIDA DIN FOLDER GOOGLE DRIVE (CAND E CONFIGURAT SERVICE ACCOUNT) ---
+    with st.expander("☁️ Explorare Folder din Noul Cont Google Drive (opțional)", expanded=False):
+        c_f1, c_f2 = st.columns([3, 1], vertical_alignment="bottom")
+        with c_f1:
+            folder_input = st.text_input(
+                "Link sau ID folder Google Drive",
+                placeholder="https://drive.google.com/drive/folders/...",
+                key="arhiva_gdrive_folder_input",
+            )
+        with c_f2:
+            btn_list = st.button("📂 Listează folder", key="arhiva_btn_listeaza_gdrive", use_container_width=True)
+
+        if btn_list:
+            fisiere, status_msg = listeaza_fisiere_folder(folder_input)
+            st.session_state["arhiva_gdrive_files_cache"] = fisiere
+            st.session_state["arhiva_gdrive_status_msg"] = status_msg
+
+        if st.session_state.get("arhiva_gdrive_status_msg"):
+            st.info(st.session_state["arhiva_gdrive_status_msg"])
+
+        fisiere_cache = st.session_state.get("arhiva_gdrive_files_cache") or []
+        if fisiere_cache:
+            etichete_fisiere = [
+                f"[{f['tip_fisier'].upper()} | {f['tag_sugerat']}] {f['name']}"
+                for f in fisiere_cache
+            ]
+            idx_sel = st.selectbox(
+                "Alege un fișier / folder din listă pentru a precompleta formularul:",
+                options=range(len(etichete_fisiere)),
+                format_func=lambda i: etichete_fisiere[i],
+                key="arhiva_gdrive_select_file",
+            )
+            col_pre1, col_pre2 = st.columns([1, 1])
+            with col_pre1:
+                if st.button("⬇️ Precompletează în formular", key="arhiva_btn_preia_fisier"):
+                    f_sel = fisiere_cache[idx_sel]
+                    st.session_state["doc_prefill_titlu"] = f_sel["name"]
+                    st.session_state["doc_prefill_url"] = f_sel["webViewLink"]
+                    st.session_state["doc_prefill_id"] = f_sel["id"]
+                    st.session_state["doc_prefill_tip"] = f_sel["tip_fisier"]
+                    st.session_state["doc_prefill_tag"] = f_sel["tag_sugerat"]
+                    st.rerun()
+            with col_pre2:
+                if st.button("📄 Extrage text PDF (dacă are strat text)", key="arhiva_btn_extract_pdf"):
+                    f_sel = fisiere_cache[idx_sel]
+                    if f_sel["tip_fisier"] == "pdf":
+                        txt_pdf = extrage_text_pdf_drive(f_sel["id"])
+                        if txt_pdf:
+                            st.session_state["doc_prefill_text"] = txt_pdf
+                            st.success("Text extras din PDF și pus în câmpul de notițe/text indexat.")
+                            st.rerun()
+                        else:
+                            st.warning("PDF-ul nu are strat text extras (posibil scanat/imagine) — adaugă notițele manual.")
+                    else:
+                        st.info("Extragerea automată de text este disponibilă doar pentru fișiere PDF.")
+
+    # --- 2. FORMULAR ADAUGARE IN INDEX ---
+    st.markdown("#### ➕ Adaugă înregistrare în index")
+    with st.form("form_adauga_doc_gdrive", clear_on_submit=True):
+        c1, c2, c3 = st.columns([2, 1.5, 1.5])
+        with c1:
+            titlu = st.text_input(
+                "Titlu document / secțiune / poză *",
+                value=st.session_state.pop("doc_prefill_titlu", ""),
+                placeholder="ex: Fanuc 0i-MF Plus - Alarms [ERR] pag. 1101-1450",
+            )
+        with c2:
+            categorie = st.selectbox(
+                "Categorie",
+                options=list(CATEGORII_DOCUMENTATIE),
+                index=0,
+            )
+        with c3:
+            tip_sistem = st.text_input(
+                "Tip sistem / Comandă / VFD",
+                placeholder="ex: Fanuc, Siemens Sinamics, Mitsubishi",
+            )
+
+        c4, c5, c6, c7 = st.columns([1.8, 1.2, 1.2, 1.3])
+        with c4:
+            masina_sel = st.selectbox(
+                "Utilaj asociat (opțional)",
+                options=opt_masini,
+                format_func=lambda x: "— General (toate utilajele) —" if x == "" else masini_map.get(x, f"#{x}"),
+            )
+        with c5:
+            tag_pref = st.session_state.pop("doc_prefill_tag", "[ERR]")
+            tag_idx = list(TAGURI_DOCUMENTATIE).index(tag_pref) if tag_pref in TAGURI_DOCUMENTATIE else 0
+            tag_sectiune = st.selectbox("Tag secțiune", options=list(TAGURI_DOCUMENTATIE), index=tag_idx)
+        with c6:
+            interval_pagini = st.text_input("Interval / Pagină", placeholder="ex: p1101-p1450")
+        with c7:
+            tip_pref = st.session_state.pop("doc_prefill_tip", "pdf")
+            opt_tip_fis = ["pdf", "img", "folder", "doc"]
+            tip_idx = opt_tip_fis.index(tip_pref) if tip_pref in opt_tip_fis else 0
+            tip_fisier = st.selectbox("Tip fișier", options=opt_tip_fis, index=tip_idx)
+
+        c8, c9 = st.columns([3, 1.5])
+        with c8:
+            gdrive_url = st.text_input(
+                "Link Google Drive (fișier, poză sau folder)",
+                value=st.session_state.pop("doc_prefill_url", ""),
+                placeholder="https://drive.google.com/file/d/... sau .../folders/...",
+            )
+        with c9:
+            gdrive_id_manual = st.text_input(
+                "Drive ID (auto-completat dacă lași gol)",
+                value=st.session_state.pop("doc_prefill_id", ""),
+            )
+
+        c10, c11 = st.columns([1, 1])
+        with c10:
+            coduri_hmi = st.text_input("Coduri eroare HMI", placeholder="ex: ALM 414, 414, SV0414")
+        with c11:
+            coduri_driver = st.text_input("Coduri eroare Driver / VFD", placeholder="ex: AL.24, F30002, OC1")
+
+        text_indexat = st.text_area(
+            "Notițe / Rezumat / Text extras (important pentru poze și PDF-uri scanate)",
+            value=st.session_state.pop("doc_prefill_text", ""),
+            height=100,
+            placeholder="Notează aici ce arată poza/schema, simptomele, măsurătorile sau pașii cheie...",
+        )
+
+        submitted = st.form_submit_button("💾 Salvează în index", type="primary")
+        if submitted:
+            try:
+                final_id = gdrive_id_manual.strip() or extrage_drive_id(gdrive_url)
+                DocumentatieRepository.insert({
+                    "masina_id": None if masina_sel == "" else int(masina_sel),
+                    "categorie": categorie,
+                    "tip_sistem": tip_sistem,
+                    "titlu": titlu,
+                    "gdrive_file_id": final_id,
+                    "gdrive_url": gdrive_url,
+                    "tip_fisier": tip_fisier,
+                    "tag_sectiune": tag_sectiune,
+                    "interval_pagini": interval_pagini,
+                    "coduri_eroare_hmi": coduri_hmi,
+                    "coduri_eroare_driver": coduri_driver,
+                    "text_indexat": text_indexat,
+                })
+                st.success("✅ Înregistrarea a fost adăugată în indexul de documentație.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Eroare la salvare: {e}")
+
+    # --- 3. CAUTARE SI LISTARE INREGISTRARI INDEXATE ---
+    st.markdown("---")
+    st.markdown("#### 🔎 Căutare în documentația indexată")
+
+    f1, f2, f3, f4 = st.columns([2.2, 1.2, 1.2, 1.4])
+    with f1:
+        cautare_q = st.text_input(
+            "Caută după cod eroare, titlu, sistem sau notițe",
+            placeholder="ex: 414, AL.24, Sinamics, encoder...",
+            key="arhiva_search_q",
+        )
+    with f2:
+        filtru_tag = st.selectbox(
+            "Tag",
+            options=["Toate", *TAGURI_DOCUMENTATIE],
+            key="arhiva_filter_tag",
+        )
+    with f3:
+        filtru_cat = st.selectbox(
+            "Categorie",
+            options=["Toate", *CATEGORII_DOCUMENTATIE],
+            key="arhiva_filter_cat",
+        )
+    with f4:
+        filtru_masina = st.selectbox(
+            "Utilaj",
+            options=["Toate", *masini_map.keys()],
+            format_func=lambda x: "Toate utilajele" if x == "Toate" else masini_map.get(x, f"#{x}"),
+            key="arhiva_filter_masina",
+        )
+
+    try:
+        toate_doc = DocumentatieRepository.get_all() or []
+    except Exception as e:
+        st.error(f"Nu s-a putut citi indexul de documentație: {e}")
+        toate_doc = []
+
+    q_low = str(cautare_q or "").strip().lower()
+    filtrate = []
+    for d in toate_doc:
+        if filtru_tag != "Toate" and d.get("tag_sectiune") != filtru_tag:
+            continue
+        if filtru_cat != "Toate" and d.get("categorie") != filtru_cat:
+            continue
+        if filtru_masina != "Toate" and d.get("masina_id") != filtru_masina:
+            continue
+        if q_low:
+            camp_comb = " ".join([
+                str(d.get("titlu") or ""),
+                str(d.get("tip_sistem") or ""),
+                str(d.get("interval_pagini") or ""),
+                str(d.get("coduri_eroare_hmi") or ""),
+                str(d.get("coduri_eroare_driver") or ""),
+                str(d.get("text_indexat") or ""),
+            ]).lower()
+            if q_low not in camp_comb:
+                continue
+        filtrate.append(d)
+
+    st.caption(f"Rezultate afișate: **{len(filtrate)}** din {len(toate_doc)}")
+
+    if filtrate:
+        df_doc = pd.DataFrame([
+            {
+                "ID": r.get("id"),
+                "Tag": r.get("tag_sectiune"),
+                "Categorie": r.get("categorie"),
+                "Sistem": r.get("tip_sistem"),
+                "Titlu": r.get("titlu"),
+                "Pagini": r.get("interval_pagini"),
+                "Coduri HMI": r.get("coduri_eroare_hmi"),
+                "Coduri Driver/VFD": r.get("coduri_eroare_driver"),
+                "Link Drive": r.get("gdrive_url"),
+            }
+            for r in filtrate
+        ])
+        st.dataframe(df_doc, hide_index=True, use_container_width=True)
+
+        # Detalii rapide + link direct pentru primele rezultate
+        for item in filtrate[:10]:
+            with st.expander(
+                f"{item.get('tag_sectiune')} {item.get('titlu')} — [{item.get('tip_sistem') or item.get('categorie')}]"
+            ):
+                if item.get("coduri_eroare_hmi"):
+                    st.markdown(f"**Coduri HMI:** `{item.get('coduri_eroare_hmi')}`")
+                if item.get("coduri_eroare_driver"):
+                    st.markdown(f"**Coduri Driver / VFD:** `{item.get('coduri_eroare_driver')}`")
+                if item.get("interval_pagini"):
+                    st.markdown(f"**Interval / Pagină:** `{item.get('interval_pagini')}`")
+                if item.get("text_indexat"):
+                    st.markdown(f"**Notițe / Text indexat:**\n\n{item.get('text_indexat')}")
+                if item.get("gdrive_url"):
+                    st.markdown(f"🔗 [Deschide în Google Drive]({item.get('gdrive_url')})")
+                if st.button("🗑️ Șterge din index", key=f"del_doc_idx_{item.get('id')}"):
+                    DocumentatieRepository.delete(int(item["id"]))
+                    st.rerun()
+    else:
+        st.info("Nu există încă înregistrări care să potrivească filtrele curente.")
