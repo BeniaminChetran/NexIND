@@ -346,3 +346,26 @@ def render_documentatie_gdrive():
                     st.rerun()
     else:
         st.info("Nu există încă înregistrări care să potrivească filtrele curente.")
+        
+def render_help_documentatie_gdrive():
+    with st.expander("❓ Ajutor / Ghid rapid — Indexare & Căutare Documentație (Google Drive)", expanded=False):
+        st.markdown("""
+Această pagină este **indexul tău rapid** pentru manualele, schemele, parametrii și pozele din contul Google Drive dedicat documentației. Nu încarcă manuale întregi în aplicație — păstrează **reperele esențiale** ca să găsești rapid ce îți trebuie la un defect.
+
+### 1. Cum etichetezi secțiunile (`Tag`)
+* **`[ERR]`** — alarme, coduri de eroare și diagnoză defecte.
+* **`[SCH]`** — scheme electrice, conexiuni, pinout și trasee de semnal/putere.
+* **`[PRM]`** — parametri CNC, PLC, servo-driver sau variator (VFD).
+* **`[TST]`** — proceduri de test, verificări, măsurători și reglaje.
+* **`[MEC]`** — componente mecanice, axe, rulmenți, cuplaje, frâne, gresare.
+* **`[SOL]`** — soluții verificate, remedieri aplicate și piese înlocuite.
+
+### 2. Cum indexezi manuale mari, PDF-uri scanate și poze
+* **Manuale mari (ex. 1.000–2.500 pagini):** fă câte o înregistrare pe calupuri/secțiuni relevante (de ex. `p1101-p1450`), ca să știi exact unde să sari.
+* **Poze / capturi de ecran / PDF-uri scanate:** pune linkul din Google Drive și scrie în **Notițe / Text** ce se vede în poză, ce ai măsurat sau ce coduri apar — altfel căutarea după text nu le va găsi.
+* **Coduri HMI și Driver / VFD:** completează atât alarma de pe **HMI**, cât și codurile specifice de pe **driver sau VFD** (o alarmă pe HMI poate corespunde mai multor coduri de driver/VFD).
+
+### 3. Editare directă din tabel și explorare Google Drive
+* **Modificare rapidă:** poți da dublu-click direct în tabelul de rezultate (de ex. pe `Pagini` când adaugi un nou calup de pagini, pe `Coduri HMI` / `Coduri Driver/VFD` sau pe `Notițe / Text`), apoi apeși **Salvează modificările din tabel**.
+* **Explorare folder Drive:** dacă este configurat contul de serviciu (Service Account) și folderul din noul cont Google Drive este partajat cu el, poți lista fișierele direct din **Explorare Folder din Noul Cont Google Drive** și le poți precompleta în formular.
+""")

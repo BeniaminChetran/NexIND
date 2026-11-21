@@ -95,7 +95,7 @@ class DocumentatieRepository(BaseRepository):
         cls.get_all.clear()
         logger.info(f"Documentație adăugată: {titlu} ({tag})")
 
-@classmethod
+    @classmethod
     def update(cls, doc_id: int, data: dict):
         if not doc_id:
             return
