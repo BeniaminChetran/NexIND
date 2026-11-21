@@ -210,7 +210,7 @@ class MasiniRepository(BaseRepository):
     def delete(cls, masina_id: int):
         query = "DELETE FROM masini WHERE id=%s"
         cls().execute(query, (masina_id,))
-        logger.info(f"Mașina #{masina_id} a fost ștearsă
+        logger.info(f"Mașina #{masina_id} a fost ștearsă")
         
         
         
