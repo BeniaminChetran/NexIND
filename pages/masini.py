@@ -366,12 +366,10 @@ def render_masini():
                         ),
                         "Producător / Model": st.column_config.TextColumn(
                             "Producător / Model",
-                            placeholder="ex: Fanuc αiSV, Siemens Sinamics G120, S7-1200",
                             width="medium"
                         ),
                         "Axă / Zonă / Detalii": st.column_config.TextColumn(
                             "Axă / Zonă / Detalii",
-                            placeholder="ex: Axa X / Pompă hidraulică / Alimentare 24V",
                             width="medium"
                         ),
                         "Observații": st.column_config.TextColumn(
