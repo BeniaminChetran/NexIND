@@ -1,8 +1,5 @@
-#--------------------------------
-#-----setari_repository.py-------
-#--------------------------------
-
 import logging
+import streamlit as st
 from repositories.base_repository import BaseRepository
 
 logger = logging.getLogger("NexIndCMMS.SetariRepository")
@@ -13,131 +10,144 @@ DEFAULT_CLAUZE_SUBSOL = (
     "În funcție de complexitatea lucrărilor, durata intervenției poate suferi modificări. Acestea vă vor fi comunicate la fața locului."
 )
 
+DEFAULTS_SETARI = {
+    "nume_firma_mea": "SC Nexus Industrial SRL",
+    "cui_mea": "",
+    "reg_com_mea": "",
+    "adresa_mea": "",
+    "banca_mea": "",
+    "iban_mea": "",
+    "swep_mea": "",
+    "telefon_1": "",
+    "telefon_2": "",
+    "email_1": "",
+    "email_2": "",
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "",
+    "smtp_pass": "",
+    "google_sheet_url": "",
+    "email_tehnician": "",
+    "cota_tva": 21.0,
+    "pass": "",
+    "valabilitate_implicita": "15 zile",
+    "termeni_plata_impliciti": "5 zile de la emiterea facturii",
+    "intocmit_de_implicit": "Echipa Nexus Industrial",
+    "tehnician_implicit": "Tehnician Nexus",
+    "clauze_subsol_implicite": DEFAULT_CLAUZE_SUBSOL,
+    "adaos_comercial_implicit": 35.0,
+}
+
+
+@st.cache_resource
+def _ensure_setari_schema_once() -> bool:
+    try:
+        BaseRepository().execute(
+            """
+            ALTER TABLE setari
+            ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
+            ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
+            ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
+            ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT ''
+            """
+        )
+        return True
+    except Exception as exc:
+        logger.warning(f"Verificarea coloanelor de contact pe 'setari' a întâmpinat o eroare: {exc}")
+        return False
+
 
 class SetariRepository(BaseRepository):
     @classmethod
-    def _ensure_columns(cls):
-        from config import db_cursor
-        try:
-            with db_cursor() as c:
-                c.execute("""
-                    ALTER TABLE setari
-                    ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT ''
-                """)
-        except Exception:
+    def get_setari(cls) -> dict:
+        _ensure_setari_schema_once()
+        res = cls().fetch_one("SELECT * FROM setari LIMIT 1") or {}
+        merged = dict(DEFAULTS_SETARI)
+        for key, default_val in DEFAULTS_SETARI.items():
+            val = res.get(key)
+            if val is not None and str(val).strip() != "":
+                merged[key] = val
+        for extra_key, extra_val in res.items():
+            if extra_key not in merged:
+                merged[extra_key] = extra_val
+        return merged
+
+    @classmethod
+    def save_setari(cls, data: dict) -> None:
+        _ensure_setari_schema_once()
+        existing = cls.get_setari()
+        merged = {**existing, **(data or {})}
+
+        for contact_key in ("telefon_1", "telefon_2", "email_1", "email_2"):
+            merged[contact_key] = str(merged.get(contact_key) or "").strip()
+
+        if merged.get("clauze_subsol_implicite") is None:
+            merged["clauze_subsol_implicite"] = DEFAULT_CLAUZE_SUBSOL
+
+        adaos_val = merged.get("adaos_comercial_implicit")
+        merged["adaos_comercial_implicit"] = float(35.0 if adaos_val is None else adaos_val)
+        merged["cota_tva"] = float(21.0 if merged.get("cota_tva") is None else merged.get("cota_tva"))
+        merged["smtp_port"] = int(merged.get("smtp_port") or 587)
+
+        params = (
+            merged.get("nume_firma_mea"),
+            merged.get("cui_mea"),
+            merged.get("reg_com_mea"),
+            merged.get("adresa_mea"),
+            merged.get("banca_mea"),
+            merged.get("iban_mea"),
+            merged.get("swep_mea"),
+            merged.get("telefon_1"),
+            merged.get("telefon_2"),
+            merged.get("email_1"),
+            merged.get("email_2"),
+            merged.get("smtp_server"),
+            merged.get("smtp_port"),
+            merged.get("smtp_user"),
+            merged.get("smtp_pass"),
+            merged.get("google_sheet_url"),
+            merged.get("email_tehnician"),
+            merged.get("cota_tva"),
+            merged.get("pass"),
+            merged.get("valabilitate_implicita"),
+            merged.get("termeni_plata_impliciti"),
+            merged.get("intocmit_de_implicit"),
+            merged.get("tehnician_implicit"),
+            merged.get("clauze_subsol_implicite"),
+            merged.get("adaos_comercial_implicit"),
+        )
+
+        with BaseRepository() as _:
             pass
 
-    @classmethod
-    def get_setari(cls):
-        cls._ensure_columns()
-        query = "SELECT * FROM setari LIMIT 1"
-        res = cls().fetch_one(query)
-        defaults = {
-            "nume_firma_mea": "SC Nexus Industrial SRL",
-            "cui_mea": "",
-            "reg_com_mea": "",
-            "adresa_mea": "",
-            "banca_mea": "",
-            "iban_mea": "",
-            "swep_mea": "",
-            "telefon_1": "",
-            "telefon_2": "",
-            "email_1": "",
-            "email_2": "",
-            "smtp_server": "smtp.gmail.com",
-            "smtp_port": 587,
-            "smtp_user": "",
-            "smtp_pass": "",
-            "google_sheet_url": "",
-            "email_tehnician": "",
-            "cota_tva": 21.0,
-            "pass": "",
-            "valabilitate_implicita": "15 zile",
-            "termeni_plata_impliciti": "5 zile de la emiterea facturii",
-            "intocmit_de_implicit": "Echipa Nexus Industrial",
-            "tehnician_implicit": "Tehnician Nexus",
-            "clauze_subsol_implicite": DEFAULT_CLAUZE_SUBSOL,
-            "adaos_comercial_implicit": 35.0
-        }
-        if res:
-            for k, v in defaults.items():
-                if res.get(k) is None or str(res.get(k)).strip() == "":
-                    if k in (
-                        "telefon_1",
-                        "telefon_2",
-                        "email_1",
-                        "email_2",
-                        "cota_tva",
-                        "valabilitate_implicita",
-                        "termeni_plata_impliciti",
-                        "intocmit_de_implicit",
-                        "tehnician_implicit",
-                        "clauze_subsol_implicite",
-                        "adaos_comercial_implicit"
-                    ):
-                        res[k] = v
-            return res
-        return defaults
-
-    @classmethod
-    def save_setari(cls, data: dict):
         from config import db_cursor
-        cls._ensure_columns()
-        existing = cls.get_setari()
-        parola_curenta = data.get("pass") if data.get("pass") is not None else existing.get("pass", "")
-        clauze_subsol = data.get("clauze_subsol_implicite")
-        if clauze_subsol is None:
-            clauze_subsol = existing.get("clauze_subsol_implicite", DEFAULT_CLAUZE_SUBSOL)
-        adaos_imp = data.get("adaos_comercial_implicit")
-        if adaos_imp is None:
-            adaos_imp = existing.get("adaos_comercial_implicit", 35.0)
-
-        telefon_1 = str(data.get("telefon_1") if data.get("telefon_1") is not None else existing.get("telefon_1", "")).strip()
-        telefon_2 = str(data.get("telefon_2") if data.get("telefon_2") is not None else existing.get("telefon_2", "")).strip()
-        email_1 = str(data.get("email_1") if data.get("email_1") is not None else existing.get("email_1", "")).strip()
-        email_2 = str(data.get("email_2") if data.get("email_2") is not None else existing.get("email_2", "")).strip()
-
-        with db_cursor() as c:
-            c.execute("DELETE FROM setari")
-            c.execute("""
+        with db_cursor() as cur:
+            cur.execute("DELETE FROM setari")
+            cur.execute(
+                """
                 INSERT INTO setari (
-                    nume_firma_mea, cui_mea, reg_com_mea, adresa_mea, banca_mea, 
+                    nume_firma_mea, cui_mea, reg_com_mea, adresa_mea, banca_mea,
                     iban_mea, swep_mea, telefon_1, telefon_2, email_1, email_2,
                     smtp_server, smtp_port, smtp_user, smtp_pass, google_sheet_url,
                     email_tehnician, cota_tva, pass,
                     valabilitate_implicita, termeni_plata_impliciti,
                     intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite,
                     adaos_comercial_implicit
-                ) 
+                )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                data.get('nume_firma_mea'), data.get('cui_mea'), data.get('reg_com_mea'),
-                data.get('adresa_mea'), data.get('banca_mea'), data.get('iban_mea'),
-                data.get('swep_mea'), telefon_1, telefon_2, email_1, email_2,
-                data.get('smtp_server'), data.get('smtp_port'),
-                data.get('smtp_user'), data.get('smtp_pass'), data.get('google_sheet_url'),
-                data.get('email_tehnician'), float(data.get('cota_tva', 21.0)),
-                parola_curenta,
-                data.get('valabilitate_implicita', '15 zile'),
-                data.get('termeni_plata_impliciti', '5 zile de la emiterea facturii'),
-                data.get('intocmit_de_implicit', 'Echipa Nexus Industrial'),
-                data.get('tehnician_implicit', 'Tehnician Nexus'),
-                clauze_subsol,
-                float(adaos_imp)
-            ))
+                """,
+                params,
+            )
         logger.info("Setările au fost salvate în baza de date.")
 
     @classmethod
-    def update_pass(cls, noua_parola: str):
+    def update_pass(cls, noua_parola: str) -> None:
         from config import db_cursor
-        with db_cursor() as c:
-            c.execute("SELECT COUNT(*) AS cnt FROM setari")
-            row = c.fetchone()
-            if row and row.get("cnt", 0) == 0:
-                c.execute("INSERT INTO setari (pass) VALUES (%s)", (noua_parola,))
+        with db_cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM setari")
+            row = cur.fetchone()
+            if not row or int(row.get("cnt", 0)) == 0:
+                cur.execute("INSERT INTO setari (pass) VALUES (%s)", (noua_parola,))
             else:
-                c.execute("UPDATE setari SET pass = %s", (noua_parola,))
+                cur.execute("UPDATE setari SET pass = %s", (noua_parola,))
         logger.info("Parola a fost actualizată în setări.")

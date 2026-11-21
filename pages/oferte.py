@@ -3,9 +3,7 @@
 #----------------------------------
 
 import re
-import base64
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import json
 import ssl
@@ -164,42 +162,6 @@ def _sincronizeaza_editor_inainte_de_adaugare():
     if added_rows:
         df_work = pd.concat([df_work, pd.DataFrame(added_rows)], ignore_index=True)
     return df_work
-
-def _declanseaza_descarcare_automata_pdf(pdf_bytes: bytes, file_name: str):
-    """Declanșează descărcarea automată în browser fără a elimina butonul manual de descărcare."""
-    if not pdf_bytes:
-        return
-    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-    safe_name = str(file_name or "Oferta_Pret.pdf").replace('"', '').replace("'", "")
-    html_auto_dl = f"""
-    <html>
-    <body>
-    <script>
-        (function() {{
-            const byteCharacters = atob("{b64}");
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {{
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }}
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], {{type: 'application/pdf'}});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = "{safe_name}";
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {{
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            }}, 1500);
-        }})();
-    </script>
-    </body>
-    </html>
-    """
-    components.html(html_auto_dl, height=0, width=0)
 
 def _init_sau_reseteaza_draft_oferta(valabilitate_def: str, termeni_plata_def: str, intocmit_de_def: str, moneda: str = "EUR", setari_firma: dict = None):
     """Creează sau resetează complet starea persistentă a ofertei în lucru."""
@@ -837,7 +799,6 @@ def render_oferte():
 
             st.session_state["pdf_oferta_bytes"] = genereaza_pdf_oferta(date_oferta_db)
             st.session_state["pdf_oferta_nume"] = f"Oferta_{nr_final_pdf}_{sel_firma.replace(' ', '_')}.pdf"
-            st.session_state["auto_download_pdf_oferta"] = True
             st.session_state["ultima_oferta_salvata_msg"] = f"✅ Oferta #{nr_final_pdf} a fost salvată ({total_general:,.2f} {moneda_oferta})! Formularul este pregătit pentru o ofertă nouă."
 
             _init_sau_reseteaza_draft_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, moneda_oferta, setari_firma)
@@ -855,8 +816,6 @@ def render_oferte():
 
     if "pdf_oferta_bytes" in st.session_state and st.session_state["pdf_oferta_bytes"]:
         nume_fisier_dl = st.session_state.get("pdf_oferta_nume", "Oferta_Pret.pdf")
-        if st.session_state.pop("auto_download_pdf_oferta", False):
-            _declanseaza_descarcare_automata_pdf(st.session_state["pdf_oferta_bytes"], nume_fisier_dl)
 
         st.download_button(
             label="📥 Descarcă PDF Ofertă de Preț",
@@ -1161,7 +1120,6 @@ def render_oferte():
 
                         st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf_rev)
                         st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}_REVIZUITA.pdf"
-                        st.session_state[f"auto_dl_hist_{oid}"] = True
                         st.session_state[f"msg_rev_ok_{oid}"] = f"✅ Oferta #{nr_of} a fost recalculată ({tot_rev:,.2f} {moneda_of}), salvată ca REVIZUITĂ și trimisă în Registru activități!"
                         st.rerun()
 
@@ -1217,15 +1175,12 @@ def render_oferte():
                         st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf)
                         sufix = "_REVIZUITA" if este_rev else ""
                         st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}{sufix}.pdf"
-                        st.session_state[f"auto_dl_hist_{oid}"] = True
 
                 if st.session_state.get(f"msg_rev_ok_{oid}"):
                     st.success(st.session_state[f"msg_rev_ok_{oid}"])
 
                 if st.session_state.get(f"pdf_hist_bytes_{oid}"):
                     nume_hist_dl = st.session_state[f"pdf_hist_nume_{oid}"]
-                    if st.session_state.pop(f"auto_dl_hist_{oid}", False):
-                        _declanseaza_descarcare_automata_pdf(st.session_state[f"pdf_hist_bytes_{oid}"], nume_hist_dl)
 
                     st.download_button(
                         label=f"⬇️ Descarcă {nume_hist_dl}",
@@ -1237,3 +1192,6 @@ def render_oferte():
                     )
     else:
         st.info("Nu există oferte care să corespundă filtrelor selectate.")
+```[cite: 48]
+
+Care este următorul punct pe care vrei să îl luăm în `pages/oferte.py`?

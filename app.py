@@ -81,6 +81,9 @@ def seteaza_iconita_android(cale_png: str):
             <script>
             (function() {{
                 const doc = window.parent.document;
+                if (doc.querySelector('link[data-nexind-icon="1"]')) {{
+                    return;
+                }}
                 const head = doc.head;
                 doc.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"]').forEach(el => el.remove());
                 ['icon', 'shortcut icon', 'apple-touch-icon'].forEach(relType => {{
@@ -88,6 +91,7 @@ def seteaza_iconita_android(cale_png: str):
                     link.rel = relType;
                     link.type = 'image/png';
                     link.href = '{data_uri}';
+                    link.setAttribute('data-nexind-icon', '1');
                     head.appendChild(link);
                 }});
             }})();
