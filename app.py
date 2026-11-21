@@ -8,6 +8,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from PIL import Image
+from pages import asistent_defecte
+
 
 load_dotenv()
 
