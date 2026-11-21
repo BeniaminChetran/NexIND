@@ -1,6 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import json
+import streamlit as st
+
+
+from repositories.piese_repository import PieseRepository
+from repositories.reparatii_repository import ReparatiiRepositor
+
+
 from config import db_cursor
 
 
@@ -321,3 +329,100 @@ def render_dashboard():
         st.dataframe(pd.DataFrame(mas_scad), use_container_width=True)
     else:
         st.success("Nu există întrețineri programate în următoarele 30 de zile.")
+        
+
+
+def _extrage_furnizor_piesa(piesa_row: dict) -> str:
+    for k in ("furnizor", "nume_furnizor", "furnizor_principal", "supplier"):
+        val = str(piesa_row.get(k) or "").strip()
+        if val:
+            return val
+    return "Fără furnizor setat"
+
+
+def render_piese_de_comandat_dashboard():
+    st.markdown("### 🛒 Piese De Comandat / Necesare & Furnizori")
+
+    piese_db = PieseRepository.get_all() or []
+    furnizor_map = {}
+    for p in piese_db:
+        den = str(p.get("denumire") or p.get("nume") or "").strip()
+        if den:
+            furnizor_map[den.lower()] = _extrage_furnizor_piesa(p)
+
+    rapoarte = ReparatiiRepository.get_all() or []
+    randuri = []
+
+    for r in rapoarte:
+        piese_raw = r.get("piese_valide")
+        if not piese_raw:
+            piese_raw = r.get("piese_json") or []
+        if isinstance(piese_raw, str):
+            try:
+                piese_raw = json.loads(piese_raw)
+            except Exception:
+                piese_raw = []
+
+        for item in piese_raw:
+            if not isinstance(item, dict):
+                continue
+            den_piesa = str(item.get("Piesa") or item.get("piesa") or "").strip()
+            tip_piesa = str(item.get("Tip") or item.get("tip") or "").strip()
+            if not den_piesa or tip_piesa not in ("De Comandat", "Necesara"):
+                continue
+
+            cant = item.get("Cantitate")
+            if cant is None:
+                cant = item.get("cantitate", 1)
+            try:
+                cant_num = float(cant)
+            except Exception:
+                cant_num = 1.0
+
+            furnizor = furnizor_map.get(den_piesa.lower(), "Fără furnizor setat")
+            randuri.append({
+                "Furnizor": furnizor,
+                "Piesă": den_piesa,
+                "Cantitate": cant_num,
+                "Tip": tip_piesa,
+                "Firmă": r.get("firma") or "",
+                "Mașină": r.get("masina") or "",
+                "Raport": f"#{r.get('id')}",
+            })
+
+    if not randuri:
+        st.info("Nu există piese marcate ca `De Comandat` sau `Necesara` în rapoarte.")
+        return
+
+    df = pd.DataFrame(randuri)
+
+    c1, c2 = st.columns([1.5, 1.5])
+    with c1:
+        filtru_tip = st.selectbox(
+            "Filtrează după tip",
+            options=["Toate (De Comandat + Necesara)", "De Comandat", "Necesara"],
+            key="dash_piese_cmd_tip",
+        )
+    with c2:
+        opt_furn = ["Toți furnizorii"] + sorted(df["Furnizor"].unique().tolist())
+        filtru_furn = st.selectbox(
+            "Filtrează după furnizor",
+            options=opt_furn,
+            key="dash_piese_cmd_furn",
+        )
+
+    df_f = df.copy()
+    if filtru_tip != "Toate (De Comandat + Necesara)":
+        df_f = df_f[df_f["Tip"] == filtru_tip]
+    if filtru_furn != "Toți furnizorii":
+        df_f = df_f[df_f["Furnizor"] == filtru_furn]
+
+    st.dataframe(df_f, hide_index=True, use_container_width=True)
+
+    with st.expander("📦 Centralizator cantități pe Furnizor & Piesă", expanded=False):
+        df_sum = (
+            df_f.groupby(["Furnizor", "Piesă", "Tip"], as_index=False)["Cantitate"]
+            .sum()
+            .sort_values(["Furnizor", "Piesă"])
+        )
+        st.dataframe(df_sum, hide_index=True, use_container_width=True)

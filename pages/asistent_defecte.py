@@ -78,6 +78,37 @@ def _incarca_firme_si_masini() -> tuple[dict[int, str], list[dict]]:
     return firme_map, masini_lista
 
 
+def _incarca_catalog_piese() -> list[str]:
+    """Încarcă denumirile pieselor din catalog dacă există PieseRepository."""
+    try:
+        from repositories.piese_repository import PieseRepository
+
+        piese_raw = PieseRepository.get_all() or []
+        denumiri: list[str] = []
+        for p in piese_raw:
+            den = str(p.get("denumire") or p.get("nume") or "").strip()
+            if den and den not in denumiri:
+                denumiri.append(den)
+        return denumiri
+    except Exception:
+        return []
+
+
+def _extrage_piese_din_item(item: dict) -> str:
+    """Extrage lista de piese necesare dintr-un dicționar din documentație sau din notițe."""
+    for k in ("piese_necesare", "piese", "piese_remediere"):
+        val = str(item.get(k) or "").strip()
+        if val:
+            return val
+
+    txt = str(item.get("text_indexat") or "")
+    for line in txt.splitlines():
+        m = re.match(r"^\s*piese\s*(necesare)?\s*:\s*(.+)$", line, flags=re.IGNORECASE)
+        if m:
+            return m.group(2).strip()
+    return ""
+
+
 def _incarca_defecte_istoric() -> list[dict]:
     """Încarcă defectele/intervențiile dacă există repository-ul în proiect."""
     for mod_path, cls_name in [
@@ -207,9 +238,10 @@ def cauta_si_coreleaza(
         drv_raw = str(d.get("coduri_eroare_driver") or "")
         titlu_raw = str(d.get("titlu") or "")
         txt_raw = str(d.get("text_indexat") or "")
+        piese_raw = _extrage_piese_din_item(d)
 
         haystack_codes = f"{hmi_raw} {drv_raw}".lower()
-        haystack_all = f"{hmi_raw} {drv_raw} {titlu_raw} {txt_raw}".lower()
+        haystack_all = f"{hmi_raw} {drv_raw} {titlu_raw} {txt_raw} {piese_raw}".lower()
 
         is_match = False
         if not q_norm:
@@ -283,13 +315,14 @@ def cauta_si_coreleaza(
 
 
 def _render_card_documentatie(item: dict, idx: int, masini_map: dict[int, str]):
-    """Randează o înregistrare din documentatie_tehnica cu codul HMI și pagina/intervalul evidențiate."""
+    """Randează o înregistrare din documentatie_tehnica cu codul HMI, pagina și piesele necesare."""
     tag = str(item.get("tag_sectiune") or "[ERR]").strip()
     titlu = str(item.get("titlu") or "Fără titlu").strip()
     sistem = str(item.get("tip_sistem") or item.get("categorie") or "").strip()
     hmi_txt = str(item.get("coduri_eroare_hmi") or "").strip()
     pag_txt = str(item.get("interval_pagini") or "").strip()
     drv_txt = str(item.get("coduri_eroare_driver") or "").strip()
+    piese_txt = _extrage_piese_din_item(item)
     txt_idx = str(item.get("text_indexat") or "").strip()
     url_drv = str(item.get("gdrive_url") or "").strip()
     m_id = _normalizare_id(item.get("masina_id"))
@@ -310,6 +343,8 @@ def _render_card_documentatie(item: dict, idx: int, masini_map: dict[int, str]):
 
         if drv_txt:
             st.markdown(f"**🔌 Coduri Driver / VFD:** `{drv_txt}`")
+        if piese_txt:
+            st.markdown(f"**🔩 Piese necesare remediere:** {piese_txt}")
         if txt_idx:
             st.markdown(f"**📝 Notițe / Text indexat:**\n\n{txt_idx}")
         if url_drv:
@@ -326,10 +361,11 @@ def _render_formular_salvare_solutie(
     drivere_sugerate: list[str],
     firme_map: dict,
     masini_disponibile: list[dict],
+    catalog_piese: list[str],
     firma_selectata=None,
     masina_selectata=None,
 ):
-    """Permite salvarea rapidă a unui defect rezolvat / soluții direct în index (tag [SOL])."""
+    """Permite salvarea rapidă a unui defect rezolvat / soluții și a pieselor necesare direct în index."""
     with st.expander("💾 Salvează intervenție / soluție nouă (`[SOL]`) în index", expanded=False):
         masini_map_loc = {m["id"]: m["denumire"] for m in masini_disponibile}
         opt_masini = ["", *masini_map_loc.keys()]
@@ -376,6 +412,19 @@ def _render_formular_salvare_solutie(
             with c7:
                 cod_drv_sol = st.text_input("Cod eroare Driver / VFD", value=drv_default)
 
+            p_col1, p_col2 = st.columns([1.4, 1.6])
+            with p_col1:
+                piese_catalog_sel = st.multiselect(
+                    "Piese din nomenclator (opțional)",
+                    options=catalog_piese,
+                    placeholder="Alege piese existente...",
+                )
+            with p_col2:
+                piese_text_extra = st.text_input(
+                    "Alte piese necesare / cantități (text liber)",
+                    placeholder="ex: Cablu encoder 5m (1 buc), Siguranță 10A (2 buc)",
+                )
+
             url_sol = st.text_input(
                 "Link Google Drive (manual / schemă / poză)",
                 placeholder="https://drive.google.com/file/d/.../view",
@@ -390,6 +439,16 @@ def _render_formular_salvare_solutie(
                 try:
                     fid_val = None if firma_sol == "" else _normalizare_id(firma_sol)
                     mid_val = None if masina_sel == "" else _normalizare_id(masina_sel)
+
+                    parti_piese = list(piese_catalog_sel)
+                    if str(piese_text_extra or "").strip():
+                        parti_piese.append(str(piese_text_extra).strip())
+                    piese_finale_txt = ", ".join(dict.fromkeys(parti_piese))
+
+                    text_complet = str(descriere_sol or "").strip()
+                    if piese_finale_txt and "piese necesare:" not in text_complet.lower():
+                        text_complet = f"{text_complet}\n\nPiese necesare: {piese_finale_txt}".strip()
+
                     DocumentatieRepository.insert({
                         "firma_id": fid_val,
                         "masina_id": mid_val,
@@ -403,7 +462,8 @@ def _render_formular_salvare_solutie(
                         "interval_pagini": pag_sol,
                         "coduri_eroare_hmi": cod_hmi_sol,
                         "coduri_eroare_driver": cod_drv_sol,
-                        "text_indexat": descriere_sol,
+                        "piese_necesare": piese_finale_txt,
+                        "text_indexat": text_complet,
                     })
                     _salveaza_in_defecte_istoric({
                         "firma_id": fid_val,
@@ -412,10 +472,11 @@ def _render_formular_salvare_solutie(
                         "titlu": titlu_sol,
                         "cod_hmi": cod_hmi_sol,
                         "cod_driver": cod_drv_sol,
+                        "piese_necesare": piese_finale_txt,
                         "solutie": descriere_sol,
                         "link_documentatie": url_sol,
                     })
-                    st.success("✅ Soluția (`[SOL]`) a fost salvată în indexul de documentație.")
+                    st.success("✅ Soluția (`[SOL]`) și piesele necesare au fost salvate în indexul de documentație.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Eroare la salvare: {e}")
@@ -425,10 +486,12 @@ def render_page():
     st.markdown("## 🛠️ Asistent Căutare & Corelare Defecte (HMI ↔ Driver/VFD)")
     st.caption(
         "Corelează o alarmă de pe HMI sau un cod de Driver / VFD cu toate codurile subordonate (1-la-mai-mulți), "
-        "secțiunile indexate ([ERR], [ALM], [SOL], [SCH], [PRM], [TST], [MEC]) și intervențiile anterioare."
+        "piesele necesare pentru remediere, secțiunile indexate ([ERR], [ALM], [SOL], [SCH], [PRM], [TST], [MEC]) "
+        "și intervențiile anterioare."
     )
 
     firme_map, toate_masini = _incarca_firme_si_masini()
+    catalog_piese = _incarca_catalog_piese()
     masini_map_toate = {m["id"]: m["denumire"] for m in toate_masini}
 
     # --- BARA DE CAUTARE PRINCIPALA ---
@@ -460,7 +523,6 @@ def render_page():
     masini_filtrate_map = {m["id"]: m["denumire"] for m in masini_filtrate}
     opt_masini_bar = ["Toate", *masini_filtrate_map.keys()]
 
-    # Dacă mașina salvată în session_state nu mai aparține firmei alese, revenim la "Toate"
     if st.session_state.get("asistent_defecte_masina") not in opt_masini_bar:
         st.session_state["asistent_defecte_masina"] = "Toate"
 
@@ -539,7 +601,11 @@ def render_page():
         for df in rezultat["defecte"][:10]:
             titlu_df = df.get("titlu") or df.get("cod_hmi") or df.get("cod_driver") or "Intervenție"
             detalii_df = df.get("solutie") or df.get("observatii") or df.get("descriere") or ""
-            st.markdown(f"- **{titlu_df}** — {detalii_df}")
+            piese_df = _extrage_piese_din_item(df)
+            linie = f"- **{titlu_df}** — {detalii_df}"
+            if piese_df:
+                linie += f" *(🔩 Piese: {piese_df})*"
+            st.markdown(linie)
 
     # --- 4. SALVARE RAPIDA SOLUTIE ---
     st.markdown("---")
@@ -548,6 +614,7 @@ def render_page():
         drivere_sugerate=rezultat["drivere_asociate"],
         firme_map=firme_map,
         masini_disponibile=masini_filtrate,
+        catalog_piese=catalog_piese,
         firma_selectata=firma_activa_id,
         masina_selectata=None if filtru_masina == "Toate" else _normalizare_id(filtru_masina),
     )

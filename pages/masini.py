@@ -8,7 +8,6 @@ import json
 from datetime import datetime
 from repositories.firme_repository import FirmeRepository
 from config import db_cursor
-#from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
 from repositories.masini_repository import MasiniRepository, MasiniRepositoryExt, ALL_SISTEME_DEFAULT
 
 OPT_SISTEME = [
@@ -78,9 +77,6 @@ def render_masini():
                     disabled=not is_unlocked,
                     help="Valoarea implicită este 20. Deblochează din SistemAdmin → Deblocare pentru a o modifica."
                 )
-                defecte = st.text_area("Defecte (Memo)")
-                reparatii = st.text_area("Remediații aferente (Memo)")
-                piese_necesare = st.text_area("Piese Necesare")
             with col2:
                 subansambluri = st.text_input("Subansambluri (separate prin virgulă)")
                 erori = st.text_input("Erori (separate prin virgulă)")
@@ -92,7 +88,6 @@ def render_masini():
                     default=CODURI_SISTEME,
                     format_func=lambda x: ETICHETE_SISTEME.get(x, x)
                 )
-                piese_inlocuite = st.text_area("Piese Înlocuite")
                 tipuri_fluide = st.text_area("Tipuri de Fluide")
 
             if st.form_submit_button("💾 Salvează Mașina"):
@@ -110,10 +105,10 @@ def render_masini():
                         "data_intretinere": data_intretinere.strftime("%Y-%m-%d"),
                         "tip_intretinere": tip_intretinere,
                         "sisteme_active": ",".join(sisteme_sel) if sisteme_sel else ALL_SISTEME_DEFAULT,
-                        "defecte": defecte,
-                        "remediu": reparatii,
-                        "piese_necesare": piese_necesare,
-                        "piese_inlocuite": piese_inlocuite,
+                        "defecte": "",
+                        "remediu": "",
+                        "piese_necesare": "",
+                        "piese_inlocuite": "",
                         "tipuri_fluide": tipuri_fluide
                     })
                     st.success(f"Mașina '{denumire}' a fost salvată cu succes!")
@@ -215,8 +210,6 @@ def render_masini():
                             help="Deblochează din SistemAdmin → Deblocare pentru a modifica pragul."
                         )
 
-                    m_def = st.text_area("Defecte", value=m.get('defecte', ''), key=f"m_def_{mid}")
-
                     bt_s, bt_d = st.columns(2)
                     if bt_s.form_submit_button("💾 Salvează Modificările", key=f"m_sav_{mid}"):
                         MasiniRepository._ensure_sisteme_col()
@@ -226,10 +219,10 @@ def render_masini():
                             c.execute("""
                                 UPDATE masini
                                 SET denumire=%s, tip_masina=%s, serie=%s, subansambluri=%s, erori=%s,
-                                    an_fabricatie=%s, tip_intretinere=%s, defecte=%s, sisteme_active=%s,
+                                    an_fabricatie=%s, tip_intretinere=%s, sisteme_active=%s,
                                     este_masina_noua=%s, prag_interventii=%s
                                 WHERE id=%s
-                            """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, m_def, sist_str, m_noua, prag_final, mid))
+                            """, (m_den, m_tip, m_serie, m_sub, m_erori, m_an, m_tip_int, sist_str, m_noua, prag_final, mid))
                         st.success("Modificările mașinii au fost salvate!")
                         st.rerun()
                     if bt_d.form_submit_button("🗑️ Șterge Mașina", key=f"m_del_{mid}"):
@@ -283,7 +276,7 @@ def render_masini():
                         st.info("Nu sunt definite elemente în componența sistemelor acestui utilaj.")
                     else:
                         st.dataframe(df_comp, hide_index=True, use_container_width=True)
-                
+
                 # --- ETAPA 2: CONTROL CNC, COMPONENTE ELECTRICE & FOLDER GOOGLE DRIVE ---
                 st.markdown("#### ⚡ Control CNC, Componente Sistem Electric & Google Drive")
                 opt_cnc = ["", "Fanuc", "Mitsubishi", "Siemens", "Heidenhain", "Fagor", "Mazatrol", "Beckhoff / TwinCAT", "Altele"]

@@ -9,7 +9,54 @@ from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.reparatii_electronice_repository import ReparatiiElectroniceRepository
 from repositories.setari_repository import SetariRepository
+from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
+
+
+def _cauta_docs_electronice(termen: str, masina_id=None) -> list[dict]:
+    """Caută în indexul de documentație după subansamblu, cod, componente sau utilaj."""
+    q = str(termen or "").strip().lower()
+    try:
+        toate_doc = DocumentatieRepository.get_all() or []
+    except Exception:
+        return []
+
+    rezultate = []
+    for d in toate_doc:
+        d_mid = d.get("masina_id")
+        if masina_id is not None and d_mid not in (None, masina_id):
+            continue
+        blob = " ".join([
+            str(d.get("tag_sectiune") or ""),
+            str(d.get("categorie") or ""),
+            str(d.get("titlu") or ""),
+            str(d.get("tip_sistem") or ""),
+            str(d.get("coduri_eroare_hmi") or ""),
+            str(d.get("coduri_eroare_driver") or ""),
+            str(d.get("interval_pagini") or ""),
+            str(d.get("piese_necesare") or ""),
+            str(d.get("text_indexat") or ""),
+        ]).lower()
+        if not q or q in blob:
+            rezultate.append(d)
+    return rezultate[:6]
+
+
+def _formateaza_componente_index(comp_lista: list[dict]) -> str:
+    """Formatează componentele din fișa electronică pentru indexare."""
+    if not comp_lista:
+        return ""
+    parti = []
+    for c in comp_lista:
+        if not isinstance(c, dict):
+            continue
+        den = str(c.get("Componenta / Cod / Parametri") or "").strip()
+        if not den:
+            continue
+        stare_c = str(c.get("Stare") or "").strip()
+        parti.append(f"{den} ({stare_c})" if stare_c else den)
+    return ", ".join(parti)
+
 
 def _init_sau_reseteaza_el_draft(tehnician_def: str):
     st.session_state["el_draft"] = {
@@ -25,6 +72,7 @@ def _init_sau_reseteaza_el_draft(tehnician_def: str):
     }
     st.session_state["df_comp_editor"] = pd.DataFrame(columns=["Componenta / Cod / Parametri", "Stare"])
     st.session_state["el_editor_counter"] = st.session_state.get("el_editor_counter", 0) + 1
+
 
 def render_reparatii_electronice():
     st.subheader("⚡ Gestiune Reparații Electronice & Mecatronice")
@@ -52,6 +100,8 @@ def render_reparatii_electronice():
 
     if st.session_state["electrice_salvat"]:
         st.success("✅ Fișa de reparație electronică a fost salvată cu succes!")
+        if st.session_state.pop("el_solutie_indexata_flash", False):
+            st.info("📚 Reparația / componentele au fost salvate și în indexul de documentație (`[SOL]`).")
         if st.session_state["electrice_pdf"]:
             st.download_button(
                 label="📥 Descarcă Raport PDF Reparație Electronică",
@@ -142,8 +192,8 @@ def render_reparatii_electronice():
         st.session_state["df_comp_editor"] = pd.DataFrame(columns=["Componenta / Cod / Parametri", "Stare"])
 
     edited_comp_df = st.data_editor(
-        st.session_state["df_comp_editor"], 
-        num_rows="dynamic", 
+        st.session_state["df_comp_editor"],
+        num_rows="dynamic",
         column_config={
             "Componenta / Cod / Parametri": st.column_config.TextColumn("Componentă / Cod / Parametri (ex: C 100uF 50V, Rotiță dințată z=15)", required=True),
             "Stare": st.column_config.SelectboxColumn("Stare Componentă", options=["Inlocuita", "Necesara", "Reparata"], required=True)
@@ -152,6 +202,37 @@ def render_reparatii_electronice():
         use_container_width=True
     )
     st.session_state["df_comp_editor"] = edited_comp_df
+
+    # --- CONSULTARE RAPIDA IN INDEXUL DE DOCUMENTATIE ---
+    with st.expander("📚 Consultare rapidă Index GDrive (scheme [SCH], parametri [PRM], coduri [ERR]/[ALM])", expanded=False):
+        termen_sugerat = str(piesa_subansamblu or defect_reclamat or "").strip()
+        q_el_doc = st.text_input(
+            "Filtru rapid în indexul de documentație",
+            value=termen_sugerat,
+            placeholder="ex: invertor, IGBT, AL.24, 414, pinout...",
+            key="el_quick_doc_search",
+        )
+        docs_el = _cauta_docs_electronice(q_el_doc, masina_id=masina_obj_id)
+        if docs_el:
+            for d in docs_el:
+                hmi_d = str(d.get("coduri_eroare_hmi") or "").strip()
+                drv_d = str(d.get("coduri_eroare_driver") or "").strip()
+                pag_d = str(d.get("interval_pagini") or "").strip()
+                st.markdown(
+                    f"- **{d.get('tag_sectiune') or '[ERR]'} {d.get('titlu')}**"
+                    + (f" — HMI: `{hmi_d}`" if hmi_d else "")
+                    + (f" — Driver/VFD: `{drv_d}`" if drv_d else "")
+                    + (f" — Pagini: `{pag_d}`" if pag_d else "")
+                    + (f" — [Google Drive]({d.get('gdrive_url')})" if d.get("gdrive_url") else "")
+                )
+        else:
+            st.caption("Nu s-au găsit înregistrări în index pentru filtrul curent.")
+
+    salveaza_in_index_el = st.checkbox(
+        "💾 Salvează reparația și componentele în Indexul de Documentație (`[SOL]`) la finalizare",
+        value=False,
+        key="el_save_to_doc_sol",
+    )
 
     be1, be2 = st.columns([2, 1])
     with be1:
@@ -166,7 +247,7 @@ def render_reparatii_electronice():
             st.error("Completați denumirea piesei sau subansamblului.")
         else:
             componente_valide = edited_comp_df.dropna(subset=["Componenta / Cod / Parametri"]).to_dict(orient="records")
-            
+
             payload = {
                 "firma_id": firma_obj['id'],
                 "masina_id": masina_obj_id,
@@ -182,6 +263,36 @@ def render_reparatii_electronice():
 
             rid = ReparatiiElectroniceRepository.insert(payload)
             if rid:
+                if salveaza_in_index_el:
+                    try:
+                        comp_txt = _formateaza_componente_index(componente_valide)
+                        parti_doc = []
+                        if str(defect_reclamat or "").strip():
+                            parti_doc.append(f"Defect reclamat: {str(defect_reclamat).strip()}")
+                        parti_doc.append(f"Stare finală: {stare_finala}")
+                        if comp_txt:
+                            parti_doc.append(f"Piese necesare: {comp_txt}")
+
+                        DocumentatieRepository.insert({
+                            "firma_id": firma_obj["id"],
+                            "masina_id": masina_obj_id,
+                            "categorie": "CNC",
+                            "tip_sistem": piesa_subansamblu.strip(),
+                            "titlu": f"{piesa_subansamblu.strip()} ({sel_masina}) — {stare_finala}",
+                            "gdrive_file_id": "",
+                            "gdrive_url": "",
+                            "tip_fisier": "doc",
+                            "tag_sectiune": "[SOL]",
+                            "interval_pagini": "",
+                            "coduri_eroare_hmi": "",
+                            "coduri_eroare_driver": "",
+                            "piese_necesare": comp_txt,
+                            "text_indexat": "\n".join(parti_doc),
+                        })
+                        st.session_state["el_solutie_indexata_flash"] = True
+                    except Exception:
+                        pass
+
                 pdf_bytes = genereaza_pdf_electronic({
                     "id": rid,
                     "client": sel_firma,

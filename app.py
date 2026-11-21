@@ -146,28 +146,28 @@ with c_status:
 
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {
-    "📊 Management & Comercial": {
+    "🚨 1. Diagnostic & Documentație": {
         "🛠️ Asistent Defecte": render_asistent_defecte,
-        "📈 DashBoard": render_dashboard,
-        "🔮 Predicții": render_predictii,
-        "💼 Oferte de preț": render_oferte,
-        "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
+        "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
+        "📄 Documentații": render_documentatii,
     },
-    "🛠️ Activități": {
+    "🛠️ 2. Execuție & Rapoarte": {
         "📝 Intervenții": render_activitati,
+        "⚡ Reparații electronice": render_reparatii_electronice,
         "🛡️ Mentenanță preventivă": render_mentenanta,
         "📊 Măsurători": render_masuratori,
-        "⚡ Reparații electronice": render_reparatii_electronice,
+        "📋 Istoric": render_istoric,
     },
-    "📦 Nomenclatoare & Stocuri": {
+    "💼 3. Oferte & Comercial": {
+        "💼 Oferte de preț": render_oferte,
+        "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
+        "📈 DashBoard": render_dashboard,
+        "🔮 Predicții": render_predictii,
+    },
+    "📦 4. Nomenclatoare & Stocuri": {
         "📦 Piese": render_piese,
         "🦾 Mașini": render_masini,
         "🏢 Firme": render_firme,
-    },
-    "🗂️ Arhivă & Docs": {
-        "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
-        "📋 Istoric": render_istoric,
-        "📄 Documentații": render_documentatii,
     },
     "🔐 SistemAdmin": {
         "⚙️ Setări": render_setari,
