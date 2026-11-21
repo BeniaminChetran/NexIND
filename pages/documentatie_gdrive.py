@@ -381,12 +381,15 @@ def render_gview_iframe(pdf_url: str, pagina: str = ""):
     pag_num = "".join(ch for ch in str(pagina or "") if ch.isdigit())
     onload_attr = f" onload=\"this.contentWindow.location.hash=':0.page.{pag_num}';\"" if pag_num else ""
 
+    target_pdf_url = "https://drive.google.com/uc?export=download&id=1_Vc6Cb6o1h2o3ldC1CHU_G5GhfEPfl7a"
     html_code = f"""
-    <iframe
-        id="iframe1"
-        src="https://docs.google.com/gview?url={url_curat}&embedded=true"
-        style="width: 100%; height: 680px; border: 1px solid #444; border-radius: 6px;"
-        {onload_attr}
-    ></iframe>
-    """
+        <iframe
+            id="iframe1"
+            src="https://docs.google.com/gview?url={target_pdf_url}&embedded=true"
+            style="width: 100%; height: 680px; border: 1px solid #444; border-radius: 6px;"
+            onload="this.contentWindow.location.hash=':0.page.49';"
+        ></iframe>
+        """
+
     components.html(html_code, height=700)
+
