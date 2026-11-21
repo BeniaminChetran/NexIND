@@ -100,6 +100,34 @@ def render_activitati():
     if st.session_state["raport_salvat"]:
         rid_s = st.session_state["ultimul_id_salvat"]
         st.success(f"✅ Raportul #{rid_s} a fost salvat în baza de date! Verifică raportul, apoi confirmă trimiterea pe email.")
+        
+        oferte_gasite = _cauta_oferte_asociate(
+            firma=st.session_state.get("ultim_firma_raport", ""),
+            masina=st.session_state.get("ultim_masina_raport", ""),
+            titlu=st.session_state.get("ultim_titlu_raport", ""),
+        )
+
+        oferta_selectata = None
+        include_oferta_in_mail = False
+
+        if oferte_gasite:
+            st.success(f"💼 Am găsit **{len(oferte_gasite)}** ofertă/oferte asociată/asociate acestei firme/lucrări.")
+            opt_of = list(range(len(oferte_gasite)))
+            idx_of = st.selectbox(
+                "Selectează oferta asociată",
+                options=opt_of,
+                format_func=lambda i: _format_eticheta_oferta(oferte_gasite[i], i),
+                key="act_sel_oferta_asociata",
+            )
+            oferta_selectata = oferte_gasite[idx_of]
+            include_oferta_in_mail = st.checkbox(
+                "📎 Include detaliile ofertei selectate în emailul către client",
+                value=True,
+                key="act_include_oferta_mail",
+            )
+        else:
+            st.caption("ℹ️ Nu s-a găsit nicio ofertă asociată momentan pentru această firmă/lucrare. Se va trimite doar raportul PDF.")
+        
         if st.session_state.pop("solutie_indexata_flash", False):
             st.info("📚 Soluția (`[SOL]`) a fost adăugată și în indexul de documentație.")
 
@@ -119,10 +147,26 @@ def render_activitati():
                 st.info("✉️ Raportul a fost confirmat și trimis pe email.")
             else:
                 if st.button("✅ Confirmă Verificarea & Trimite Raportul pe Email", type="primary", use_container_width=True):
+                    corp_mail = f"Vă atașăm raportul de intervenție #{rid_s}."
+
+                    # Dacă există o ofertă asociată și ai lăsat bifată opțiunea de includere,
+                    # adăugăm datele ofertei la finalul mesajului din email:
+                    if include_oferta_in_mail and oferta_selectata:
+                        det_of = _format_eticheta_oferta(oferta_selectata, 0)
+                        obs_of = str(
+                            oferta_selectata.get("observatii")
+                            or oferta_selectata.get("descriere")
+                            or oferta_selectata.get("detalii")
+                            or ""
+                        ).strip()
+                        corp_mail += f"\n\nOfertă asociată: {det_of}"
+                        if obs_of:
+                            corp_mail += f"\nDetalii ofertă: {obs_of}"
+
                     ok_mail, info_mail = trimite_email_raport(
                         destinatar_client=st.session_state.get("ultim_email_client", ""),
                         subiect=f"Raport #{rid_s} - {st.session_state.get('ultim_firma_raport', '')}",
-                        corp_mesaj=f"Vă atașăm raportul de intervenție #{rid_s}.",
+                        corp_mesaj=corp_mail,
                         pdf_bytes=st.session_state["ultimul_pdf_bytes"],
                         nume_fisier=f"Raport_{rid_s}.pdf",
                     )
@@ -360,6 +404,8 @@ def render_activitati():
             st.session_state["ultimul_pdf_bytes"] = pdf_bytes
             st.session_state["ultim_email_client"] = email_client_sel
             st.session_state["ultim_firma_raport"] = sel_firma
+            st.session_state["ultim_masina_raport"] = sel_masina
+            st.session_state["ultim_titlu_raport"] = titlu_lucrare
             st.session_state["email_raport_trimis"] = False
 
             threading.Thread(target=background_sync_task, args=({
@@ -377,3 +423,74 @@ def render_activitati():
             _init_sau_reseteaza_act_draft(tehnician_def)
             st.session_state["raport_salvat"] = True
             st.rerun()
+            
+            
+            
+def _cauta_oferte_asociate(firma: str, masina: str = "", titlu: str = "") -> list[dict]:
+    """
+    Caută oferte asociate firmei (și opțional mașinii / lucrării) fără să crape
+    dacă repository-ul are alt nume sau structură.
+    """
+    firma_low = str(firma or "").strip().lower()
+    masina_low = str(masina or "").strip().lower()
+    titlu_low = str(titlu or "").strip().lower()
+
+    if not firma_low:
+        return []
+
+    toate_oferte: list[dict] = []
+    for mod_path, cls_name in [
+        ("repositories.oferte_repository", "OferteRepository"),
+        ("repositories.oferte_pret_repository", "OfertePretRepository"),
+        ("repositories.comercial_repository", "OferteRepository"),
+    ]:
+        try:
+            mod = __import__(mod_path, fromlist=[cls_name])
+            repo = getattr(mod, cls_name, None)
+            if repo and hasattr(repo, "get_all"):
+                res = repo.get_all()
+                if isinstance(res, list):
+                    toate_oferte = res
+                    break
+        except Exception:
+            continue
+
+    potriviri_firma: list[dict] = []
+    for of in toate_oferte:
+        if not isinstance(of, dict):
+            continue
+        f_of = " ".join(
+            str(of.get(k) or "")
+            for k in ("firma", "nume_firma", "client", "denumire_firma")
+        ).lower()
+        if firma_low and firma_low in f_of:
+            potriviri_firma.append(of)
+
+    if not potriviri_firma:
+        return []
+
+    # Prioritizăm ofertele care menționează mașina sau titlul lucrării, fără să ascundem celelalte ale firmei
+    def _scor_oferta(of: dict) -> int:
+        blob = " ".join(str(v or "") for v in of.values()).lower()
+        scor = 0
+        if masina_low and masina_low != "nicio mașină" and masina_low in blob:
+            scor += 2
+        if titlu_low and titlu_low != "intervenție tehnică" and titlu_low in blob:
+            scor += 1
+        return scor
+
+    potriviri_firma.sort(key=_scor_oferta, reverse=True)
+    return potriviri_firma
+
+
+def _format_eticheta_oferta(of: dict, idx: int) -> str:
+    cod = of.get("numar") or of.get("cod") or of.get("nr_oferta") or of.get("id") or (idx + 1)
+    titlu = of.get("titlu") or of.get("denumire") or of.get("obiect") or "Ofertă"
+    stare = of.get("status") or of.get("stare") or ""
+    val = of.get("total") or of.get("valoare") or of.get("pret_total") or ""
+    parti = [f"#{cod} — {titlu}"]
+    if stare:
+        parti.append(f"[{stare}]")
+    if val not in ("", None):
+        parti.append(f"({val})")
+    return " ".join(parti)

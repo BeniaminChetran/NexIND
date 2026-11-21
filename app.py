@@ -157,12 +157,12 @@ MENIU_STRUCTURA = {
         "🛡️ Mentenanță preventivă": render_mentenanta,
         "📊 Măsurători": render_masuratori,
         "📋 Istoric": render_istoric,
+        "🔮 Predicții": render_predictii,
     },
     "💼 3. Oferte & Comercial": {
         "💼 Oferte de preț": render_oferte,
         "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
         "📈 DashBoard": render_dashboard,
-        "🔮 Predicții": render_predictii,
     },
     "📦 4. Nomenclatoare & Stocuri": {
         "📦 Piese": render_piese,
