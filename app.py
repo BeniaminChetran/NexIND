@@ -161,6 +161,7 @@ MENIU_STRUCTURA = {
         "🏢 Firme": render_firme,
     },
     "🗂️ Arhivă & Docs": {
+        "📚 Index & Căutare Docs (GDrive)":render_tab_index_documentatie_gdrive,
         "📋 Istoric": render_istoric,
         "📄 Documentații": render_documentatii,
     },
