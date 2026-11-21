@@ -93,6 +93,20 @@ def _delete_fraza_safe(fraza_id: int):
     with db_cursor() as c:
         c.execute("DELETE FROM fraze WHERE id = %s", (fraza_id,))
 
+def _get_setari_safe():
+    """Încarcă setările din baza de date în siguranță, fără să crape dacă tabelul lipsește."""
+    try:
+        if hasattr(SetariRepository, "get_all"):
+            rez = SetariRepository.get_all()
+            if isinstance(rez, dict):
+                return rez
+        if hasattr(SetariRepository, "get_setari"):
+            rez = SetariRepository.get_setari()
+            if isinstance(rez, dict):
+                return rez
+    except Exception as e:
+        logger.warning(f"Nu s-au putut încărca setările curent: {e}")
+    return {}
 
 def render_setari():
     st.subheader("⚙️ Setări Generale Firmă, TVA & Configurări Documente")
