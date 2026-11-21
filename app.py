@@ -8,7 +8,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from PIL import Image
-from pages import asistent_defecte
 
 
 load_dotenv()
@@ -69,6 +68,7 @@ from pages.oferte import render_oferte
 from pages.simulator_preturi import render_simulator_preturi
 from pages.setari import render_setari
 from pages.documentatie_gdrive import render_documentatie_gdrive
+from pages.asistent_defecte import render_page as render_asistent_defecte
 
 
 def seteaza_iconita_android(cale_png: str):
@@ -164,7 +164,8 @@ MENIU_STRUCTURA = {
         "🏢 Firme": render_firme,
     },
     "🗂️ Arhivă & Docs": {
-        "📚 Index & Căutare Docs (GDrive)":render_documentatie_gdrive,
+        "🛠️ Asistent Defecte": render_asistent_defecte,
+        "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
         "📋 Istoric": render_istoric,
         "📄 Documentații": render_documentatii,
     },
