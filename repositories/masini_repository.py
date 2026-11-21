@@ -11,8 +11,20 @@ logger = logging.getLogger("NexIndCMMS.MasiniRepository")
 
 ALL_SISTEME_DEFAULT = "Electric,Mecanic,Hidraulic,Pneumatic,Vacuum,Auxiliare"
 
+TIPURI_CONTROL_CNC = (
+    "Fanuc",
+    "Mitsubishi",
+    "Siemens",
+    "Heidenhain",
+    "Fagor",
+    "Mazatrol",
+    "Beckhoff / TwinCAT",
+    "Altele"
+)
+
 
 class MasiniRepository(BaseRepository):
+
     @staticmethod
     def _ensure_sisteme_col():
         try:
@@ -198,4 +210,93 @@ class MasiniRepository(BaseRepository):
     def delete(cls, masina_id: int):
         query = "DELETE FROM masini WHERE id=%s"
         cls().execute(query, (masina_id,))
-        logger.info(f"Mașina #{masina_id} a fost ștearsă.")
+        logger.info(f"Mașina #{masina_id} a fost ștearsă
+        
+        
+        
+#----------------------------------------------
+#---extensie repositories/masini_repository.py--
+#----------------------------------------------
+
+import json
+import logging
+from config import db_cursor
+from repositories.base_repository import BaseRepository
+
+logger = logging.getLogger("NexIndCMMS.MasiniRepository")
+
+TIPURI_CONTROL_CNC = (
+    "Fanuc",
+    "Mitsubishi",
+    "Siemens",
+    "Heidenhain",
+    "Fagor",
+    "Mazatrol",
+    "Beckhoff / TwinCAT",
+    "Altele"
+)
+
+
+
+#----------------------------------------------------------------
+#--------Extensie pentru cautare in documentatie tehnica---------
+#--------pe tipuri de cnc----------------------------------------
+#----------------------------------------------------------------
+
+
+class MasiniRepositoryExt(BaseRepository):
+    @classmethod
+    def ensure_electric_cnc_cols(cls):
+        try:
+            with db_cursor() as c:
+                c.execute("""
+                    ALTER TABLE masini
+                    ADD COLUMN IF NOT EXISTS tip_control_cnc VARCHAR(120) DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS componente_electrice_json JSONB DEFAULT '[]'::jsonb,
+                    ADD COLUMN IF NOT EXISTS gdrive_folder_url TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS gdrive_folder_id VARCHAR(255) DEFAULT ''
+                """)
+        except Exception as e:
+            logger.error(f"Eroare la adăugarea coloanelor CNC/Drive pe masini: {e}")
+
+    @classmethod
+    def update_control_si_componente_electrice(
+        cls,
+        masina_id: int,
+        tip_control_cnc: str,
+        componente_electrice: list[dict],
+        gdrive_folder_url: str = "",
+        gdrive_folder_id: str = ""
+    ):
+        cls.ensure_electric_cnc_cols()
+        clean_comp = [
+            {
+                "rol": str(row.get("Rol / Tip") or "").strip(),
+                "producator_model": str(row.get("Producător / Model") or "").strip(),
+                "axa_zona": str(row.get("Axă / Zonă / Detalii") or "").strip(),
+                "observatii": str(row.get("Observații") or "").strip(),
+            }
+            for row in (componente_electrice or [])
+            if any(str(row.get(k) or "").strip() for k in ("Rol / Tip", "Producător / Model", "Axă / Zonă / Detalii", "Observații"))
+        ]
+        with db_cursor() as c:
+            c.execute(
+                """
+                UPDATE masini
+                SET tip_control_cnc = %s,
+                    componente_electrice_json = %s::jsonb,
+                    gdrive_folder_url = %s,
+                    gdrive_folder_id = %s
+                WHERE id = %s
+                """,
+                (
+                    str(tip_control_cnc or "").strip(),
+                    json.dumps(clean_comp, ensure_ascii=False),
+                    str(gdrive_folder_url or "").strip(),
+                    str(gdrive_folder_id or "").strip(),
+                    int(masina_id),
+                ),
+            )
+        if hasattr(cls, "get_all") and hasattr(cls.get_all, "clear"):
+            cls.get_all.clear()
+        logger.info(f"Actualizat control CNC ({tip_control_cnc}) și componente electrice pentru mașina #{masina_id}.")

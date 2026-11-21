@@ -4,10 +4,12 @@
 
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime
 from repositories.firme_repository import FirmeRepository
-from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
 from config import db_cursor
+#from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
+from repositories.masini_repository import MasiniRepository, MasiniRepositoryExt, ALL_SISTEME_DEFAULT
 
 OPT_SISTEME = [
     ("Electric", "1. Sistem Electric, Electronică & Automatizare"),
@@ -281,6 +283,117 @@ def render_masini():
                         st.info("Nu sunt definite elemente în componența sistemelor acestui utilaj.")
                     else:
                         st.dataframe(df_comp, hide_index=True, use_container_width=True)
+                
+                # --- ETAPA 2: CONTROL CNC, COMPONENTE ELECTRICE & FOLDER GOOGLE DRIVE ---
+                st.markdown("#### ⚡ Control CNC, Componente Sistem Electric & Google Drive")
+                opt_cnc = ["", "Fanuc", "Mitsubishi", "Siemens", "Heidenhain", "Fagor", "Mazatrol", "Beckhoff / TwinCAT", "Altele"]
+                cnc_curent = str(m.get("tip_control_cnc") or "").strip()
+                este_cnc_custom = bool(cnc_curent) and cnc_curent not in opt_cnc
+
+                c_cnc1, c_cnc2 = st.columns([2, 2], vertical_alignment="bottom")
+                with c_cnc1:
+                    sel_cnc_idx = opt_cnc.index("Altele") if este_cnc_custom else (opt_cnc.index(cnc_curent) if cnc_curent in opt_cnc else 0)
+                    sel_cnc = st.selectbox(
+                        "Tip Control / Comandă CNC",
+                        options=opt_cnc,
+                        index=sel_cnc_idx,
+                        key=f"sel_cnc_masina_{mid}"
+                    )
+                with c_cnc2:
+                    if sel_cnc == "Altele" or este_cnc_custom:
+                        cnc_custom_val = st.text_input(
+                            "Specifică tipul de control CNC",
+                            value=cnc_curent if este_cnc_custom else "",
+                            placeholder="ex: NUM, Syntec, Haas, Bosch Rexroth",
+                            key=f"txt_cnc_custom_{mid}"
+                        )
+                    else:
+                        cnc_custom_val = ""
+
+                tip_cnc_final = (cnc_custom_val.strip() if (sel_cnc == "Altele" or este_cnc_custom) else sel_cnc).strip()
+
+                c_gd1, c_gd2 = st.columns([3, 1.5], vertical_alignment="bottom")
+                with c_gd1:
+                    gd_url_val = st.text_input(
+                        "Link Folder Utilaj (Google Drive)",
+                        value=str(m.get("gdrive_folder_url") or ""),
+                        placeholder="https://drive.google.com/drive/folders/...",
+                        key=f"gd_url_masina_{mid}"
+                    )
+                with c_gd2:
+                    gd_id_val = st.text_input(
+                        "Folder ID (opțional)",
+                        value=str(m.get("gdrive_folder_id") or ""),
+                        placeholder="ID folder Drive",
+                        key=f"gd_id_masina_{mid}"
+                    )
+
+                comp_el_lista = m.get("componente_electrice_json") or []
+                if isinstance(comp_el_lista, str):
+                    try:
+                        comp_el_lista = json.loads(comp_el_lista)
+                    except Exception:
+                        comp_el_lista = []
+
+                df_comp_el = pd.DataFrame(comp_el_lista) if comp_el_lista else pd.DataFrame(
+                    columns=["Rol / Tip", "Producător / Model", "Axă / Zonă / Detalii", "Observații"]
+                )
+                for col_el in ["Rol / Tip", "Producător / Model", "Axă / Zonă / Detalii", "Observații"]:
+                    if col_el not in df_comp_el.columns:
+                        df_comp_el[col_el] = ""
+
+                roluri_electrice = [
+                    "PLC",
+                    "Panou operator (HMI)",
+                    "Unitate CNC",
+                    "Sursă drivere CNC",
+                    "Driver CNC / Servo",
+                    "Variator frecvență (VFD)",
+                    "Alt element electric"
+                ]
+
+                edited_comp_el = st.data_editor(
+                    df_comp_el,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    column_config={
+                        "Rol / Tip": st.column_config.SelectboxColumn(
+                            "Rol / Tip",
+                            options=roluri_electrice,
+                            default="Driver CNC / Servo",
+                            required=True,
+                            width="medium"
+                        ),
+                        "Producător / Model": st.column_config.TextColumn(
+                            "Producător / Model",
+                            placeholder="ex: Fanuc αiSV, Siemens Sinamics G120, S7-1200",
+                            width="medium"
+                        ),
+                        "Axă / Zonă / Detalii": st.column_config.TextColumn(
+                            "Axă / Zonă / Detalii",
+                            placeholder="ex: Axa X / Pompă hidraulică / Alimentare 24V",
+                            width="medium"
+                        ),
+                        "Observații": st.column_config.TextColumn(
+                            "Observații",
+                            width="medium"
+                        ),
+                    },
+                    key=f"comp_el_editor_{mid}",
+                    use_container_width=True
+                )
+
+                if st.button("💾 Salvează Control CNC & Componente Electrice", key=f"btn_save_cnc_el_{mid}", type="primary"):
+                    clean_el = edited_comp_el.fillna("").to_dict(orient="records")
+                    MasiniRepositoryExt.update_control_si_componente_electrice(
+                        masina_id=mid,
+                        tip_control_cnc=tip_cnc_final,
+                        componente_electrice=clean_el,
+                        gdrive_folder_url=gd_url_val,
+                        gdrive_folder_id=gd_id_val
+                    )
+                    st.success(f"✅ Salvat pentru '{m['denumire']}' (Control CNC: {tip_cnc_final or 'nespecificat'}).")
+                    st.rerun()
     else:
         if arata_toate_firmele:
             st.info("Nu există mașini înregistrate momentan.")
