@@ -6,7 +6,7 @@ import streamlit as st
 
 
 from repositories.piese_repository import PieseRepository
-from repositories.reparatii_repository import ReparatiiRepositor
+from repositories.reparatii_repository import ReparatiiRepository
 
 
 from config import db_cursor
