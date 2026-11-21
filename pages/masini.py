@@ -155,12 +155,13 @@ def render_masini():
                     st.info(f"📈 **Contor intervenții:** {total_int} efectuate din pragul de {prag_int} (mai sunt **{ramase}** intervenții până la prag) | Grilă efectivă: **{grila_efectiva}**.")
 
                 # SELECTOR GRILĂ TARIFARE PROTEJAT PRIN PAROLĂ
-                st.markdown("#### 💶 Grilă Tarifare Echipament (Varianta A / Varianta B)")
-                opt_grile_masina = ["AUTO", "Nivel A", "Nivel B"]
+                st.markdown("#### 💶 Grilă Tarifare Echipament (Varianta A / Varianta B / Varianta C)")
+                opt_grile_masina = ["AUTO", "Nivel A", "Nivel B", "Nivel C"]
                 etichete_grile = {
                     "AUTO": f"Automat (Nivel A până la {prag_int} interv., apoi Nivel B)",
                     "Nivel A": "Varianta 1 — Grila Nivel A (Multimarcă)",
-                    "Nivel B": "Varianta 2 — Grila Nivel B (Expertiză CNC / >20h / SLA)"
+                    "Nivel B": "Varianta 2 — Grila Nivel B (Expertiză CNC / >20h / SLA)",
+                    "Nivel C": "Varianta 3 — Grila Nivel C"
                 }
                 grila_curenta = m.get("grila_tarifare") if m.get("grila_tarifare") in opt_grile_masina else "AUTO"
 

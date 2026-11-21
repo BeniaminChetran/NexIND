@@ -23,23 +23,6 @@ def _ensure_contact_cols():
     except Exception:
         pass
 
-
-def _get_setari_safe() -> dict:
-    _ensure_contact_cols()
-    date = dict(SetariRepository.get_setari() or {})
-    try:
-        with db_cursor() as c:
-            c.execute("SELECT telefon_1, telefon_2, email_1, email_2 FROM setari LIMIT 1")
-            row = c.fetchone()
-            if row:
-                for k in ("telefon_1", "telefon_2", "email_1", "email_2"):
-                    if row.get(k) is not None and not date.get(k):
-                        date[k] = row.get(k)
-    except Exception:
-        pass
-    return date
-
-
 def _get_tarife_safe():
     if hasattr(TarifeRepository, "get_all"):
         return TarifeRepository.get_all()
@@ -48,17 +31,18 @@ def _get_tarife_safe():
         return c.fetchall()
 
 
-def _insert_tarif_safe(descriere: str, pret: float, moneda_um: str):
+def _insert_tarif_safe(descriere: str, pret: float, moneda_um: str, nivel_grila: str = "Nivel A"):
     if hasattr(TarifeRepository, "insert"):
         return TarifeRepository.insert({
             "descriere": descriere,
             "pret": float(pret),
-            "moneda_um": moneda_um
+            "moneda_um": moneda_um,
+            "nivel_grila": nivel_grila
         })
     with db_cursor() as c:
         c.execute(
-            "INSERT INTO tarife_implicite (descriere, pret, moneda_um) VALUES (%s, %s, %s)",
-            (descriere, float(pret), moneda_um)
+            "INSERT INTO tarife_implicite (descriere, pret, moneda_um, nivel_grila) VALUES (%s, %s, %s, %s)",
+            (descriere, float(pret), moneda_um, nivel_grila)
         )
 
 
@@ -74,6 +58,12 @@ def _delete_tarif_safe(tarif_id: int):
         return TarifeRepository.delete(tarif_id)
     with db_cursor() as c:
         c.execute("DELETE FROM tarife_implicite WHERE id = %s", (tarif_id,))
+
+
+def _trece_tarife_la_nivel_safe(nivel_tinta: str, sursa_nivel: str | None = None) -> int:
+    if hasattr(TarifeRepository, "trece_la_nivel"):
+        return TarifeRepository.trece_la_nivel(nivel_tinta, sursa_nivel=sursa_nivel)
+    return 0
 
 
 def _get_fraze_safe():
@@ -260,13 +250,14 @@ def render_setari():
                     st.rerun()
 
     # ---------------------------------------------------------
-    # TAB 2: TARIFE STANDARD (EUR & RON)
+    # TAB 2: TARIFE STANDARD (NIVEL A / NIVEL B / NIVEL C)
     # ---------------------------------------------------------
     with tab_tarife:
         st.markdown("##### Configurare Tarife & Activități Implicite (EUR sau RON)")
-        st.caption("💡 Poți defini tarife în **EUR** (ex: manoperă pe termen lung) sau în **RON** (ex: transport/km). La ofertare se convertesc automat în moneda finală a ofertei.")
+        st.caption("💡 Poți defini tarife în **EUR** sau **RON**, pe **Nivel A**, **Nivel B** sau **Nivel C**, cu prețuri modificate independent pe fiecare nivel.")
+
         with st.form("form_add_tarif"):
-            ct1, ct2, ct3 = st.columns([3, 1.5, 1.5], vertical_alignment="bottom")
+            ct1, ct2, ct3, ct4 = st.columns([2.8, 1.3, 1.3, 1.3], vertical_alignment="bottom")
             with ct1:
                 desc_tarif = st.text_input("Descriere serviciu / activitate", placeholder="ex: Manoperă service / Ora de transport")
             with ct2:
@@ -279,22 +270,60 @@ def render_setari():
                         "RON/ora", "RON/km", "RON/buc", "RON/set"
                     ]
                 )
+            with ct4:
+                nivel_nou_tarif = st.selectbox("Nivel Grilă", options=["Nivel A", "Nivel B", "Nivel C"])
 
             if st.form_submit_button("➕ Adaugă Tarif", type="primary"):
                 if desc_tarif.strip():
-                    _insert_tarif_safe(desc_tarif.strip(), pret_tarif, moneda_um)
-                    st.success(f"✅ Tarif adăugat ({pret_tarif:.2f} {moneda_um})!")
+                    _insert_tarif_safe(desc_tarif.strip(), pret_tarif, moneda_um, nivel_nou_tarif)
+                    st.success(f"✅ Tarif adăugat pe {nivel_nou_tarif} ({pret_tarif:.2f} {moneda_um})!")
                     st.rerun()
                 else:
                     st.warning("Introduceți descrierea tarifului.")
 
+        st.markdown("---")
+        st.markdown("###### 🔄 Trecere Tarife pe Nivel (4 Nivele: Toate, Nivel A, Nivel B, Nivel C)")
+        ct_tr1, ct_tr2, ct_tr3 = st.columns([2.0, 2.0, 1.5], vertical_alignment="bottom")
+        with ct_tr1:
+            sursa_nivel_sel = st.selectbox(
+                "Preia tarifele inițiale din:",
+                options=["Toate existentele", "Nivel A", "Nivel B", "Nivel C"],
+                key="sel_sursa_nivel_tarife"
+            )
+        with ct_tr2:
+            nivel_tinta_sel = st.selectbox(
+                "Trece toate tarifele la nivelul:",
+                options=["Toate", "Nivel A", "Nivel B", "Nivel C"],
+                key="sel_tinta_nivel_tarife"
+            )
+        with ct_tr3:
+            if st.button("🚀 Aplică Trecerea", key="btn_trece_tarife_nivel", type="primary", use_container_width=True):
+                sursa_arg = None if sursa_nivel_sel == "Toate existentele" else sursa_nivel_sel
+                nr_create = _trece_tarife_la_nivel_safe(nivel_tinta_sel, sursa_nivel=sursa_arg)
+                st.success(f"✅ Operațiune finalizată pentru **{nivel_tinta_sel}** ({nr_create} tarife noi create; prețurile pot fi ajustate separat pe fiecare nivel).")
+                st.rerun()
+
         tarife_list = _get_tarife_safe()
         if tarife_list:
-            st.markdown("###### Tarife active în sistem:")
-            for t in tarife_list:
+            st.markdown("###### Tarife active în sistem (modificarea prețului afectează doar nivelul rândului respectiv):")
+            filtru_nivel_afisaj = st.radio(
+                "Filtrează lista afișată după nivel:",
+                options=["Toate", "Nivel A", "Nivel B", "Nivel C"],
+                horizontal=True,
+                key="radio_filtru_nivel_setari"
+            )
+            tarife_de_afisat = (
+                tarife_list
+                if filtru_nivel_afisaj == "Toate"
+                else [t for t in tarife_list if str(t.get("nivel_grila") or "Nivel A").strip() == filtru_nivel_afisaj]
+            )
+
+            for t in tarife_de_afisat:
                 tid = t['id']
-                c_t1, c_t2, c_t3, c_t4, c_t5 = st.columns([3.5, 1.5, 1.2, 0.8, 0.8], vertical_alignment="center")
+                niv_t = str(t.get('nivel_grila') or 'Nivel A').strip()
+                c_t1, c_t_niv, c_t2, c_t3, c_t4, c_t5 = st.columns([3.0, 1.0, 1.4, 1.2, 0.8, 0.8], vertical_alignment="center")
                 c_t1.write(f"**{t['descriere']}**")
+                c_t_niv.write(f"**{niv_t}**")
                 nou_pret_t = c_t2.number_input(
                     "Preț",
                     value=float(t['pret']),
@@ -305,9 +334,9 @@ def render_setari():
                     label_visibility="collapsed"
                 )
                 c_t3.write(f"**{t['moneda_um']}**")
-                if c_t4.button("💾", key=f"save_tarif_{tid}", help="Salvează prețul modificat"):
+                if c_t4.button("💾", key=f"save_tarif_{tid}", help="Salvează prețul modificat doar pentru acest nivel"):
                     _update_pret_tarif_safe(tid, nou_pret_t)
-                    st.toast(f"✅ Preț actualizat: {t['descriere']} -> {nou_pret_t:.2f} {t['moneda_um']}")
+                    st.toast(f"✅ Preț actualizat ({niv_t}): {t['descriere']} -> {nou_pret_t:.2f} {t['moneda_um']}")
                     st.rerun()
                 if c_t5.button("🗑️", key=f"del_tarif_{tid}", help="Șterge tarif"):
                     _delete_tarif_safe(tid)

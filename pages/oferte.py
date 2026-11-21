@@ -492,7 +492,7 @@ def render_oferte():
 
         st.markdown("##### 🚗 / 🛠️ Adăugare Rapidă Servicii & Transport (Tarife Implicite)")
         with st.expander("Selectează din lista de tarife standard configurate în Setări", expanded=True):
-            opt_filtru_grila = ["Toate grilele", "Nivel A", "Nivel B"]
+            opt_filtru_grila = ["Toate grilele", "Nivel A", "Nivel B", "Nivel C"]
             default_idx_grila = opt_filtru_grila.index(grila_activa_utilaj) if grila_activa_utilaj in opt_filtru_grila else 0
             filtru_grila_sel = st.radio(
                 "Filtrare listă tarife după grilă:",
