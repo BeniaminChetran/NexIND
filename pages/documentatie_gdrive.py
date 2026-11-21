@@ -250,21 +250,83 @@ def render_documentatie_gdrive():
     if filtrate:
         df_doc = pd.DataFrame([
             {
-                "ID": r.get("id"),
-                "Tag": r.get("tag_sectiune"),
-                "Categorie": r.get("categorie"),
-                "Sistem": r.get("tip_sistem"),
-                "Titlu": r.get("titlu"),
-                "Pagini": r.get("interval_pagini"),
-                "Coduri HMI": r.get("coduri_eroare_hmi"),
-                "Coduri Driver/VFD": r.get("coduri_eroare_driver"),
-                "Link Drive": r.get("gdrive_url"),
+                "ID": int(r.get("id")),
+                "Tag": r.get("tag_sectiune") or "[ERR]",
+                "Categorie": r.get("categorie") or "CNC",
+                "Sistem": r.get("tip_sistem") or "",
+                "Titlu": r.get("titlu") or "",
+                "Pagini": r.get("interval_pagini") or "",
+                "Coduri HMI": r.get("coduri_eroare_hmi") or "",
+                "Coduri Driver/VFD": r.get("coduri_eroare_driver") or "",
+                "Link Drive": r.get("gdrive_url") or "",
+                "Notițe / Text": r.get("text_indexat") or "",
             }
             for r in filtrate
         ])
-        st.dataframe(df_doc, hide_index=True, use_container_width=True)
 
-        # Detalii rapide + link direct pentru primele rezultate
+        edited_df = st.data_editor(
+            df_doc,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                "Tag": st.column_config.SelectboxColumn(
+                    "Tag",
+                    options=list(TAGURI_DOCUMENTATIE),
+                    required=True,
+                    width="small",
+                ),
+                "Categorie": st.column_config.SelectboxColumn(
+                    "Categorie",
+                    options=list(CATEGORII_DOCUMENTATIE),
+                    required=True,
+                    width="small",
+                ),
+                "Sistem": st.column_config.TextColumn("Sistem", width="medium"),
+                "Titlu": st.column_config.TextColumn("Titlu", required=True, width="large"),
+                "Pagini": st.column_config.TextColumn("Pagini", width="small"),
+                "Coduri HMI": st.column_config.TextColumn("Coduri HMI", width="medium"),
+                "Coduri Driver/VFD": st.column_config.TextColumn("Coduri Driver/VFD", width="medium"),
+                "Link Drive": st.column_config.TextColumn("Link Drive", width="medium"),
+                "Notițe / Text": st.column_config.TextColumn("Notițe / Text", width="large"),
+            },
+            key="doc_page_data_editor",
+            use_container_width=True,
+        )
+
+        if st.button("💾 Salvează modificările din tabel", key="doc_btn_save_table_edits", type="primary"):
+            modificate = 0
+            orig_map = {int(row["ID"]): row for _, row in df_doc.iterrows()}
+            for _, new_row in edited_df.iterrows():
+                rid = int(new_row["ID"])
+                old_row = orig_map.get(rid)
+                if old_row is None:
+                    continue
+                if any(
+                    str(new_row[col] or "") != str(old_row[col] or "")
+                    for col in ["Tag", "Categorie", "Sistem", "Titlu", "Pagini", "Coduri HMI", "Coduri Driver/VFD", "Link Drive", "Notițe / Text"]
+                ):
+                    DocumentatieRepository.update(
+                        rid,
+                        {
+                            "tag_sectiune": new_row["Tag"],
+                            "categorie": new_row["Categorie"],
+                            "tip_sistem": new_row["Sistem"],
+                            "titlu": new_row["Titlu"],
+                            "interval_pagini": new_row["Pagini"],
+                            "coduri_eroare_hmi": new_row["Coduri HMI"],
+                            "coduri_eroare_driver": new_row["Coduri Driver/VFD"],
+                            "gdrive_url": new_row["Link Drive"],
+                            "text_indexat": new_row["Notițe / Text"],
+                        },
+                    )
+                    modificate += 1
+            if modificate > 0:
+                st.success(f"✅ S-au actualizat {modificate} înregistrări.")
+                st.rerun()
+            else:
+                st.info("Nu ai făcut nicio modificare în tabel.")
+
         for item in filtrate[:10]:
             with st.expander(
                 f"{item.get('tag_sectiune')} {item.get('titlu')} — [{item.get('tip_sistem') or item.get('categorie')}]"
@@ -279,7 +341,7 @@ def render_documentatie_gdrive():
                     st.markdown(f"**Notițe / Text indexat:**\n\n{item.get('text_indexat')}")
                 if item.get("gdrive_url"):
                     st.markdown(f"🔗 [Deschide în Google Drive]({item.get('gdrive_url')})")
-                if st.button("🗑️ Șterge din index", key=f"del_doc_idx_{item.get('id')}"):
+                if st.button("🗑️ Șterge din index", key=f"del_doc_page_{item.get('id')}"):
                     DocumentatieRepository.delete(int(item["id"]))
                     st.rerun()
     else:

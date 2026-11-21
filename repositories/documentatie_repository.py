@@ -95,6 +95,49 @@ class DocumentatieRepository(BaseRepository):
         cls.get_all.clear()
         logger.info(f"Documentație adăugată: {titlu} ({tag})")
 
+@classmethod
+    def update(cls, doc_id: int, data: dict):
+        if not doc_id:
+            return
+        cls.ensure_schema()
+        titlu = str(data.get("titlu") or "").strip()
+        if not titlu:
+            raise ValueError("Titlul documentației este obligatoriu.")
+
+        tag = str(data.get("tag_sectiune") or "[ERR]").strip().upper()
+        if tag not in TAGURI_DOCUMENTATIE:
+            tag = "[ERR]"
+
+        query = """
+            UPDATE documentatie_tehnica
+            SET categorie = %s,
+                tip_sistem = %s,
+                titlu = %s,
+                gdrive_url = %s,
+                tag_sectiune = %s,
+                interval_pagini = %s,
+                coduri_eroare_hmi = %s,
+                coduri_eroare_driver = %s,
+                text_indexat = %s,
+                actualizat_la = NOW()
+            WHERE id = %s
+        """
+        params = (
+            str(data.get("categorie") or "CNC").strip(),
+            str(data.get("tip_sistem") or "").strip(),
+            titlu,
+            str(data.get("gdrive_url") or "").strip(),
+            tag,
+            str(data.get("interval_pagini") or "").strip(),
+            str(data.get("coduri_eroare_hmi") or "").strip(),
+            str(data.get("coduri_eroare_driver") or "").strip(),
+            str(data.get("text_indexat") or "").strip(),
+            int(doc_id),
+        )
+        cls().execute(query, params)
+        cls.get_all.clear()
+        logger.info(f"Documentația #{doc_id} a fost actualizată.")
+
     @classmethod
     def delete(cls, doc_id: int):
         if not doc_id:
