@@ -4,6 +4,8 @@
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+
 from repositories.documentatie_repository import (
     DocumentatieRepository,
     TAGURI_DOCUMENTATIE,
@@ -369,3 +371,22 @@ Această pagină este **indexul tău rapid** pentru manualele, schemele, paramet
 * **Modificare rapidă:** poți da dublu-click direct în tabelul de rezultate (de ex. pe `Pagini` când adaugi un nou calup de pagini, pe `Coduri HMI` / `Coduri Driver/VFD` sau pe `Notițe / Text`), apoi apeși **Salvează modificările din tabel**.
 * **Explorare folder Drive:** dacă este configurat contul de serviciu (Service Account) și folderul din noul cont Google Drive este partajat cu el, poți lista fișierele direct din **Explorare Folder din Noul Cont Google Drive** și le poți precompleta în formular.
 """)
+
+
+def render_gview_iframe(pdf_url: str, pagina: str = ""):
+    url_curat = str(pdf_url or "").strip()
+    if not url_curat:
+        return
+
+    pag_num = "".join(ch for ch in str(pagina or "") if ch.isdigit())
+    onload_attr = f" onload=\"this.contentWindow.location.hash=':0.page.{pag_num}';\"" if pag_num else ""
+
+    html_code = f"""
+    <iframe
+        id="iframe1"
+        src="https://docs.google.com/gview?url={url_curat}&embedded=true"
+        style="width: 100%; height: 680px; border: 1px solid #444; border-radius: 6px;"
+        {onload_attr}
+    ></iframe>
+    """
+    components.html(html_code, height=700)
