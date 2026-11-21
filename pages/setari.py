@@ -6,6 +6,15 @@ from repositories.fraze_repository import FrazeRepository
 
 logger = logging.getLogger("NexIndCMMS.Pages.Setari")
 
+DEFAULT_COTA_TVA = 21.0
+DEFAULT_VALABILITATE = "15 zile"
+DEFAULT_TERMENI_PLATA = "5 zile de la emiterea facturii"
+DEFAULT_INTOCMIT_DE = "Echipa Nexus Industrial"
+DEFAULT_TEHNICIAN = "Tehnician Nexus"
+DEFAULT_ADAOS_IMPLICIT = 35.0
+DEFAULT_SMTP_SERVER = "smtp.gmail.com"
+DEFAULT_SMTP_PORT = 587
+
 
 def _get_setari_safe() -> dict:
     try:
@@ -14,6 +23,21 @@ def _get_setari_safe() -> dict:
     except Exception as exc:
         logger.warning(f"Nu s-au putut încărca setările curente: {exc}")
         return {}
+
+
+def _val_text_implicit(setari: dict, cheie: str, fallback: str) -> str:
+    val = str(setari.get(cheie) or "").strip()
+    return val if val else fallback
+
+
+def _val_float_implicit(setari: dict, cheie: str, fallback: float) -> float:
+    raw = setari.get(cheie)
+    if raw is None or raw == "":
+        return float(fallback)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(fallback)
 
 
 def render_setari():
@@ -35,32 +59,32 @@ def render_setari():
             st.markdown("##### Identificare Firmă Prestatoare & Fiscalitate")
             col1, col2 = st.columns(2)
             with col1:
-                nume_firma_mea = st.text_input("Denumire Firmă", value=setari_curente.get("nume_firma_mea", ""))
-                cui_mea = st.text_input("CUI / CIF", value=setari_curente.get("cui_mea", ""))
-                reg_com_mea = st.text_input("Nr. Reg. Comerțului", value=setari_curente.get("reg_com_mea", ""))
+                nume_firma_mea = st.text_input("Denumire Firmă", value=str(setari_curente.get("nume_firma_mea") or ""))
+                cui_mea = st.text_input("CUI / CIF", value=str(setari_curente.get("cui_mea") or ""))
+                reg_com_mea = st.text_input("Nr. Reg. Comerțului", value=str(setari_curente.get("reg_com_mea") or ""))
                 cota_tva = st.number_input(
                     "Cotă TVA aplicabilă (%)",
                     min_value=0.0,
                     max_value=100.0,
-                    value=float(setari_curente.get("cota_tva") if setari_curente.get("cota_tva") is not None else 21.0),
+                    value=_val_float_implicit(setari_curente, "cota_tva", DEFAULT_COTA_TVA),
                     step=1.0,
                     format="%.2f",
                 )
             with col2:
-                adresa_mea = st.text_input("Adresă Sediu Social", value=setari_curente.get("adresa_mea", ""))
-                banca_mea = st.text_input("Bancă", value=setari_curente.get("banca_mea", ""))
-                iban_mea = st.text_input("Cont IBAN", value=setari_curente.get("iban_mea", ""))
-                swep_mea = st.text_input("Cod SWIFT / BIC", value=setari_curente.get("swep_mea", ""))
+                adresa_mea = st.text_input("Adresă Sediu Social", value=str(setari_curente.get("adresa_mea") or ""))
+                banca_mea = st.text_input("Bancă", value=str(setari_curente.get("banca_mea") or ""))
+                iban_mea = st.text_input("Cont IBAN", value=str(setari_curente.get("iban_mea") or ""))
+                swep_mea = st.text_input("Cod SWIFT / BIC", value=str(setari_curente.get("swep_mea") or ""))
 
             st.markdown("---")
             st.markdown("##### Date de Contact Firmă (2 Telefoane & 2 Adrese de Email)")
             cc1, cc2 = st.columns(2)
             with cc1:
-                telefon_1 = st.text_input("Telefon 1", value=setari_curente.get("telefon_1", ""))
-                telefon_2 = st.text_input("Telefon 2", value=setari_curente.get("telefon_2", ""))
+                telefon_1 = st.text_input("Telefon 1", value=str(setari_curente.get("telefon_1") or ""))
+                telefon_2 = st.text_input("Telefon 2", value=str(setari_curente.get("telefon_2") or ""))
             with cc2:
-                email_1 = st.text_input("Email 1", value=setari_curente.get("email_1", ""))
-                email_2 = st.text_input("Email 2", value=setari_curente.get("email_2", ""))
+                email_1 = st.text_input("Email 1", value=str(setari_curente.get("email_1") or ""))
+                email_2 = st.text_input("Email 2", value=str(setari_curente.get("email_2") or ""))
 
             st.markdown("---")
             st.markdown("##### Valori Implicite pentru Oferte de Preț & Rapoarte Tehnice")
@@ -68,20 +92,20 @@ def render_setari():
             with co1:
                 valabilitate_implicita = st.text_input(
                     "Termen de valabilitate ofertă (implicit)",
-                    value=setari_curente.get("valabilitate_implicita") or "15 zile",
+                    value=_val_text_implicit(setari_curente, "valabilitate_implicita", DEFAULT_VALABILITATE),
                 )
                 intocmit_de_implicit = st.text_input(
                     "Întocmit de — Oferte de preț (implicit)",
-                    value=setari_curente.get("intocmit_de_implicit") or "Echipa Nexus Industrial",
+                    value=_val_text_implicit(setari_curente, "intocmit_de_implicit", DEFAULT_INTOCMIT_DE),
                 )
             with co2:
                 termeni_plata_impliciti = st.text_input(
                     "Termeni de plată ofertă (impliciți)",
-                    value=setari_curente.get("termeni_plata_impliciti") or "5 zile de la emiterea facturii",
+                    value=_val_text_implicit(setari_curente, "termeni_plata_impliciti", DEFAULT_TERMENI_PLATA),
                 )
                 tehnician_implicit = st.text_input(
                     "Tehnician implicit (Rapoarte Intervenție & Electronice)",
-                    value=setari_curente.get("tehnician_implicit") or "Tehnician Nexus",
+                    value=_val_text_implicit(setari_curente, "tehnician_implicit", DEFAULT_TEHNICIAN),
                 )
 
             clauze_subsol_implicite = st.text_area(
@@ -93,22 +117,22 @@ def render_setari():
             if st.form_submit_button("💾 Salvează Setările", type="primary"):
                 date_actualizate = {
                     **setari_curente,
-                    "nume_firma_mea": nume_firma_mea,
-                    "cui_mea": cui_mea,
-                    "reg_com_mea": reg_com_mea,
-                    "adresa_mea": adresa_mea,
-                    "banca_mea": banca_mea,
-                    "iban_mea": iban_mea,
-                    "swep_mea": swep_mea,
+                    "nume_firma_mea": nume_firma_mea.strip(),
+                    "cui_mea": cui_mea.strip(),
+                    "reg_com_mea": reg_com_mea.strip(),
+                    "adresa_mea": adresa_mea.strip(),
+                    "banca_mea": banca_mea.strip(),
+                    "iban_mea": iban_mea.strip(),
+                    "swep_mea": swep_mea.strip(),
                     "telefon_1": telefon_1.strip(),
                     "telefon_2": telefon_2.strip(),
                     "email_1": email_1.strip(),
                     "email_2": email_2.strip(),
                     "cota_tva": float(cota_tva),
-                    "valabilitate_implicita": valabilitate_implicita.strip() or "15 zile",
-                    "termeni_plata_impliciti": termeni_plata_impliciti.strip() or "5 zile de la emiterea facturii",
-                    "intocmit_de_implicit": intocmit_de_implicit.strip() or "Echipa Nexus Industrial",
-                    "tehnician_implicit": tehnician_implicit.strip() or "Tehnician Nexus",
+                    "valabilitate_implicita": valabilitate_implicita.strip() or DEFAULT_VALABILITATE,
+                    "termeni_plata_impliciti": termeni_plata_impliciti.strip() or DEFAULT_TERMENI_PLATA,
+                    "intocmit_de_implicit": intocmit_de_implicit.strip() or DEFAULT_INTOCMIT_DE,
+                    "tehnician_implicit": tehnician_implicit.strip() or DEFAULT_TEHNICIAN,
                     "clauze_subsol_implicite": clauze_subsol_implicite.strip(),
                 }
                 SetariRepository.save_setari(date_actualizate)
@@ -120,11 +144,7 @@ def render_setari():
         if not acces_deblocat:
             st.info("🔐 Adaosul comercial implicit este protejat cu parolă. Mergi la **SistemAdmin → 🔑 Deblocare** pentru a-l modifica.")
         else:
-            val_curenta_adaos = float(
-                setari_curente.get("adaos_comercial_implicit")
-                if setari_curente.get("adaos_comercial_implicit") is not None
-                else 35.0
-            )
+            val_curenta_adaos = _val_float_implicit(setari_curente, "adaos_comercial_implicit", DEFAULT_ADAOS_IMPLICIT)
             ca1, ca2 = st.columns([3.0, 1.3], vertical_alignment="bottom")
             with ca1:
                 nou_adaos_implicit = st.number_input(
@@ -205,7 +225,7 @@ def render_setari():
             continut_fraza = st.text_area("Conținut complet clauză", height=80)
             if st.form_submit_button("➕ Salvează Clauză"):
                 if titlu_fraza.strip() and continut_fraza.strip():
-                    FrazeRepository.insert(titlu_fraza.strip(), continut_fraza.strip())
+                    FrazeRepository.insert(titlu_fraza, continut_fraza)
                     st.success("Clauza a fost adăugată!")
                     st.rerun()
                 else:
@@ -227,23 +247,27 @@ def render_setari():
             st.markdown("##### Configurare Server Email (SMTP) & Integrări")
             ce1, ce2 = st.columns(2)
             with ce1:
-                smtp_server = st.text_input("Server SMTP", value=setari_curente.get("smtp_server", "smtp.gmail.com"))
-                smtp_port = st.number_input("Port SMTP", value=int(setari_curente.get("smtp_port") or 587), step=1)
-                email_tehnician = st.text_input("Email Tehnician / Notificări", value=setari_curente.get("email_tehnician", ""))
+                smtp_server = st.text_input("Server SMTP", value=_val_text_implicit(setari_curente, "smtp_server", DEFAULT_SMTP_SERVER))
+                smtp_port = st.number_input(
+                    "Port SMTP",
+                    value=int(_val_float_implicit(setari_curente, "smtp_port", DEFAULT_SMTP_PORT)),
+                    step=1,
+                )
+                email_tehnician = st.text_input("Email Tehnician / Notificări", value=str(setari_curente.get("email_tehnician") or ""))
             with ce2:
-                smtp_user = st.text_input("Utilizator SMTP (Email)", value=setari_curente.get("smtp_user", ""))
-                smtp_pass = st.text_input("Parolă SMTP / App Password", value=setari_curente.get("smtp_pass", ""), type="password")
-                google_sheet_url = st.text_input("URL Google Sheet Sync", value=setari_curente.get("google_sheet_url", ""))
+                smtp_user = st.text_input("Utilizator SMTP (Email)", value=str(setari_curente.get("smtp_user") or ""))
+                smtp_pass = st.text_input("Parolă SMTP / App Password", value=str(setari_curente.get("smtp_pass") or ""), type="password")
+                google_sheet_url = st.text_input("URL Google Sheet Sync", value=str(setari_curente.get("google_sheet_url") or ""))
 
             if st.form_submit_button("💾 Salvează Configurări Email", type="primary"):
                 SetariRepository.save_setari({
                     **setari_curente,
-                    "smtp_server": smtp_server,
+                    "smtp_server": smtp_server.strip() or DEFAULT_SMTP_SERVER,
                     "smtp_port": int(smtp_port),
-                    "smtp_user": smtp_user,
+                    "smtp_user": smtp_user.strip(),
                     "smtp_pass": smtp_pass,
-                    "google_sheet_url": google_sheet_url,
-                    "email_tehnician": email_tehnician,
+                    "google_sheet_url": google_sheet_url.strip(),
+                    "email_tehnician": email_tehnician.strip(),
                 })
                 st.success("✅ Configurările SMTP au fost salvate!")
                 st.rerun()
