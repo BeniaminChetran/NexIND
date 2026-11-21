@@ -147,6 +147,7 @@ with c_status:
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {
     "📊 Management & Comercial": {
+        "🛠️ Asistent Defecte": render_asistent_defecte,
         "📈 DashBoard": render_dashboard,
         "🔮 Predicții": render_predictii,
         "💼 Oferte de preț": render_oferte,
@@ -164,7 +165,6 @@ MENIU_STRUCTURA = {
         "🏢 Firme": render_firme,
     },
     "🗂️ Arhivă & Docs": {
-        "🛠️ Asistent Defecte": render_asistent_defecte,
         "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
         "📋 Istoric": render_istoric,
         "📄 Documentații": render_documentatii,
