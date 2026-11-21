@@ -11,6 +11,7 @@ from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
 from repositories.reparatii_repository import ReparatiiRepository
 from repositories.setari_repository import SetariRepository
+from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf
 from services.sync_service import background_sync_task
 from services.email_service import trimite_email_raport
@@ -48,6 +49,31 @@ def _init_sau_reseteaza_act_draft(tehnician_def: str):
     st.session_state["act_editor_counter"] = st.session_state.get("act_editor_counter", 0) + 1
 
 
+def _cauta_docs_rapide_interventie(termen: str, masina_id=None) -> list[dict]:
+    """Caută rapid în documentatie_tehnica după cod eroare, utilaj sau cuvinte cheie."""
+    q = str(termen or "").strip().lower()
+    try:
+        toate_doc = DocumentatieRepository.get_all() or []
+    except Exception:
+        return []
+
+    rezultate = []
+    for d in toate_doc:
+        if masina_id is not None and d.get("masina_id") not in (None, masina_id):
+            continue
+        blob = " ".join([
+            str(d.get("titlu") or ""),
+            str(d.get("tip_sistem") or ""),
+            str(d.get("coduri_eroare_hmi") or ""),
+            str(d.get("coduri_eroare_driver") or ""),
+            str(d.get("interval_pagini") or ""),
+            str(d.get("text_indexat") or ""),
+        ]).lower()
+        if not q or q in blob:
+            rezultate.append(d)
+    return rezultate[:6]
+
+
 def render_activitati():
     st.subheader("📝 Activități Zilnice & Raport Intervenție Tehnică")
 
@@ -74,6 +100,8 @@ def render_activitati():
     if st.session_state["raport_salvat"]:
         rid_s = st.session_state["ultimul_id_salvat"]
         st.success(f"✅ Raportul #{rid_s} a fost salvat în baza de date! Verifică raportul, apoi confirmă trimiterea pe email.")
+        if st.session_state.pop("solutie_indexata_flash", False):
+            st.info("📚 Soluția (`[SOL]`) a fost adăugată și în indexul de documentație.")
 
         col_act1, col_act2, col_act3 = st.columns([1.4, 1.8, 1.3])
         with col_act1:
@@ -161,9 +189,11 @@ def render_activitati():
         draft["sel_masina"] = sel_masina
 
     subansambluri, erori = [], []
+    masina_id_sel = None
     if masini_db and sel_masina != "Nicio mașină":
         m_match = next((m for m in masini_db if m['denumire'] == sel_masina), None)
         if m_match:
+            masina_id_sel = m_match.get("id")
             if m_match['subansambluri']: subansambluri = [s.strip() for s in m_match['subansambluri'].split(",") if s.strip()]
             if m_match['erori']: erori = [e.strip() for e in m_match['erori'].split(",") if e.strip()]
 
@@ -238,6 +268,37 @@ def render_activitati():
     optimizari = st.text_area("Recomandări", value=str(draft.get("optimizari", "")))
     draft["optimizari"] = optimizari
 
+    # --- CONSULTARE RAPIDA INDEX GDRIVE IN TIMPUL INTERVENTIEI ---
+    with st.expander("📚 Consultare rapidă Index GDrive (cod eroare / utilaj / simptom)", expanded=False):
+        cod_sugerat = "" if cod_eroare == "Niciunul" else cod_eroare
+        q_doc = st.text_input(
+            "Filtru rapid în documentația indexată",
+            value=cod_sugerat,
+            placeholder="ex: 414, AL.24, encoder, invertor...",
+            key="act_quick_doc_search",
+        )
+        docs_rapide = _cauta_docs_rapide_interventie(q_doc, masina_id=masina_id_sel)
+        if docs_rapide:
+            for d in docs_rapide:
+                hmi_d = str(d.get("coduri_eroare_hmi") or "").strip()
+                drv_d = str(d.get("coduri_eroare_driver") or "").strip()
+                pag_d = str(d.get("interval_pagini") or "").strip()
+                st.markdown(
+                    f"- **{d.get('tag_sectiune') or '[ERR]'} {d.get('titlu')}**"
+                    + (f" — Cod HMI: `{hmi_d}`" if hmi_d else "")
+                    + (f" — Driver/VFD: `{drv_d}`" if drv_d else "")
+                    + (f" — Pagini: `{pag_d}`" if pag_d else "")
+                    + (f" — [Google Drive]({d.get('gdrive_url')})" if d.get("gdrive_url") else "")
+                )
+        else:
+            st.caption("Nu s-au găsit înregistrări în index pentru filtrul curent.")
+
+    salveaza_in_index_sol = st.checkbox(
+        "💾 Salvează soluția și în Indexul de Documentație (`[SOL]`) la finalizare",
+        value=False,
+        key="act_save_to_doc_sol",
+    )
+
     b_col1, b_col2 = st.columns([2, 1])
     with b_col1:
         submitted = st.button("💾 Salvează Activitatea", type="primary", use_container_width=True)
@@ -256,6 +317,37 @@ def render_activitati():
         }
         rid = ReparatiiRepository.insert(data_rep)
         if rid:
+            if salveaza_in_index_sol and (str(solutie or "").strip() or str(defect or "").strip()):
+                try:
+                    cod_curat = "" if cod_eroare == "Niciunul" else str(cod_eroare).strip()
+                    text_sol_parti = []
+                    if str(simptom or "").strip():
+                        text_sol_parti.append(f"Simptom: {str(simptom).strip()}")
+                    if str(defect or "").strip():
+                        text_sol_parti.append(f"Defect: {str(defect).strip()}")
+                    if str(solutie or "").strip():
+                        text_sol_parti.append(f"Soluție: {str(solutie).strip()}")
+                    if str(optimizari or "").strip():
+                        text_sol_parti.append(f"Recomandări: {str(optimizari).strip()}")
+
+                    DocumentatieRepository.insert({
+                        "masina_id": int(masina_id_sel) if masina_id_sel is not None else None,
+                        "categorie": "CNC",
+                        "tip_sistem": str(sel_subansamblu or "").strip(),
+                        "titlu": f"{titlu_lucrare} ({sel_masina})" if sel_masina != "Nicio mașină" else titlu_lucrare,
+                        "gdrive_file_id": "",
+                        "gdrive_url": "",
+                        "tip_fisier": "doc",
+                        "tag_sectiune": "[SOL]",
+                        "interval_pagini": "",
+                        "coduri_eroare_hmi": cod_curat,
+                        "coduri_eroare_driver": "",
+                        "text_indexat": "\n".join(text_sol_parti),
+                    })
+                    st.session_state["solutie_indexata_flash"] = True
+                except Exception:
+                    pass
+
             pdf_bytes = genereaza_pdf({
                 "id": rid, "client": sel_firma, "masina": sel_masina, "durata": durata_min,
                 "stare_finala": stare_fin, "piese_json": [{"piesa": p.get("Piesa"), "cantitate": p.get("Cantitate"), "tip": p.get("Tip")} for p in piese_valide],

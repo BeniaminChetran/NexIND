@@ -10,20 +10,72 @@ from repositories.documentatie_repository import (
     CATEGORII_DOCUMENTATIE,
 )
 
+OPT_ALEGE_FIRMA = "-- Alege firma --"
 
-def _incarca_lista_masini() -> dict[int, str]:
-    """Încarcă utilajele din baza de date dacă este disponibil MasiniRepository."""
+
+def _extrage_nume_firma(firma: dict) -> str:
+    for k in ("nume_firma", "denumire", "nume", "client"):
+        val = str(firma.get(k) or "").strip()
+        if val:
+            return val
+    fid = firma.get("id")
+    return f"Firma #{fid}" if fid is not None else ""
+
+
+def _extrage_firma_id_masina(masina: dict):
+    for k in ("firma_id", "id_firma", "client_id"):
+        val = masina.get(k)
+        if val is not None and str(val).strip() != "":
+            try:
+                return int(val)
+            except Exception:
+                return val
+    return None
+
+
+def _incarca_firme_si_masini() -> tuple[dict[int, str], list[dict]]:
+    """
+    Încarcă firmele ({id_firma: nume_firma}) și lista de mașini
+    [{'id': int, 'denumire': str, 'firma_id': int|None}].
+    """
+    firme_map: dict[int, str] = {}
+    try:
+        from repositories.firme_repository import FirmeRepository
+
+        firme_raw = FirmeRepository.get_all() or []
+        for f in firme_raw:
+            if f.get("id") is not None:
+                try:
+                    fid = int(f["id"])
+                except Exception:
+                    fid = f["id"]
+                firme_map[fid] = _extrage_nume_firma(f)
+    except Exception:
+        firme_map = {}
+
+    masini_lista: list[dict] = []
     try:
         from repositories.masini_repository import MasiniRepository
 
-        masini = MasiniRepository.get_all() or []
-        return {
-            int(m["id"]): str(m.get("denumire") or m.get("nume") or f"Mașina #{m['id']}")
-            for m in masini
-            if m.get("id") is not None
-        }
+        masini_raw = MasiniRepository.get_all() or []
+        for m in masini_raw:
+            if m.get("id") is not None:
+                try:
+                    mid = int(m["id"])
+                except Exception:
+                    mid = m["id"]
+                den = str(m.get("denumire") or m.get("nume") or f"Mașina #{mid}").strip()
+                masini_lista.append(
+                    {
+                        "id": mid,
+                        "denumire": den,
+                        "firma_id": _extrage_firma_id_masina(m),
+                    }
+                )
     except Exception:
-        return {}
+        masini_lista = []
+
+    return firme_map, masini_lista
 
 
 def _incarca_defecte_istoric() -> list[dict]:
@@ -91,9 +143,21 @@ def _split_coduri_lista(raw_text: str) -> list[str]:
     return items
 
 
+def _normalizare_id(val):
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except Exception:
+        return val
+
+
 def cauta_si_coreleaza(
     query_cod: str,
+    firma_id=None,
+    nume_firma: str = "",
     masina_id=None,
+    masini_firma_ids: set | None = None,
     tip_sistem: str = "",
     filtru_tag: str = "Toate",
 ) -> dict:
@@ -107,6 +171,9 @@ def cauta_si_coreleaza(
     q_norm = re.sub(r"\s+", " ", str(query_cod or "").strip().lower())
     q_tokens = _tokenize_codes(query_cod)
     sys_norm = str(tip_sistem or "").strip().lower()
+    fid_norm = _normalizare_id(firma_id)
+    mid_norm = _normalizare_id(masina_id)
+    firma_low = str(nume_firma or "").strip().lower()
 
     docs = DocumentatieRepository.get_all() or []
     defecte = _incarca_defecte_istoric()
@@ -118,12 +185,21 @@ def cauta_si_coreleaza(
     for d in docs:
         if filtru_tag != "Toate" and d.get("tag_sectiune") != filtru_tag:
             continue
-        if masina_id not in (None, "", "Toate"):
-            if d.get("masina_id") not in (
-                None,
-                int(masina_id) if str(masina_id).isdigit() else masina_id,
-            ):
+
+        d_mid = _normalizare_id(d.get("masina_id"))
+        d_fid = _normalizare_id(d.get("firma_id"))
+
+        if mid_norm is not None:
+            if d_mid not in (None, mid_norm):
                 continue
+        elif fid_norm is not None:
+            if d_fid is not None:
+                if d_fid != fid_norm:
+                    continue
+            elif d_mid is not None:
+                if masini_firma_ids is not None and d_mid not in masini_firma_ids:
+                    continue
+
         if sys_norm and sys_norm not in str(d.get("tip_sistem") or "").lower():
             continue
 
@@ -154,6 +230,21 @@ def cauta_si_coreleaza(
 
     defecte_potrivite: list[dict] = []
     for df in defecte:
+        df_mid = _normalizare_id(df.get("masina_id"))
+        df_fid = _normalizare_id(df.get("firma_id"))
+        df_firma_txt = str(df.get("firma") or "").strip().lower()
+
+        if mid_norm is not None and df_mid is not None and df_mid != mid_norm:
+            continue
+        if fid_norm is not None:
+            potriveste_firma = (
+                (df_fid is not None and df_fid == fid_norm)
+                or (firma_low and firma_low in df_firma_txt)
+                or (df_mid is not None and masini_firma_ids is not None and df_mid in masini_firma_ids)
+            )
+            if not potriveste_firma and (df_fid is not None or df_firma_txt or df_mid is not None):
+                continue
+
         blob = " ".join(str(v or "") for v in df.values()).lower()
         if not q_norm or q_norm in blob or any(tok in blob for tok in q_tokens):
             defecte_potrivite.append(df)
@@ -166,8 +257,15 @@ def cauta_si_coreleaza(
                 if hmi_code not in hmi_asociate:
                     hmi_asociate.append(hmi_code)
 
-    # Sortare: întâi [ERR] și [SOL], apoi restul tag-urilor
-    prioritate_tag = {"[ERR]": 0, "[SOL]": 1, "[TST]": 2, "[PRM]": 3, "[SCH]": 4, "[MEC]": 5}
+    prioritate_tag = {
+        "[SOL]": 0,
+        "[ALM]": 1,
+        "[ERR]": 2,
+        "[TST]": 3,
+        "[PRM]": 4,
+        "[SCH]": 5,
+        "[MEC]": 6,
+    }
     doc_potrivite.sort(
         key=lambda x: (
             prioritate_tag.get(str(x.get("tag_sectiune") or "").upper(), 9),
@@ -194,8 +292,8 @@ def _render_card_documentatie(item: dict, idx: int, masini_map: dict[int, str]):
     drv_txt = str(item.get("coduri_eroare_driver") or "").strip()
     txt_idx = str(item.get("text_indexat") or "").strip()
     url_drv = str(item.get("gdrive_url") or "").strip()
-    m_id = item.get("masina_id")
-    m_nume = masini_map.get(int(m_id), f"Mașina #{m_id}") if m_id is not None else "General"
+    m_id = _normalizare_id(item.get("masina_id"))
+    m_nume = masini_map.get(m_id, f"Mașina #{m_id}") if m_id is not None else "General"
 
     titlu_expander = f"{tag} {titlu} — [{sistem}] • {m_nume}"
     with st.expander(titlu_expander, expanded=(idx == 0)):
@@ -226,11 +324,20 @@ def _render_card_documentatie(item: dict, idx: int, masini_map: dict[int, str]):
 def _render_formular_salvare_solutie(
     cod_initial: str,
     drivere_sugerate: list[str],
-    masini_map: dict[int, str],
+    firme_map: dict,
+    masini_disponibile: list[dict],
+    firma_selectata=None,
+    masina_selectata=None,
 ):
     """Permite salvarea rapidă a unui defect rezolvat / soluții direct în index (tag [SOL])."""
     with st.expander("💾 Salvează intervenție / soluție nouă (`[SOL]`) în index", expanded=False):
-        opt_masini = ["", *masini_map.keys()]
+        masini_map_loc = {m["id"]: m["denumire"] for m in masini_disponibile}
+        opt_masini = ["", *masini_map_loc.keys()]
+        idx_m_def = opt_masini.index(masina_selectata) if masina_selectata in opt_masini else 0
+
+        opt_firme = ["", *firme_map.keys()]
+        idx_f_def = opt_firme.index(firma_selectata) if firma_selectata in opt_firme else 0
+
         drv_default = ", ".join(drivere_sugerate)
 
         with st.form("form_salvare_solutie_asistent", clear_on_submit=True):
@@ -241,21 +348,29 @@ def _render_formular_salvare_solutie(
                     placeholder="ex: Eroare 414 / AL.24 — Cablu encoder axa X întrerupt",
                 )
             with c2:
+                firma_sol = st.selectbox(
+                    "Firmă",
+                    options=opt_firme,
+                    index=idx_f_def,
+                    format_func=lambda x: "— General —" if x == "" else firme_map.get(x, f"#{x}"),
+                )
+
+            c2b, c3, c4 = st.columns([1.4, 1.2, 1.4])
+            with c2b:
                 masina_sel = st.selectbox(
                     "Utilaj",
                     options=opt_masini,
-                    format_func=lambda x: "— General —" if x == "" else masini_map.get(x, f"#{x}"),
+                    index=idx_m_def,
+                    format_func=lambda x: "— General —" if x == "" else masini_map_loc.get(x, f"#{x}"),
                 )
-
-            c3, c4, c5 = st.columns([1.2, 1.4, 1.4])
             with c3:
                 categorie_sol = st.selectbox("Categorie", options=list(CATEGORII_DOCUMENTATIE), index=0)
             with c4:
                 sistem_sol = st.text_input("Sistem / Driver / VFD", placeholder="ex: Fanuc / Sinamics")
+
+            c5, c6, c7 = st.columns([1.2, 1, 1])
             with c5:
                 pag_sol = st.text_input("Pagina / Interval de referință", placeholder="ex: pag. 118 sau p1101-p1450")
-
-            c6, c7 = st.columns([1, 1])
             with c6:
                 cod_hmi_sol = st.text_input("Cod eroare HMI", value=cod_initial or "")
             with c7:
@@ -273,8 +388,11 @@ def _render_formular_salvare_solutie(
 
             if st.form_submit_button("💾 Salvează soluția în index", type="primary"):
                 try:
+                    fid_val = None if firma_sol == "" else _normalizare_id(firma_sol)
+                    mid_val = None if masina_sel == "" else _normalizare_id(masina_sel)
                     DocumentatieRepository.insert({
-                        "masina_id": None if masina_sel == "" else int(masina_sel),
+                        "firma_id": fid_val,
+                        "masina_id": mid_val,
                         "categorie": categorie_sol,
                         "tip_sistem": sistem_sol,
                         "titlu": titlu_sol,
@@ -288,7 +406,9 @@ def _render_formular_salvare_solutie(
                         "text_indexat": descriere_sol,
                     })
                     _salveaza_in_defecte_istoric({
-                        "masina_id": None if masina_sel == "" else int(masina_sel),
+                        "firma_id": fid_val,
+                        "firma": firme_map.get(fid_val, "") if fid_val is not None else "",
+                        "masina_id": mid_val,
                         "titlu": titlu_sol,
                         "cod_hmi": cod_hmi_sol,
                         "cod_driver": cod_drv_sol,
@@ -305,13 +425,14 @@ def render_page():
     st.markdown("## 🛠️ Asistent Căutare & Corelare Defecte (HMI ↔ Driver/VFD)")
     st.caption(
         "Corelează o alarmă de pe HMI sau un cod de Driver / VFD cu toate codurile subordonate (1-la-mai-mulți), "
-        "secțiunile indexate ([ERR], [SCH], [PRM], [TST], [MEC], [SOL]) și intervențiile anterioare."
+        "secțiunile indexate ([ERR], [ALM], [SOL], [SCH], [PRM], [TST], [MEC]) și intervențiile anterioare."
     )
 
-    masini_map = _incarca_lista_masini()
+    firme_map, toate_masini = _incarca_firme_si_masini()
+    masini_map_toate = {m["id"]: m["denumire"] for m in toate_masini}
 
     # --- BARA DE CAUTARE PRINCIPALA ---
-    c1, c2, c3, c4 = st.columns([2.4, 1.4, 1.4, 1.2])
+    c1, c2, c3, c4, c5 = st.columns([2.2, 1.3, 1.3, 1.2, 1.1])
     with c1:
         cod_cautat = st.text_input(
             "Cod eroare HMI sau Driver / VFD",
@@ -319,28 +440,56 @@ def render_page():
             key="asistent_defecte_q",
         )
     with c2:
+        opt_firme_bar = [OPT_ALEGE_FIRMA, *firme_map.keys()]
+        firma_sel = st.selectbox(
+            "Firmă",
+            options=opt_firme_bar,
+            format_func=lambda x: OPT_ALEGE_FIRMA if x == OPT_ALEGE_FIRMA else firme_map.get(x, f"#{x}"),
+            key="asistent_defecte_firma",
+        )
+
+    firma_activa_id = None if firma_sel == OPT_ALEGE_FIRMA else _normalizare_id(firma_sel)
+    nume_firma_activa = firme_map.get(firma_activa_id, "") if firma_activa_id is not None else ""
+
+    if firma_activa_id is not None:
+        masini_filtrate = [m for m in toate_masini if _normalizare_id(m.get("firma_id")) == firma_activa_id]
+    else:
+        masini_filtrate = toate_masini
+
+    masini_firma_ids = {m["id"] for m in masini_filtrate}
+    masini_filtrate_map = {m["id"]: m["denumire"] for m in masini_filtrate}
+    opt_masini_bar = ["Toate", *masini_filtrate_map.keys()]
+
+    # Dacă mașina salvată în session_state nu mai aparține firmei alese, revenim la "Toate"
+    if st.session_state.get("asistent_defecte_masina") not in opt_masini_bar:
+        st.session_state["asistent_defecte_masina"] = "Toate"
+
+    with c3:
         filtru_masina = st.selectbox(
-            "Utilaj",
-            options=["Toate", *masini_map.keys()],
-            format_func=lambda x: "Toate utilajele" if x == "Toate" else masini_map.get(x, f"#{x}"),
+            "Mașină",
+            options=opt_masini_bar,
+            format_func=lambda x: "Toate mașinile" if x == "Toate" else masini_filtrate_map.get(x, f"#{x}"),
             key="asistent_defecte_masina",
         )
-    with c3:
+    with c4:
         filtru_sistem = st.text_input(
             "Sistem / VFD",
             placeholder="ex: Fanuc, Sinamics...",
             key="asistent_defecte_sistem",
         )
-    with c4:
+    with c5:
         filtru_tag = st.selectbox(
-            "Filtru Tag",
+            "Tag",
             options=["Toate", *TAGURI_DOCUMENTATIE],
             key="asistent_defecte_tag",
         )
 
     rezultat = cauta_si_coreleaza(
         query_cod=cod_cautat,
-        masina_id=filtru_masina,
+        firma_id=firma_activa_id,
+        nume_firma=nume_firma_activa,
+        masina_id=None if filtru_masina == "Toate" else filtru_masina,
+        masini_firma_ids=masini_firma_ids if firma_activa_id is not None else None,
         tip_sistem=filtru_sistem,
         filtru_tag=filtru_tag,
     )
@@ -376,11 +525,11 @@ def render_page():
 
     if docs:
         for idx, item in enumerate(docs[:20]):
-            _render_card_documentatie(item, idx=idx, masini_map=masini_map)
+            _render_card_documentatie(item, idx=idx, masini_map=masini_map_toate)
     else:
         st.warning(
             "Nu s-au găsit înregistrări în `documentatie_tehnica` pentru această căutare. "
-            "Poți verifica în pagina **Documentație GDrive** sau poți salva o soluție nouă mai jos."
+            "Poți verifica în pagina **Index & Căutare Docs (GDrive)** sau poți salva o soluție nouă mai jos."
         )
 
     # --- 3. ISTORIC DEFECTE / INTERVENTII (DACA EXISTA) ---
@@ -397,5 +546,8 @@ def render_page():
     _render_formular_salvare_solutie(
         cod_initial=cod_cautat,
         drivere_sugerate=rezultat["drivere_asociate"],
-        masini_map=masini_map,
+        firme_map=firme_map,
+        masini_disponibile=masini_filtrate,
+        firma_selectata=firma_activa_id,
+        masina_selectata=None if filtru_masina == "Toate" else _normalizare_id(filtru_masina),
     )
