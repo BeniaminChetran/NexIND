@@ -110,6 +110,10 @@ def _activeaza_stergere_pret_la_focus():
     )
 
 
+def _reseteaza_termen_cautare_piese():
+    st.session_state["termen_cautare_piese"] = ""
+
+
 # ------------------------------------------------------------------
 # HELPERS TARIFE STANDARD (NIVEL A & NIVEL B) CU EDITARE UM
 # ------------------------------------------------------------------
@@ -345,8 +349,12 @@ def render_piese():
                 key="termen_cautare_piese"
             ).strip().lower()
         with c_search2:
-            if st.button("🧹 Resetează", key="btn_reset_cautare_piese", width="stretch"):
-                st.session_state["termen_cautare_piese"] = ""
+            st.button(
+                "🧹 Resetează",
+                key="btn_reset_cautare_piese",
+                on_click=_reseteaza_termen_cautare_piese,
+                width="stretch"
+            )
 
         piese_baza = PieseRepository.get_filtrate(sel_m) or []
         cuvinte_cautate = [c for c in termen_cautare.split() if c]
