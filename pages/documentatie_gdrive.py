@@ -333,12 +333,22 @@ def render_documentatie_gdrive():
             with st.expander(
                 f"{item.get('tag_sectiune')} {item.get('titlu')} — [{item.get('tip_sistem') or item.get('categorie')}]"
             ):
-                if item.get("coduri_eroare_hmi"):
-                    st.markdown(f"**Coduri HMI:** `{item.get('coduri_eroare_hmi')}`")
+                hmi_txt = str(item.get("coduri_eroare_hmi") or "").strip()
+                pag_txt = str(item.get("interval_pagini") or "").strip()
+
+                if hmi_txt or pag_txt:
+                    st.markdown(
+                        f"""
+                        <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center; margin:4px 0 10px 0;">
+                            {f'<div style="font-size:1.15rem; font-weight:700;">🚨 Cod HMI: <span style="font-size:1.25rem; color:#ff6b6b;">{hmi_txt}</span></div>' if hmi_txt else ''}
+                            {f'<div style="font-size:1.15rem; font-weight:700;">📄 Pagina / Interval: <span style="font-size:1.25rem; color:#4dabf7;">{pag_txt}</span></div>' if pag_txt else ''}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
                 if item.get("coduri_eroare_driver"):
                     st.markdown(f"**Coduri Driver / VFD:** `{item.get('coduri_eroare_driver')}`")
-                if item.get("interval_pagini"):
-                    st.markdown(f"**Interval / Pagină:** `{item.get('interval_pagini')}`")
                 if item.get("text_indexat"):
                     st.markdown(f"**Notițe / Text indexat:**\n\n{item.get('text_indexat')}")
                 if item.get("gdrive_url"):
@@ -373,23 +383,4 @@ Această pagină este **indexul tău rapid** pentru manualele, schemele, paramet
 """)
 
 
-def render_gview_iframe(pdf_url: str, pagina: str = ""):
-    url_curat = str(pdf_url or "").strip()
-    if not url_curat:
-        return
-
-    pag_num = "".join(ch for ch in str(pagina or "") if ch.isdigit())
-    onload_attr = f" onload=\"this.contentWindow.location.hash=':0.page.{pag_num}';\"" if pag_num else ""
-
-    target_pdf_url = "https://drive.google.com/uc?export=download&id=1_Vc6Cb6o1h2o3ldC1CHU_G5GhfEPfl7a"
-    html_code = f"""
-        <iframe
-            id="iframe1"
-            src="https://docs.google.com/gview?url={target_pdf_url}&embedded=true"
-            style="width: 100%; height: 680px; border: 1px solid #444; border-radius: 6px;"
-            onload="this.contentWindow.location.hash=':0.page.49';"
-        ></iframe>
-        """
-
-    components.html(html_code, height=700)
 
