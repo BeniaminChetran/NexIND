@@ -38,7 +38,7 @@ if "is_unlocked" not in st.session_state:
     st.session_state["is_unlocked"] = False
 
 st.markdown(
-    """
+"""
     <style>
         [data-testid="stSidebar"],
         [data-testid="stSidebarCollapsedControl"],
@@ -46,6 +46,20 @@ st.markdown(
             display: none !important;
         }
     </style>
+    <script>
+        (function() {
+            const doc = window.parent.document;
+            function blockAutofillOnSelectboxes() {
+                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {
+                    inp.setAttribute('autocomplete', 'off');
+                    inp.setAttribute('data-lpignore', 'true');
+                    inp.setAttribute('data-1p-ignore', 'true');
+                });
+            }
+            blockAutofillOnSelectboxes();
+            new MutationObserver(blockAutofillOnSelectboxes).observe(doc.body, { childList: true, subtree: true });
+        })();
+    </script>
     """,
     unsafe_allow_html=True,
 )
