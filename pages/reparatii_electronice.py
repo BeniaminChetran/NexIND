@@ -14,7 +14,7 @@ from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
 
 OPT_STARI_FINALE = ["În lucru / Diagnosticare", "Funcțional", "Nefuncțional", "Înlocuit complet"]
-OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata","mASURATA / OK"]
+OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata","Masurata/OK"]
 COL_COMP_DEN = "Componenta / Cod / Parametri"
 COL_COMP_CANT = "Cantitate"
 COL_COMP_STARE = "Stare"
