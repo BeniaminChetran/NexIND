@@ -384,7 +384,7 @@ def _extrage_furnizor_piesa(piesa_row: dict) -> str:
     return "Fără furnizor setat"
 
 
-def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: str, stare_noua: str):
+def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: str, stare_noua: str) -> bool:
     camp_json = "piese_json" if tabela == "reparatii" else "componente_json"
     with db_cursor() as c:
         c.execute(f"SELECT {camp_json} FROM {tabela} WHERE id = %s", (int(record_id),))
@@ -397,7 +397,7 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
             except Exception:
                 items = []
         if not isinstance(items, list):
-            return
+            return False
 
         modificat = False
         den_target = " ".join(str(den_piesa or "").strip().lower().split())
@@ -406,15 +406,16 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 continue
             den_item = str(
                 item.get("Componenta / Cod / Parametri")
+                or item.get("Componenta")
                 or item.get("Piesa")
                 or item.get("piesa")
                 or item.get("denumire")
                 or ""
             ).strip()
             if " ".join(den_item.lower().split()) == den_target:
-                if "Stare" in item or tabela == "reparatii_electronice":
+                if tabela == "reparatii_electronice":
                     item["Stare"] = stare_noua
-                if "Tip" in item or tabela == "reparatii":
+                elif tabela == "reparatii":
                     item["Tip"] = stare_noua
                 item["stare_comandata"] = stare_noua
                 modificat = True
@@ -424,12 +425,13 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 f"UPDATE {tabela} SET {camp_json} = %s WHERE id = %s",
                 (json.dumps(items, ensure_ascii=False), int(record_id)),
             )
+    return modificat
 
 
 def render_piese_de_comandat_dashboard():
     st.markdown("### 🛒 Piese De Comandat / Necesare & Stare Comandă")
     st.caption(
-        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`,`De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
+        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `Anulată`) "
         "și apasă **💾 Actualizează Stările în Tabel**."
     )
 
@@ -464,12 +466,24 @@ def render_piese_de_comandat_dashboard():
         for item in piese_raw:
             if not isinstance(item, dict):
                 continue
-            den_piesa = str(item.get("Piesa") or item.get("piesa") or "").strip()
+            den_piesa = str(item.get("Piesa") or item.get("piesa") or item.get("denumire") or "").strip()
             tip_piesa = str(item.get("Tip") or item.get("tip") or "").strip()
             stare_item = str(item.get("stare_comandata") or item.get("Stare") or tip_piesa or "").strip()
             if not den_piesa:
                 continue
-            if tip_piesa.lower() not in ("de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata","de ofertat","in asteptare","în așteptare", "anulată", "anulata"):
+            if stare_item.lower() not in (
+                "de comandat", "necesara", "necesare",
+                "de căutat", "de cautat",
+                "de ofertat",
+                "comandată", "comandata",
+                "anulată", "anulata",
+            ) and tip_piesa.lower() not in (
+                "de comandat", "necesara", "necesare",
+                "de căutat", "de cautat",
+                "de ofertat",
+                "comandată", "comandata",
+                "anulată", "anulata",
+            ):
                 continue
 
             cant = item.get("Cantitate")
@@ -481,15 +495,17 @@ def render_piese_de_comandat_dashboard():
                 cant_num = 1.0
 
             cheie = " ".join(den_piesa.lower().split())
-            stare_curenta = (
-                stare_catalog_by_name[cheie]
-                if cheie in stare_catalog_by_name
-                else (
+            if stare_item.strip():
+                stare_curenta = (
                     "De comandat"
                     if stare_item.lower() in ("de comandat", "necesara", "necesare")
                     else _normalizeaza_stare_comanda(stare_item)
                 )
-            )
+            elif cheie in stare_catalog_by_name:
+                stare_curenta = stare_catalog_by_name[cheie]
+            else:
+                stare_curenta = "De comandat"
+
             furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
             idx_counter += 1
             randuri.append({
@@ -526,10 +542,20 @@ def render_piese_de_comandat_dashboard():
         for comp in comp_raw:
             if not isinstance(comp, dict):
                 continue
-            den_comp = str(comp.get("Componenta / Cod / Parametri") or comp.get("piesa") or "").strip()
+            den_comp = str(
+                comp.get("Componenta / Cod / Parametri")
+                or comp.get("Componenta")
+                or comp.get("piesa")
+                or comp.get("denumire")
+                or ""
+            ).strip()
             stare_comp = str(comp.get("stare_comandata") or comp.get("Stare") or "").strip()
             if not den_comp or stare_comp.lower() not in (
-                "de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata","de ofertat","in asteptare","în așteptare", "anulată", "anulata"
+                "necesara", "necesare", "de comandat",
+                "de căutat", "de cautat",
+                "de ofertat",
+                "comandată", "comandata",
+                "anulată", "anulata",
             ):
                 continue
 
@@ -541,13 +567,9 @@ def render_piese_de_comandat_dashboard():
 
             cheie = " ".join(den_comp.lower().split())
             stare_curenta = (
-                stare_catalog_by_name[cheie]
-                if cheie in stare_catalog_by_name
-                else (
-                    "De comandat"
-                    if stare_comp.lower() in ("de comandat", "necesara", "necesare")
-                    else _normalizeaza_stare_comanda(stare_comp)
-                )
+                "De comandat"
+                if stare_comp.lower() in ("de comandat", "necesara", "necesare")
+                else _normalizeaza_stare_comanda(stare_comp)
             )
             furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
             idx_counter += 1
@@ -625,7 +647,7 @@ def render_piese_de_comandat_dashboard():
         "Raport",
     ]
     df_editor_init = df_f[cols_afis].reset_index(drop=True)
-    editor_dash_key = f"dash_editor_stare_piese_{filtru_sursa}_{filtru_furn}_{filtru_stare}_{len(df_editor_init)}"
+    editor_dash_key = f"dash_editor_stare_piese_{filtru_sursa}_{filtru_furn}_{filtru_stare}"
 
     edited_df = st.data_editor(
         df_editor_init,
@@ -680,39 +702,50 @@ def render_piese_de_comandat_dashboard():
             for _, r in df_editor_init.iterrows()
         }
         nr_mod = 0
+        erori_salvare = []
 
         for _, row in df_final.iterrows():
             rid = int(row["_row_id"])
             stare_noua = _normalizeaza_stare_comanda(row.get("Status Comandă"))
             if orig_map.get(rid) != stare_noua:
-                meta = meta_map.get(rid)
-                if not isinstance(meta, dict):
-                    meta = {}
+                meta = meta_map.get(rid) or {}
+                salvat_ceva = False
+
                 piesa_id = meta.get("_piesa_id")
                 if piesa_id is not None and pd.notna(piesa_id):
-                    PieseRepository.update_stare_comandata(int(piesa_id), stare_noua)
+                    try:
+                        PieseRepository.update_stare_comandata(int(piesa_id), stare_noua)
+                        salvat_ceva = True
+                    except Exception as e:
+                        erori_salvare.append(f"Piesa #{piesa_id} ({row.get('Piesă')}): {e}")
+
                 sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
                 sursa_rec_id = meta.get("_sursa_rec_id")
                 if sursa_tbl and sursa_rec_id is not None and pd.notna(sursa_rec_id):
                     try:
-                        _actualizeaza_stare_in_raport_json(
+                        if _actualizeaza_stare_in_raport_json(
                             sursa_tbl,
                             int(sursa_rec_id),
                             str(row.get("Piesă") or ""),
                             stare_noua,
-                        )
-                    except Exception:
-                        pass
-                nr_mod += 1
+                        ):
+                            salvat_ceva = True
+                    except Exception as e:
+                        erori_salvare.append(f"{sursa_tbl} #{sursa_rec_id} ({row.get('Piesă')}): {e}")
+
+                if salvat_ceva:
+                    nr_mod += 1
 
         if editor_dash_key in st.session_state:
             del st.session_state[editor_dash_key]
 
         incarca_date_dashboard.clear()
-        if nr_mod == 0:
+        if erori_salvare:
+            st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_salvare))
+        elif nr_mod == 0:
             st.info("ℹ️ Nu există modificări nesalvate la statusul comenzii.")
         else:
-            st.success(f"✅ Stările au fost actualizate pentru **{nr_mod}** poziții.")
+            st.success(f"✅ Stările au fost actualizate în baza de date pentru **{nr_mod}** poziții.")
             st.rerun()
 
     with st.expander("📦 Centralizator cantități pe Status Comandă, Furnizor & Piesă", expanded=False):
