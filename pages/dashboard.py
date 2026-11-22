@@ -171,7 +171,6 @@ def render_memento_intretinere_dashboard():
         df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
         st.dataframe(df_m, hide_index=True, use_container_width=True)
 
-
 @st.cache_data(ttl=120)
 def incarca_utilaje_dupa_stare(mod: str):
     """
