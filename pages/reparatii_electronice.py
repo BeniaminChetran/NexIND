@@ -274,7 +274,7 @@ def render_reparatii_electronice():
                 [data-testid="stTextInput"],
                 div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
                 [data-testid="stSelectbox"] {
-                    max-width: 30ch !important;
+                    max-width: 22ch !important;
                 }
             </style>
             """,
