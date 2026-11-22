@@ -171,42 +171,6 @@ def render_memento_intretinere_dashboard():
         df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
         st.dataframe(df_m, hide_index=True, use_container_width=True)
 
-def render_memento_intretinere_dashboard():
-    st.markdown("### 🔔 Memento Scadențe Întreținere")
-    col_z, col_info = st.columns([1.4, 3.6], vertical_alignment="bottom")
-    with col_z:
-        zile_avans = st.selectbox(
-            "Anunță-mă cu cel puțin:",
-            options=[3, 7, 14, 21, 30, 60],
-            index=2,
-            format_func=lambda x: f"{x} zile înainte",
-            key="dash_memento_intretinere_zile",
-        )
-
-    alerta_rows = incarca_memento_intretinere(zile_avans)
-    with col_info:
-        if alerta_rows:
-            st.warning(
-                f"⏰ Ai **{len(alerta_rows)}** utilaje cu întreținerea scadentă în următoarele **{zile_avans}** zile (sau deja depășite)."
-            )
-        else:
-            st.success(f"✅ Nicio întreținere scadentă în următoarele **{zile_avans}** zile.")
-
-    if alerta_rows:
-        df_m = pd.DataFrame([
-            {
-                "Firmă": r.get("firma"),
-                "Utilaj": r.get("utilaj"),
-                "Data scadentă": str(r.get("data_scadenta")),
-                "Zile rămase": int(r.get("zile_ramase") or 0),
-                "Status memento": (
-                    "🚨 Depășită" if int(r.get("zile_ramase") or 0) < 0
-                    else ("⚠️ Azi" if int(r.get("zile_ramase") or 0) == 0 else "🔔 În curând")
-                ),
-            }
-            for r in alerta_rows
-        ])
-        st.dataframe(df_m, hide_index=True, use_container_width=True)
 
 @st.cache_data(ttl=120)
 def incarca_utilaje_dupa_stare(mod: str):
