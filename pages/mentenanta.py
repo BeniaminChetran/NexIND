@@ -443,7 +443,7 @@ def _genereaza_pdf_cu_fallback(fisa_payload: dict) -> bytes:
 
 def render_mentenanta():
     st.subheader("🛡️ Fișă de Mentenanță Preventivă & Audit Tehnic")
-    is_unlocked = st.session_state.get("is_unlocked", False)
+    is_unlocked = bool(st.session_state.get("is_unlocked", False))
 
     setari = SetariRepository.get_setari()
     tehnician_def = setari.get("tehnician_implicit") or "Tehnician Nexus"
@@ -749,9 +749,9 @@ def render_mentenanta():
     st.markdown("---")
     st.markdown("### 🔍 Verificări Tehnice pe Sisteme")
     if is_unlocked:
-        st.caption("🔓 **Mod Administrator Deblocat:** În fiecare sistem poți adăuga verificări noi sau elimina verificări specifice acestei mașini.")
+        st.caption("🔓 **Mod Administrator Deblocat:** În fiecare sistem poți adăuga verificări noi sau elimina una ori mai multe verificări selectate.")
     else:
-        st.caption("🔒 Listele de verificări pe sisteme sunt blocate la editare structură (pentru a adăuga/scoate verificări, mergi la **SistemAdmin → Deblocare**).")
+        st.info("🔒 **Sistemul este blocat.** Pentru a edita/adăuga/șterge verificările pe sisteme, deblochează sistemul cu parola din **SistemAdmin → Deblocare**.")
 
     sectiuni_active = [
         sec for sec in SECTIONS_MENTENANTA
@@ -777,10 +777,11 @@ def render_mentenanta():
 
         with st.expander(f"{sec['titlu']}{badge}", expanded=(s_key in ("electric_decuplat", "electric_cuplat", "mecanic") or nr_nu > 0)):
             st.caption(f"ℹ️ {sec['nota']}")
-            if st.button(f"🗑️ Elimină tot capitolul ({sec['sistem_cod']})", key=f"btn_del_cap_{s_key}"):
-                draft["capitole_excluse"].append(s_key)
-                st.toast(f"🗑️ Capitolul „{sec['sistem_cod']}” a fost eliminat din această fișă.")
-                st.rerun()
+            if is_unlocked:
+                if st.button(f"🗑️ Elimină tot capitolul ({sec['sistem_cod']})", key=f"btn_del_cap_{s_key}"):
+                    draft["capitole_excluse"].append(s_key)
+                    st.toast(f"🗑️ Capitolul „{sec['sistem_cod']}” a fost eliminat din această fișă.")
+                    st.rerun()
 
             edited_sec = st.data_editor(
                 df_sec,
@@ -807,222 +808,3 @@ def render_mentenanta():
 
             if is_unlocked:
                 st.markdown("##### 🔐 Administrare verificări pentru acest sistem (individual pe mașină)")
-                c_add1, c_add2, c_add3 = st.columns([3.5, 1.5, 1.2], vertical_alignment="bottom")
-                noua_spec = c_add1.text_input(
-                    "Verificare nouă",
-                    placeholder="Descrierea operațiunii de verificare...",
-                    key=f"inp_new_verif_{masina_obj['id']}_{s_key}"
-                )
-                nou_hint = c_add2.text_input(
-                    "Parametru (opțional)",
-                    placeholder="ex: Presiune (bar)",
-                    key=f"inp_new_hint_{masina_obj['id']}_{s_key}"
-                )
-                if c_add3.button("➕ Adaugă", key=f"btn_add_verif_{masina_obj['id']}_{s_key}", use_container_width=True):
-                    if noua_spec.strip():
-                        items_curente = _get_items_pentru_masina(sec, masina_obj)
-                        new_item = {
-                            "id": f"cust_{uuid.uuid4().hex[:6]}",
-                            "spec": noua_spec.strip(),
-                            "param_hint": nou_hint.strip()
-                        }
-                        items_actualizate = items_curente + [new_item]
-                        custom_map = dict(masina_obj.get("verificari_custom_json") or {})
-                        custom_map[s_key] = items_actualizate
-                        MasiniRepository.update_verificari_custom(masina_obj["id"], custom_map)
-
-                        obs_init = f"{nou_hint.strip()}: " if nou_hint.strip() else ""
-                        new_row = pd.DataFrame([{
-                            "ID": new_item["id"],
-                            "Operațiune": new_item["spec"],
-                            "Conformitate": "DA",
-                            "Observații / Valori Măsurate": obs_init
-                        }])
-                        st.session_state["ment_dfs"][s_key] = pd.concat([edited_sec, new_row], ignore_index=True)
-                        st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
-                        st.toast("✅ Verificarea a fost adăugată pentru acest utilaj!")
-                        st.rerun()
-                    else:
-                        st.warning("Introdu descrierea verificării înainte de a apăsa Adaugă.")
-
-                if not edited_sec.empty:
-                    c_del1, c_del2 = st.columns([4.8, 1.4], vertical_alignment="bottom")
-                    opt_del = {
-                        f"{idx+1}. {row['Operațiune'][:85]}": row["ID"]
-                        for idx, row in edited_sec.iterrows()
-                    }
-                    verif_de_sters = c_del1.selectbox(
-                        "Selectează verificare de eliminat din acest sistem",
-                        options=list(opt_del.keys()),
-                        key=f"sel_del_verif_{masina_obj['id']}_{s_key}"
-                    )
-                    if c_del2.button("🗑️ Elimină", key=f"btn_del_verif_{masina_obj['id']}_{s_key}", use_container_width=True):
-                        id_sters = opt_del[verif_de_sters]
-                        items_curente = _get_items_pentru_masina(sec, masina_obj)
-                        items_ramase = [it for it in items_curente if it.get("id") != id_sters]
-                        custom_map = dict(masina_obj.get("verificari_custom_json") or {})
-                        custom_map[s_key] = items_ramase
-                        MasiniRepository.update_verificari_custom(masina_obj["id"], custom_map)
-
-                        st.session_state["ment_dfs"][s_key] = edited_sec[edited_sec["ID"] != id_sters].reset_index(drop=True)
-                        st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
-                        st.toast("🗑️ Verificarea a fost eliminată pentru acest utilaj.")
-                        st.rerun()
-
-            draft["necesar"][s_key] = st.text_area(
-                sec["necesar_label"],
-                value=str(draft["necesar"].get(s_key, "")),
-                height=68,
-                key=f"ment_nec_{s_key}_{st.session_state.get('ment_counter', 0)}"
-            )
-
-    st.markdown("---")
-    st.markdown("### 7. Recomandări Tehnice, Audit Upgrade / IIoT & Recepție Lucrări")
-    draft["recomandari_iiot"] = st.text_area(
-        "Constatări suplimentare & Recomandări de modernizare (Retrofit PLC / Senzoristică IIoT / Mentenanță Predictivă)",
-        value=str(draft.get("recomandari_iiot", "")),
-        height=95
-    )
-
-    r1, r2, r3 = st.columns(3)
-    draft["tehnician"] = r1.text_input("Inginer / Tehnician Service", value=str(draft.get("tehnician", tehnician_def)))
-    draft["verificator"] = r2.text_input("Reprezentant Beneficiar (Nume & Prenume)", value=str(draft.get("verificator", "")))
-    draft["functie_verificator"] = r3.text_input("Funcție Reprezentant Beneficiar", value=str(draft.get("functie_verificator", "")))
-
-    if st.button("💾 Salvează Fișa de Mentenanță & Generează PDF", type="primary", use_container_width=True):
-        try:
-            checklist_payload = {}
-            capitole_excluse_set = set(draft.get("capitole_excluse") or [])
-            for sec in SECTIONS_MENTENANTA:
-                s_key = sec["key"]
-                is_active = (s_key not in capitole_excluse_set) and (
-                    afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
-                )
-                df_cur = st.session_state["ment_dfs"][s_key].copy()
-                if not is_active:
-                    df_cur["Conformitate"] = "N/A"
-                checklist_payload[s_key] = {
-                    "titlu": sec["titlu"],
-                    "nota": sec["nota"],
-                    "necesar_label": sec["necesar_label"],
-                    "necesar_text": draft["necesar"].get(s_key, ""),
-                    "activ": is_active,
-                    "randuri": df_cur.to_dict(orient="records")
-                }
-
-            fisa_spec_rows = (
-                df_fisa_utilaj.fillna("").to_dict(orient="records")
-                if df_fisa_utilaj is not None and not df_fisa_utilaj.empty
-                else []
-            )
-            checklist_payload["fisa_specifica_utilaj"] = {
-                "titlu": nume_fisa_activa,
-                "titlu_pdf": titlu_pdf_activ,
-                "denumire_masina": str(masina_obj.get("denumire") or "").strip(),
-                "tip_masina": str(masina_obj.get("tip_masina") or "").strip(),
-                "frecventa": frec_fisa_activa,
-                "randuri": fisa_spec_rows,
-            }
-
-            fisa_data = {
-                "firma_id": firma_obj["id"],
-                "masina_id": masina_obj["id"],
-                "firma_nume": sel_firma,
-                "masina_nume": sel_masina,
-                "nume_fisa": nume_fisa_activa,
-                "titlu_pdf_operatiuni": titlu_pdf_activ,
-                "punct_lucru": draft["punct_lucru"],
-                "producator_model": draft["producator_model"],
-                "serie_fabricatie": draft["serie_fabricatie"],
-                "nr_inventar": draft["nr_inventar"],
-                "ore_functionare": draft["ore_functionare"],
-                "ore_cumulate": draft["ore_cumulate"],
-                "nivel_grila": draft["nivel_grila"],
-                "stare_initiala": draft["stare_initiala"],
-                "stare_finala": draft["stare_finala"],
-                "checklist_json": checklist_payload,
-                "recomandari_iiot": draft["recomandari_iiot"],
-                "tehnician": draft["tehnician"],
-                "verificator": draft["verificator"],
-                "functie_verificator": draft["functie_verificator"],
-                "data_interventie": data_interv,
-                "urmatoarea_revizie": urmatoarea_revizie
-            }
-
-            new_id = MentenantaRepository.insert(fisa_data)
-            fisa_data["id"] = new_id
-            pdf_bytes = _genereaza_pdf_cu_fallback(fisa_data)
-            nume_pdf_cur = construieste_nume_fisier_pdf(titlu_pdf_activ, new_id)
-
-            st.session_state["ment_id_salvat"] = new_id
-            st.session_state["ment_pdf_bytes"] = pdf_bytes
-            st.session_state["ment_pdf_name"] = nume_pdf_cur
-            st.session_state["ment_salvat"] = True
-            _init_sau_reseteaza_ment_draft(tehnician_def, "DA")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"⚠️ Eroare la salvarea fișei / generarea PDF: {exc}")
-
-    _render_istoric_mentenanta(firme_dict)
-
-
-def _render_istoric_mentenanta(firme_dict: dict):
-    st.markdown("---")
-    st.subheader("📂 Istoric Fișe de Mentenanță Preventivă")
-    fise_salvate = MentenantaRepository.get_all()
-    if not fise_salvate:
-        st.info("Nu există încă fișe de mentenanță preventivă salvate.")
-        return
-
-    for fisa in fise_salvate[:30]:
-        fid = fisa["id"]
-        data_str = str(fisa.get("data_interventie", ""))[:10]
-        with st.expander(f"🛡️ Fișă #{fid} | {fisa.get('firma_nume')} — {fisa.get('masina_nume')} ({data_str}) | Stare: {fisa.get('stare_finala', '')}"):
-            chk = fisa.get("checklist_json") or {}
-            if isinstance(chk, str):
-                try:
-                    chk = json.loads(chk)
-                except Exception:
-                    chk = {}
-
-            fisa_spec = chk.get("fisa_specifica_utilaj") if isinstance(chk, dict) else None
-            frec_hist = (fisa_spec.get("frecventa") if isinstance(fisa_spec, dict) else "") or "Lunară"
-            tip_hist = (fisa_spec.get("tip_masina") if isinstance(fisa_spec, dict) else "") or (fisa.get("producator_model") or "")
-            titlu_pdf_hist = (
-                (fisa_spec.get("titlu_pdf") if isinstance(fisa_spec, dict) else "")
-                or construieste_titlu_operatiuni_pdf(
-                    frecventa=frec_hist,
-                    masina=fisa.get("masina_nume") or "",
-                    tip_masina=tip_hist,
-                    data_str=data_str,
-                    firma=fisa.get("firma_nume") or "",
-                )
-            )
-
-            c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="center")
-            with c1:
-                st.write(f"**Titlu:** {titlu_pdf_hist}")
-                st.write(f"**Serie:** {fisa.get('serie_fabricatie') or '-'} | **Ore utilaj:** {fisa.get('ore_functionare') or '-'} | **Tehnician:** {fisa.get('tehnician') or '-'}")
-                st.write(f"**Următoarea revizie:** {str(fisa.get('urmatoarea_revizie') or '-')[:10]}")
-            with c2:
-                fisa_pdf_payload = dict(fisa)
-                fisa_pdf_payload["checklist_json"] = chk
-                fisa_pdf_payload["titlu_pdf_operatiuni"] = titlu_pdf_hist
-                pdf_hist = _genereaza_pdf_cu_fallback(fisa_pdf_payload)
-                nume_pdf_hist = construieste_nume_fisier_pdf(titlu_pdf_hist, fid)
-                st.download_button(
-                    label="📥 Descarcă PDF",
-                    data=pdf_hist,
-                    file_name=nume_pdf_hist,
-                    mime="application/pdf",
-                    key=f"dl_ment_hist_{fid}",
-                    use_container_width=True
-                )
-            with c3:
-                if st.button("🗑️ Șterge", key=f"del_ment_{fid}", use_container_width=True):
-                    MentenantaRepository.delete(fid)
-                    st.rerun()
-
-            if isinstance(fisa_spec, dict) and fisa_spec.get("randuri"):
-                st.caption(f"**{fisa_spec.get('titlu', 'Operațiuni Mentenanță')}**")
-                st.dataframe(pd.DataFrame(fisa_spec["randuri"]), hide_index=True, use_container_width=True)
