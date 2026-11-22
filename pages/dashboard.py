@@ -99,7 +99,11 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
             c.execute("""
                 SELECT
                     m.id,
-                    COALESCE(NULLIF(TRIM(f.nume_firma), ''), 'Fără firmă') AS firma,
+                    COALESCE(
+                        NULLIF(TRIM(f.nume_firma), ''),
+                        NULLIF(TRIM(f.nume), ''),
+                        'Fără firmă'
+                    ) AS firma,
                     m.denumire AS utilaj,
                     CAST(m.data_intretinere AS DATE) AS data_scadenta,
                     (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
@@ -108,7 +112,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                 WHERE COALESCE(m.fara_intretinere, FALSE) = FALSE
                   AND m.data_intretinere IS NOT NULL
                   AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY CAST(m.data_intretinere AS DATE) ASC, m.denumire ASC
+                ORDER BY CAST(m.data_intretinere AS DATE) ASC, firma ASC, m.denumire ASC
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
     except Exception:
@@ -116,7 +120,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
             c.execute("""
                 SELECT
                     id,
-                    'Nespecificată' AS firma,
+                    'Fără firmă' AS firma,
                     denumire AS utilaj,
                     CAST(data_intretinere AS DATE) AS data_scadenta,
                     (CAST(data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
@@ -124,10 +128,48 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                 WHERE COALESCE(fara_intretinere, FALSE) = FALSE
                   AND data_intretinere IS NOT NULL
                   AND CAST(data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY CAST(m.data_intretinere AS DATE) ASC, denumire ASC
+                ORDER BY CAST(data_intretinere AS DATE) ASC, denumire ASC
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
 
+
+def render_memento_intretinere_dashboard():
+    st.markdown("### 🔔 Memento Scadențe Întreținere")
+    col_z, col_info = st.columns([1.4, 3.6], vertical_alignment="bottom")
+    with col_z:
+        zile_avans = st.selectbox(
+            "Anunță-mă cu cel puțin:",
+            options=[3, 7, 14, 21, 30, 60],
+            index=2,
+            format_func=lambda x: f"{x} zile înainte",
+            key="dash_memento_intretinere_zile",
+        )
+
+    alerta_rows = incarca_memento_intretinere(zile_avans)
+    with col_info:
+        if alerta_rows:
+            st.warning(
+                f"⏰ Ai **{len(alerta_rows)}** utilaje cu întreținerea scadentă în următoarele **{zile_avans}** zile (sau deja depășite)."
+            )
+        else:
+            st.success(f"✅ Nicio întreținere scadentă în următoarele **{zile_avans}** zile.")
+
+    if alerta_rows:
+        df_m = pd.DataFrame([
+            {
+                "Firmă": r.get("firma") or "Fără firmă",
+                "Utilaj": r.get("utilaj") or "",
+                "Data scadentă": str(r.get("data_scadenta") or ""),
+                "Zile rămase": int(r.get("zile_ramase") or 0),
+                "Status memento": (
+                    "🚨 Depășită" if int(r.get("zile_ramase") or 0) < 0
+                    else ("⚠️ Azi" if int(r.get("zile_ramase") or 0) == 0 else "🔔 În curând")
+                ),
+            }
+            for r in alerta_rows
+        ])
+        df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
+        st.dataframe(df_m, hide_index=True, use_container_width=True)
 
 def render_memento_intretinere_dashboard():
     st.markdown("### 🔔 Memento Scadențe Întreținere")
