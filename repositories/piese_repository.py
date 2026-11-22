@@ -95,10 +95,16 @@ class PieseRepository(BaseRepository):
         valuta = str(data.get('valuta_achizitie') or 'RON').strip().upper()
         if valuta not in ("RON", "EUR"):
             valuta = "RON"
+
+        if "masina_montaj" in data:
+            masina_val = str(data.get("masina_montaj") or "").strip() or "General"
+        else:
+            masina_val = "General"
+
         query = """
             UPDATE piese 
-            SET denumire=%s, cod_producator=%s, cod_comercial=%s, subansamblu=%s, 
-                parametri=%s, pret_achizitie=%s, valuta_achizitie=%s, 
+            SET denumire=%s, cod_producator=%s, cod_comercial=%s, masina_montaj=%s,
+                subansamblu=%s, parametri=%s, pret_achizitie=%s, valuta_achizitie=%s, 
                 link_furnizor=%s, termen_livrare=%s
             WHERE id=%s
         """
@@ -106,6 +112,7 @@ class PieseRepository(BaseRepository):
             data['denumire'],
             data.get('cod_producator'),
             data.get('cod_comercial'),
+            masina_val,
             data.get('subansamblu'),
             data.get('parametri', ''),
             data.get('pret_achizitie', 0.00),
@@ -116,7 +123,7 @@ class PieseRepository(BaseRepository):
         )
         cls().execute(query, params)
         cls.get_all.clear()
-        logger.info(f"Piesa #{piesa_id} a fost actualizată ({valuta}).")
+        logger.info(f"Piesa #{piesa_id} a fost actualizată ({masina_val}, {valuta}).")
 
     @classmethod
     def delete(cls, piesa_id: int):

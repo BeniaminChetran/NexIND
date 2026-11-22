@@ -477,16 +477,6 @@ def render_piese():
                 with col2:
                     parametri = st.text_area("Parametri Piesă (dimensiuni, tensiune, putere etc.)", height=100)
                     termen_livrare_nou = st.text_input("Termen livrare (ex: 1, 3-5 zile, Stoc)", value="1")
-                    idx_m_nou = (
-                        toate_optiuni_masini.index(masina_implicit_noua)
-                        if masina_implicit_noua in toate_optiuni_masini
-                        else 0
-                    )
-                    masina_piesa_noua = st.selectbox(
-                        "Selectează Mașina",
-                        options=toate_optiuni_masini,
-                        index=idx_m_nou,
-                    )
                     if acces_permis:
                         link_furnizor = st.text_input("Link Furnizor / Magazin (URL)")
                         cp_nou1, cp_nou2 = st.columns([3, 1], vertical_alignment="bottom")
@@ -504,8 +494,9 @@ def render_piese():
                         pret_expr_nou = ""
                         valuta_noua = "RON"
 
+                masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
                 st.caption(
-                    f"📌 Piesa se va înregistra pentru mașina selectată în formular (firmă filtrată: **{sel_firma_p}**)."
+                    f"📌 Piesa se va înregistra automat pe mașina selectată sus: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
                 )
 
                 if st.form_submit_button("💾 Salvează Piesa", type="primary"):
@@ -516,11 +507,6 @@ def render_piese():
                         if err_pret:
                             st.error(f"⚠️ {err_pret}")
                         else:
-                            masina_salvata_noua = (
-                                masina_piesa_noua.strip()
-                                if str(masina_piesa_noua or "").strip()
-                                else "General"
-                            )
                             PieseRepository.insert({
                                 "denumire": denumire.strip(),
                                 "cod_producator": cod_producator.strip(),
@@ -531,11 +517,11 @@ def render_piese():
                                 "link_furnizor": link_furnizor.strip(),
                                 "pret_achizitie": pret_calculat,
                                 "valuta_achizitie": valuta_noua,
-                                "masina_montaj": masina_salvata_noua,
+                                "masina_montaj": masina_tinta_noua,
                             })
                             _obtine_corpus_utilizare_istoric.clear()
                             st.success(
-                                f"✅ Piesa '{denumire}' a fost salvată pe **{masina_salvata_noua}** "
+                                f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
                                 f"(Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou})!"
                             )
                             st.rerun()
