@@ -342,8 +342,29 @@ def render_dashboard():
             st.info(f"Nu există clienți inactivi în ultimele {zile_prag} de zile.")
         return
 
+
+
     st.markdown("---")
 
+    # 1. ÎNTREȚINERI SCADENTE
+    st.subheader("📅 Întrețineri Scadente")
+    render_memento_intretinere_dashboard()
+    if mas_scad:
+        st.dataframe(pd.DataFrame(mas_scad), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # 2. DEFECTE RECURENTE
+    st.subheader("⚠️ Defecte Recurente (Ultimele 180 zile)")
+    if def_rec:
+        for d in def_rec:
+            st.warning(f"⚠️ **{d['masina']}**\nDefect: {d['defect']}\nNumăr apariții: {d['repetitii']}")
+    else:
+        st.success("Nu există defecte recurente identificate în ultimele 180 de zile.")
+
+    st.markdown("---")
+
+    # 3. GRAFICELE (Top 10 Defecte, Top Clienți, Top Utilaje)
     if top_def:
         fig_defecte = px.bar(pd.DataFrame(top_def), x="aparitii", y="defect", orientation="h", title="Top 10 Defecte")
         st.plotly_chart(fig_defecte, use_container_width=True, key="grafic_top_defecte_dashboard")
@@ -359,22 +380,6 @@ def render_dashboard():
         if top_ut:
             fig_utilaje = px.bar(pd.DataFrame(top_ut), x="masina", y="interventii", title="Top Utilaje după număr intervenții")
             st.plotly_chart(fig_utilaje, use_container_width=True, key="grafic_top_utilaje_dashboard")
-
-    st.markdown("---")
-    st.subheader("⚠️ Defecte Recurente (Ultimele 180 zile)")
-    if def_rec:
-        for d in def_rec:
-            st.warning(f"⚠️ **{d['masina']}**\nDefect: {d['defect']}\nNumăr apariții: {d['repetitii']}")
-    else:
-        st.success("Nu există defecte recurente identificate în ultimele 180 de zile.")
-
-    st.markdown("---")
-    st.subheader("📅 Întrețineri Scadente")
-    if mas_scad:
-        st.dataframe(pd.DataFrame(mas_scad), use_container_width=True)
-    else:
-        st.success("Nu există întrețineri programate în următoarele 30 de zile.")
-
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:
     for k in ("furnizor", "nume_furnizor", "furnizor_principal", "supplier", "link_furnizor"):
