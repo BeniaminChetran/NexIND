@@ -267,7 +267,21 @@ def render_reparatii_electronice():
         else:
             draft["sel_masina"] = "General / Fără mașină"
 
-        c1, c2 = st.columns([1.5, 1.0])
+        st.markdown(
+            """
+            <style>
+                div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
+                [data-testid="stTextInput"],
+                div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
+                [data-testid="stSelectbox"] {
+                    max-width: 30ch !important;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        c1, c2 = st.columns([2.35, 1.0])
         with c1:
             piesa_subansamblu = st.text_input(
                 "Piesă sau Subansamblu (ex: Placă de bază CNC, Invertor, Unitate comandă)",
@@ -282,6 +296,8 @@ def render_reparatii_electronice():
             )
             draft["defect_reclamat"] = defect_reclamat
         with c2:
+            st.markdown('<span class="el-col-dreapta-30" style="display:none;"></span>', unsafe_allow_html=True)
+
             stare_draft = _limita_30(draft.get("stare_finala", OPT_STARI_FINALE[0]))
             if stare_draft and stare_draft not in OPT_STARI_FINALE:
                 OPT_STARI_FINALE.append(stare_draft)
@@ -570,3 +586,4 @@ def render_reparatii_electronice():
                         mime="application/pdf",
                         key=f"dl_fisa_el_{fid}",
                     )
+
