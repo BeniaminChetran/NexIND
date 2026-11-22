@@ -13,6 +13,7 @@ from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
 from repositories.setari_repository import SetariRepository
+from utils.context_selectie import aplica_context_la_tab, seteaza_context_selectie
 
 _OPERATORS = {
     ast.Add: operator.add,
@@ -277,7 +278,7 @@ def _comaseaza_si_importa_piese_pe_masina(
             continue
 
         obs_sursa = f"Importat din Electronică ({comp.get('sursa') or 'raport'})"
-        if firma_tinta and firma_tinta != "Toate firmele":
+        if firma_tinta and firma_tinta not in ("-- Alege firma --", "Toate firmele"):
             obs_sursa += f" | Firmă: {firma_tinta}"
 
         param_str = str(comp.get("parametri") or "").strip()
@@ -424,16 +425,23 @@ def render_piese():
         firme_by_nume = {str(f.get("nume_firma") or "").strip(): f for f in firme_all if str(f.get("nume_firma") or "").strip()}
         firme_by_id = {f.get("id"): f for f in firme_all if f.get("id") is not None}
 
-        # Rând unic cu Combobox Firmă și Combobox Mașină + Ordine sortare
+        opt_firme_p = ["-- Alege firma --", "Toate firmele"] + sorted(firme_by_nume.keys())
+        aplica_context_la_tab(
+            tab_prefix="piese_f",
+            optiuni_firme=opt_firme_p,
+            default_firma="-- Alege firma --",
+            key_firma="sel_firma_piese",
+        )
+
         col_f, col_m, col_s = st.columns([2.2, 2.2, 1.6], vertical_alignment="bottom")
         with col_f:
             sel_firma_p = st.selectbox(
-                "1. Filtrează după Firmă",
-                options=["Toate firmele"] + sorted(firme_by_nume.keys()),
+                "1. Alege Firma",
+                options=opt_firme_p,
                 key="sel_firma_piese",
             )
         with col_m:
-            if sel_firma_p != "Toate firmele" and sel_firma_p in firme_by_nume:
+            if sel_firma_p not in ("-- Alege firma --", "Toate firmele") and sel_firma_p in firme_by_nume:
                 fid_sel = firme_by_nume[sel_firma_p].get("id")
                 masini_disp = [m for m in masini_all if m.get("firma_id") == fid_sel]
             else:
@@ -441,9 +449,23 @@ def render_piese():
 
             masini_nume_disp = [str(m.get("denumire") or "").strip() for m in masini_disp if str(m.get("denumire") or "").strip()]
             masini_nume_disp = list(dict.fromkeys(masini_nume_disp))
+            opt_masini_p = ["Toate mașinile / General"] + masini_nume_disp
+
+            aplica_context_la_tab(
+                tab_prefix=f"piese_m_{sel_firma_p}",
+                optiuni_firme=opt_firme_p,
+                default_firma=sel_firma_p,
+                key_firma="sel_firma_piese",
+                optiuni_masini=opt_masini_p,
+                default_masina="Toate mașinile / General",
+                key_masina="sel_masina_piese",
+            )
+            if st.session_state.get("sel_masina_piese") not in opt_masini_p:
+                st.session_state["sel_masina_piese"] = "Toate mașinile / General"
+
             sel_m = st.selectbox(
                 "2. Selectează Mașina",
-                options=["Toate mașinile / General"] + masini_nume_disp,
+                options=opt_masini_p,
                 key="sel_masina_piese",
             )
         with col_s:
@@ -453,6 +475,11 @@ def render_piese():
                 key="sel_sortare_piese",
             )
 
+        seteaza_context_selectie(
+            firma=(None if sel_firma_p in ("-- Alege firma --", "Toate firmele") else sel_firma_p),
+            masina=(None if sel_m == "Toate mașinile / General" else sel_m),
+        )
+
         toate_optiuni_masini = list(dict.fromkeys(
             ["General"]
             + [
@@ -461,10 +488,7 @@ def render_piese():
                 if str(m.get("denumire") or "").strip()
             ]
         ))
-        masina_implicit_noua = (
-            sel_m if (sel_m != "Toate mașinile / General" and sel_m in toate_optiuni_masini)
-            else "General"
-        )
+        masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
@@ -494,9 +518,8 @@ def render_piese():
                         pret_expr_nou = ""
                         valuta_noua = "RON"
 
-                masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
                 st.caption(
-                    f"📌 Piesa se va înregistra automat pe mașina selectată sus: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
+                    f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
                 )
 
                 if st.form_submit_button("💾 Salvează Piesa", type="primary"):
@@ -533,7 +556,7 @@ def render_piese():
                 st.info("Nu există rapoarte de reparații electronice înregistrate.")
             else:
                 fise_filtrate_el = rapoarte_el
-                if sel_firma_p != "Toate firmele":
+                if sel_firma_p not in ("-- Alege firma --", "Toate firmele"):
                     fise_dupa_firma = [
                         r for r in rapoarte_el
                         if str(r.get("firma_nume") or "").strip().lower() == sel_firma_p.strip().lower()
@@ -631,8 +654,7 @@ def render_piese():
 
         piese_raw_m = PieseRepository.get_filtrate(sel_m) or []
 
-        # Dacă s-a ales o firmă și nu s-a ales o mașină anume, filtrăm și după mașinile firmei respective
-        if sel_firma_p != "Toate firmele" and sel_m == "Toate mașinile / General":
+        if sel_firma_p not in ("-- Alege firma --", "Toate firmele") and sel_m == "Toate mașinile / General":
             masini_firma_set = {
                 str(m.get("denumire") or "").strip().lower()
                 for m in masini_all
@@ -645,8 +667,6 @@ def render_piese():
                     or (not ascunde_general and str(p.get("masina_montaj") or "").strip().lower() == "general")
                 ]
 
-        # Când este aleasă o mașină anume: evităm dublarea pieselor care există și pe mașină și la General,
-        # și aplicăm opțiunea de a scoate piesele «General» dacă este bifată
         if sel_m != "Toate mașinile / General":
             m_sel_low = sel_m.strip().lower()
             piese_pe_masina = [
@@ -711,7 +731,6 @@ def render_piese():
             f"(Firmă: **{sel_firma_p}** | Mașină: **{sel_m}**)."
         )
 
-        # Tabel sumar al reperelor înregistrate pentru selecția curentă
         randuri_tabel = []
         for p in piese_filtrate[:150]:
             m_nom = str(p.get("masina_montaj") or "General")
@@ -719,7 +738,7 @@ def render_piese():
             f_nom = "-"
             if m_obj and m_obj.get("firma_id") in firme_by_id:
                 f_nom = str(firme_by_id[m_obj.get("firma_id")].get("nume_firma") or "-")
-            elif sel_firma_p != "Toate firmele":
+            elif sel_firma_p not in ("-- Alege firma --", "Toate firmele"):
                 f_nom = sel_firma_p
 
             pret_v = float(p.get("pret_achizitie") or 0.0)
@@ -736,7 +755,6 @@ def render_piese():
 
         st.dataframe(pd.DataFrame(randuri_tabel), hide_index=True, use_container_width=True)
 
-        # Formulare individuale de editare / ștergere pentru fiecare reper afișat
         for p in piese_filtrate[:100]:
             masina_eticheta = p.get("masina_montaj", "General")
             pid = p.get("id")
@@ -1188,6 +1206,7 @@ def render_piese():
                         "link_furnizor": p_orig_db.get("link_furnizor") or "",
                         "pret_achizitie": nou_pret,
                         "valuta_achizitie": nou_val,
+                        "masina_montaj": p_orig_db.get("masina_montaj") or "General",
                     })
                     nr_act += 1
 
