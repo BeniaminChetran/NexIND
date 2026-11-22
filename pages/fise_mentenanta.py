@@ -3,6 +3,7 @@
 # ----------------------------------
 
 import json
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 from config import db_cursor
@@ -452,14 +453,25 @@ def _editor_config_fise():
         "Standard / Observații": st.column_config.TextColumn("Standard / Observații", width="medium"),
         "Documentație Drive": st.column_config.TextColumn(
             "Documentație Drive",
-            help="Link-ul complet (https://drive.google.com/...) către documentația operațiunii",
+            help="Link-ul Google Drive (https://drive.google.com/...) sau calea documentației operațiunii",
             width="medium",
         ),
     }
 
 
-def _render_selector_operatiuni_din_lista(state_key_pasi: str, prefix_key: str):
-    st.markdown("#### ➕ Adaugă operațiuni din listă (cu link Google Drive)")
+def _salveaza_fisier_documentatie_local(uploaded_file, prefix_key: str) -> str:
+    folder = Path("uploads/documentatie_mentenanta")
+    folder.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(uploaded_file.name).name.replace(" ", "_")
+    dest = folder / f"{prefix_key}_{safe_name}"
+    dest.write_bytes(uploaded_file.getvalue())
+    return str(dest)
+
+
+def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
+    curente = list(st.session_state.get(state_key_pasi) or [])
+
+    st.markdown("#### ➕ Adaugă operațiuni din listă")
     opt_dict = {
         f"[{item['sistem']}] {item['operatiune'][:90]}": item
         for item in CATALOG_OPERATIUNI_PREDEFINITE
@@ -470,7 +482,7 @@ def _render_selector_operatiuni_din_lista(state_key_pasi: str, prefix_key: str):
         key=f"ms_ops_{prefix_key}",
     )
     link_drive_nou = st.text_input(
-        "Link Google Drive pentru operațiunile selectate (opțional)",
+        "Link Google Drive pentru operațiunile adăugate (opțional)",
         placeholder="https://drive.google.com/...",
         key=f"inp_drive_ops_{prefix_key}",
     ).strip()
@@ -479,7 +491,6 @@ def _render_selector_operatiuni_din_lista(state_key_pasi: str, prefix_key: str):
         if not selectate:
             st.warning("Selectează cel puțin o operațiune din listă.")
             return
-        curente = list(st.session_state.get(state_key_pasi) or [])
         urm_ord = len(curente) + 1
         for label in selectate:
             it = opt_dict[label]
@@ -494,10 +505,82 @@ def _render_selector_operatiuni_din_lista(state_key_pasi: str, prefix_key: str):
         st.toast(f"✅ S-au adăugat {len(selectate)} operațiuni în fișă.")
         st.rerun()
 
+    if curente:
+        st.markdown("#### 📎 Încarcă / Setează documentația pe operațiune")
+        opt_idx = {
+            f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:75]}": i
+            for i, p in enumerate(curente)
+        }
+        idx_sel = st.selectbox(
+            "Selectează operațiunea pentru documentație",
+            options=list(opt_idx.keys()),
+            key=f"sel_doc_op_{prefix_key}",
+        )
+        pos = opt_idx[idx_sel]
+        doc_curent = str(curente[pos].get("Documentație Drive") or "")
+
+        cd1, cd2 = st.columns([2.2, 1.8])
+        with cd1:
+            link_manual = st.text_input(
+                "Link Google Drive operațiune",
+                value=doc_curent,
+                placeholder="https://drive.google.com/...",
+                key=f"inp_doc_op_{prefix_key}_{pos}",
+            ).strip()
+        with cd2:
+            fisier_doc = st.file_uploader(
+                "Sau încarcă fișier documentație",
+                type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
+                key=f"up_doc_op_{prefix_key}_{pos}",
+            )
+
+        if st.button("💾 Aplică documentația pe operațiune", key=f"btn_apply_doc_{prefix_key}_{pos}"):
+            val_final = link_manual
+            if fisier_doc is not None:
+                val_final = _salveaza_fisier_documentatie_local(fisier_doc, f"{prefix_key}_op{pos+1}")
+            curente[pos]["Documentație Drive"] = val_final
+            st.session_state[state_key_pasi] = curente
+            st.toast("✅ Documentația a fost actualizată pe operațiune.")
+            st.rerun()
+
+        st.markdown("#### 🗑️ Ștergere multiplă operațiuni")
+        opt_del = {
+            f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:80]}": i
+            for i, p in enumerate(curente)
+        }
+        de_sters = st.multiselect(
+            "Selectează una sau mai multe operațiuni de șters",
+            options=list(opt_del.keys()),
+            key=f"ms_del_ops_{prefix_key}",
+        )
+        if st.button("🗑️ Șterge operațiunile selectate", key=f"btn_del_ops_{prefix_key}"):
+            if not de_sters:
+                st.warning("Selectează cel puțin o operațiune de șters.")
+            else:
+                indici_sters = {opt_del[k] for k in de_sters}
+                ramase = []
+                for idx_r, item_r in enumerate(curente):
+                    if idx_r not in indici_sters:
+                        copie = dict(item_r)
+                        copie["Ordine"] = len(ramase) + 1
+                        ramase.append(copie)
+                st.session_state[state_key_pasi] = ramase
+                st.toast(f"🗑️ Au fost șterse {len(indici_sters)} operațiuni.")
+                st.rerun()
+
 
 def render_fise_mentenanta():
     st.subheader("📋 Creare & Administrare Fișe de Mentenanță Preventivă")
-    st.caption("Fără legătură cu firma: adaugi operațiuni dintr-o listă cu trimitere în Google Drive și salvezi fișa pe Denumire mașină + Tip mașină + Frecvență.")
+    is_unlocked = bool(st.session_state.get("is_unlocked", False))
+
+    if not is_unlocked:
+        st.warning(
+            "🔒 **Sistemul este blocat.** Pentru a vedea și edita listele de operațiuni de mentenanță, "
+            "deblochează sistemul introducând parola (din **SistemAdmin → Deblocare**)."
+        )
+        return
+
+    st.caption("🔓 **Sistem deblocat:** poți încărca operațiuni dintr-o listă, atașa documentație pe fiecare operațiune, șterge mai multe operațiuni deodată și salva fișa pe Denumire mașină + Tip mașină + Frecvență.")
 
     fise_db = _incarca_fise_din_db()
     catalog_masini = _incarca_catalog_masini_fara_firma()
@@ -562,7 +645,7 @@ def render_fise_mentenanta():
             else:
                 st.caption("ℹ️ Se pornește de la fișa generală; la salvare se creează fișa proprie.")
 
-        _render_selector_operatiuni_din_lista(
+        _render_controale_editare_operatiuni(
             state_key_pasi=state_key_pasi,
             prefix_key=f"prop_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}",
         )
@@ -595,7 +678,7 @@ def render_fise_mentenanta():
         if state_key_gen not in st.session_state:
             st.session_state[state_key_gen] = list(pasi_gen_init)
 
-        _render_selector_operatiuni_din_lista(
+        _render_controale_editare_operatiuni(
             state_key_pasi=state_key_gen,
             prefix_key=f"gen_{frec_gen.lower()}",
         )
