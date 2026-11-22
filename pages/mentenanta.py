@@ -15,9 +15,10 @@ from repositories.mentenanta_repository import MentenantaRepository, INTERVALE_Z
 from repositories.setari_repository import SetariRepository
 from services.pdf_service import genereaza_pdf_mentenanta
 from pages.fise_mentenanta import (
-    CATALOG_OPERATIUNI_PREDEFINITE,
     FRECVENTE_MENTENANTA,
+    adauga_operatiune_in_catalog_db,
     construieste_nume_fisa,
+    incarca_catalog_operatiuni_db,
     obtine_fisa_pentru_utilaj,
 )
 
@@ -150,19 +151,19 @@ def _normalizare_randuri_operatiuni(rows_in: list[dict]) -> list[dict]:
             continue
         op_txt = str(r.get("Operațiune / Verificare") or r.get("operatiune") or r.get("pas") or "").strip()
         prm_txt = str(
-            r.get("Piese / Parametri Măsurați")
+            r.get("Denumire parametru")
+            or r.get("Piese / Parametri Măsurați")
             or r.get("Parametru")
             or r.get("parametru")
-            or r.get("Standard / Observații")
             or ""
         ).strip()
         val_txt = str(
-            r.get("Valori / Observații")
-            or r.get("Valoare")
+            r.get("Valoare")
+            or r.get("Valori / Observații")
             or r.get("valoare")
-            or r.get("observatii")
             or ""
         ).strip()
+        um_txt = str(r.get("UM") or r.get("um") or "").strip()
         doc_txt = str(
             r.get("Documentație")
             or r.get("Documentație Drive")
@@ -171,7 +172,7 @@ def _normalizare_randuri_operatiuni(rows_in: list[dict]) -> list[dict]:
             or r.get("drive_url")
             or ""
         ).strip()
-        if not op_txt and not prm_txt and not val_txt and not doc_txt:
+        if not op_txt and not prm_txt and not val_txt and not um_txt and not doc_txt:
             continue
         ef_raw = r.get("Efectuat", True)
         if isinstance(ef_raw, str):
@@ -181,8 +182,9 @@ def _normalizare_randuri_operatiuni(rows_in: list[dict]) -> list[dict]:
         rez.append({
             "Ordine": int(r.get("Ordine") or r.get("ordine") or idx),
             "Operațiune / Verificare": op_txt,
-            "Piese / Parametri Măsurați": prm_txt,
-            "Valori / Observații": val_txt,
+            "Denumire parametru": prm_txt,
+            "Valoare": val_txt,
+            "UM": um_txt,
             "Documentație": doc_txt,
             "Efectuat": ef_val,
         })
@@ -305,21 +307,22 @@ def _render_sectiune_operatiuni(
             st.session_state[rows_key] = []
 
     rows_curente = list(st.session_state[rows_key] or [])
+    catalog_db = incarca_catalog_operatiuni_db()
 
     if is_unlocked:
-        st.markdown("#### 📎 Încarcă / Setează operațiune, piesă / parametru măsurat și documentație")
+        st.markdown("#### 📎 Încarcă / Setează operațiune, denumire parametru, valoare, UM și documentație")
         opt_cat = {"-- Introdu manual / copy-paste --": None}
-        for it in CATALOG_OPERATIUNI_PREDEFINITE:
+        for it in catalog_db:
             opt_cat[f"[{it['sistem']}] {it['operatiune']}"] = it
 
         sel_cat_label = st.selectbox(
-            "Alege operațiunea din lista pe capitole (sau lasă manual / copy-paste)",
+            "Alege operațiunea din DB (sau lasă manual / copy-paste)",
             options=list(opt_cat.keys()),
             key=f"ment_sel_cat_{masina_obj['id']}",
         )
         item_cat = opt_cat.get(sel_cat_label)
 
-        c_op, c_prm, c_val = st.columns([2.4, 1.3, 1.0])
+        c_op, c_prm, c_val, c_um = st.columns([2.2, 1.2, 0.9, 0.7])
         with c_op:
             op_noua = st.text_input(
                 "Operațiune / Verificare (manual sau copy-paste)",
@@ -328,23 +331,30 @@ def _render_sectiune_operatiuni(
             ).strip()
         with c_prm:
             prm_nou = st.text_input(
-                "Piesă / Parametru măsurat",
-                value=(item_cat.get("parametru") or item_cat.get("standard") or "" if item_cat else ""),
-                placeholder="ex: Rulment / Tensiune",
+                "Denumire parametru",
+                value=(item_cat.get("parametru") or "" if item_cat else ""),
+                placeholder="ex: Tensiune / Presiune",
                 key=f"ment_inp_prm_{masina_obj['id']}_{sel_cat_label[:25]}",
             ).strip()
         with c_val:
             val_noua = st.text_input(
-                "Valoare / Observații",
+                "Valoare",
                 value=(item_cat.get("valoare") or "" if item_cat else ""),
-                placeholder="ex: 24.0 V / 1 buc",
+                placeholder="ex: 24.0 / 6.2",
                 key=f"ment_inp_val_{masina_obj['id']}_{sel_cat_label[:25]}",
             ).strip()
+        with c_um:
+            um_noua = st.text_input(
+                "UM",
+                value=(item_cat.get("um") or "" if item_cat else ""),
+                placeholder="ex: V / bar",
+                key=f"ment_inp_um_{masina_obj['id']}_{sel_cat_label[:25]}",
+            ).strip()
 
-        c_lnk, c_fil = st.columns([2.2, 1.8])
+        c_lnk, c_fil, c_db = st.columns([1.8, 1.5, 1.2])
         with c_lnk:
             lnk_nou = st.text_input(
-                "Link documentație / Drive (opțional)",
+                "Link documentație (opțional)",
                 value=(item_cat.get("drive", "") if item_cat else ""),
                 placeholder="https://drive.google.com/...",
                 key=f"ment_inp_lnk_{masina_obj['id']}",
@@ -355,6 +365,12 @@ def _render_sectiune_operatiuni(
                 type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
                 key=f"ment_up_doc_{masina_obj['id']}",
             )
+        with c_db:
+            salveaza_db = st.checkbox(
+                "Salvează și în DB",
+                value=(item_cat is None),
+                key=f"ment_chk_db_{masina_obj['id']}",
+            )
 
         if st.button("➕ Adaugă operațiunea în tabel", key=f"ment_btn_add_op_{masina_obj['id']}"):
             if not op_noua:
@@ -363,11 +379,21 @@ def _render_sectiune_operatiuni(
                 doc_final = lnk_nou
                 if fil_nou is not None:
                     doc_final = _salveaza_doc_local_ment(fil_nou, f"m{masina_obj['id']}_op{len(rows_curente)+1}")
+                if salveaza_db and item_cat is None:
+                    adauga_operatiune_in_catalog_db(
+                        sistem="Personalizat",
+                        operatiune=op_noua,
+                        parametru=prm_nou,
+                        valoare=val_noua,
+                        um=um_noua,
+                        drive=doc_final,
+                    )
                 rows_curente.append({
                     "Ordine": len(rows_curente) + 1,
                     "Operațiune / Verificare": op_noua,
-                    "Piese / Parametri Măsurați": prm_nou,
-                    "Valori / Observații": val_noua,
+                    "Denumire parametru": prm_nou,
+                    "Valoare": val_noua,
+                    "UM": um_noua,
                     "Documentație": doc_final,
                     "Efectuat": True,
                 })
@@ -406,8 +432,9 @@ def _render_sectiune_operatiuni(
     df_init = pd.DataFrame(rows_curente) if rows_curente else pd.DataFrame(columns=[
         "Ordine",
         "Operațiune / Verificare",
-        "Piese / Parametri Măsurați",
-        "Valori / Observații",
+        "Denumire parametru",
+        "Valoare",
+        "UM",
         "Documentație",
         "Efectuat",
     ])
@@ -417,12 +444,13 @@ def _render_sectiune_operatiuni(
         hide_index=True,
         num_rows="dynamic" if is_unlocked else "fixed",
         use_container_width=True,
-        disabled=[] if is_unlocked else ["Ordine", "Operațiune / Verificare", "Piese / Parametri Măsurați", "Valori / Observații", "Documentație", "Efectuat"],
+        disabled=[] if is_unlocked else ["Ordine", "Operațiune / Verificare", "Denumire parametru", "Valoare", "UM", "Documentație", "Efectuat"],
         column_config={
             "Ordine": st.column_config.NumberColumn("Ordine", width="small", step=1),
             "Operațiune / Verificare": st.column_config.TextColumn("Operațiune / Verificare", width="large"),
-            "Piese / Parametri Măsurați": st.column_config.TextColumn("Piese / Parametri Măsurați", width="medium"),
-            "Valori / Observații": st.column_config.TextColumn("Valori / Observații", width="medium"),
+            "Denumire parametru": st.column_config.TextColumn("Denumire parametru", width="medium"),
+            "Valoare": st.column_config.TextColumn("Valoare", width="small"),
+            "UM": st.column_config.TextColumn("UM", width="small"),
             "Documentație": st.column_config.TextColumn("Documentație", width="medium"),
             "Efectuat": st.column_config.CheckboxColumn("Efectuat", width="small"),
         },
@@ -471,10 +499,12 @@ def _genereaza_pdf_cu_fallback(fisa_payload: dict) -> bytes:
         chk = fisa_payload.get("checklist_json") or {}
         fisa_spec = chk.get("fisa_specifica_utilaj") if isinstance(chk, dict) else {}
         for r in (fisa_spec.get("randuri") or []):
+            prm = r.get("Denumire parametru") or r.get("Piese / Parametri Măsurați") or ""
+            val = r.get("Valoare") or r.get("Valori / Observații") or ""
+            um = r.get("UM") or ""
             linie = (
                 f"{r.get('Ordine', '')}. {r.get('Operațiune / Verificare', '')} | "
-                f"{r.get('Piese / Parametri Măsurați', '')}: {r.get('Valori / Observații', '')} | "
-                f"Efectuat: {r.get('Efectuat', '')}"
+                f"{prm}: {val} {um} | Efectuat: {r.get('Efectuat', '')}"
             )
             pdf.multi_cell(0, 6, linie.encode("latin-1", errors="replace").decode("latin-1"))
         out = pdf.output(dest="S")
@@ -540,7 +570,7 @@ def render_mentenanta():
         if draft.get("edit_fisa_id") is not None:
             st.info(f"✏️ **Editare fișă din istoric #{draft['edit_fisa_id']}** — operațiunile din fișa salvată sunt încărcate în tabel.")
         else:
-            st.caption("📄 **Fișă nouă:** tabelul de operațiuni pornește gol; adaugă operațiuni din listă sau manual / copy-paste.")
+            st.caption("📄 **Fișă nouă:** tabelul de operațiuni pornește gol; adaugă operațiuni din DB sau manual / copy-paste.")
     with c_top2:
         if st.button("➕ Fișă nouă (gol)", use_container_width=True):
             for k in [k for k in list(st.session_state.keys()) if k.startswith("ment_ops_rows_")]:
@@ -599,17 +629,60 @@ def render_mentenanta():
         else:
             draft["nivel_grila"] = "Nivel A – Multimarcă (<20h)"
 
+    _asigura_coloane_intretinere_ment()
+    tip_int_masina = masina_obj.get("tip_intretinere") or "Lunară"
+    interval_din_db = int(masina_obj.get("interval_intretinere_zile") or 0)
+    durata_implicita_zile = interval_din_db if interval_din_db > 0 else INTERVALE_ZILE.get(tip_int_masina, 30)
+
+    # Mutat imediat sub selectoarele Client, Denumire echipament, Data
+    with st.expander("📋 Date Identificare Echipament & Stare Tehnică", expanded=True):
+        d1, d2, d3, d4 = st.columns(4)
+        draft["punct_lucru"] = d1.text_input("Punct de Lucru / Oraș", value=str(draft.get("punct_lucru", "")))
+        draft["producator_model"] = d2.text_input("Producător / Model", value=str(draft.get("producator_model", "")))
+        draft["serie_fabricatie"] = d3.text_input("Serie Fabricație", value=str(draft.get("serie_fabricatie", "")))
+        draft["nr_inventar"] = d4.text_input("Nr. Inventar Intern", value=str(draft.get("nr_inventar", "")))
+
+        e1, e2, e3 = st.columns(3)
+        draft["ore_functionare"] = e1.text_input("Ore Funcționare Utilaj", value=str(draft.get("ore_functionare", "")), placeholder="ex: 14520")
+        draft["ore_cumulate"] = e2.text_input("Ore Cumulate (din 20h)", value=str(draft.get("ore_cumulate", "")), placeholder="ex: 6 / 20")
+        opt_grila = [
+            "Nivel A – Multimarcă (<20h)",
+            "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
+        ]
+        idx_gr = opt_grila.index(draft["nivel_grila"]) if draft.get("nivel_grila") in opt_grila else 0
+        draft["nivel_grila"] = e3.selectbox("Nivel Grilă Aplicabilă", options=opt_grila, index=idx_gr)
+
+        s1, s2, s3 = st.columns(3)
+        opt_stare_ini = [
+            "Funcțional",
+            "Nefuncțional",
+            "Degradare moderată",
+            "Stare avansată de degradare"
+        ]
+        idx_si = opt_stare_ini.index(draft["stare_initiala"]) if draft.get("stare_initiala") in opt_stare_ini else 0
+        draft["stare_initiala"] = s1.selectbox("Stare Inițială Utilaj", options=opt_stare_ini, index=idx_si)
+
+        opt_stare_fin = [
+            "Funcțional (parametri nominali)",
+            "Funcțional cu restricții (necesită piese)",
+            "Oprit siguranță"
+        ]
+        idx_sf = opt_stare_fin.index(draft["stare_finala"]) if draft.get("stare_finala") in opt_stare_fin else 0
+        draft["stare_finala"] = s2.selectbox("Stare Finală Utilaj", options=opt_stare_fin, index=idx_sf)
+
+        zile_add = durata_implicita_zile
+        urmatoarea_rev_default = data_interv + timedelta(days=zile_add)
+        urmatoarea_revizie = s3.date_input(
+            f"Următoarea Revizie ({tip_int_masina})",
+            value=urmatoarea_rev_default
+        )
+
     if total_int_m >= prag_int_m:
         st.warning(f"🔔 **Atenție Grilă Tarifare:** Utilajul **{sel_masina}** a atins/depășit pragul (**{total_int_m} / {prag_int_m}** intervenții)! Se recomandă trecerea la următoarea grilă de tarifare (**Nivel B**).")
     else:
         st.info(f"📊 **Contor intervenții ({sel_masina}):** {total_int_m} / {prag_int_m} efectuate (mai sunt **{prag_int_m - total_int_m}** până la următoarea grilă).")
 
-    _asigura_coloane_intretinere_ment()
     este_fara_int = bool(masina_obj.get("fara_intretinere", False))
-    tip_int_masina = masina_obj.get("tip_intretinere") or "Lunară"
-    interval_din_db = int(masina_obj.get("interval_intretinere_zile") or 0)
-    durata_implicita_zile = interval_din_db if interval_din_db > 0 else INTERVALE_ZILE.get(tip_int_masina, 30)
-
     with st.expander(f"🗓️ Planificare & Replanificare Întreținere — {sel_masina}", expanded=False):
         if este_fara_int:
             st.info("🚫 Această mașină este scoasă din întreținere (**Fără întreținere**).")
@@ -683,48 +756,6 @@ def render_mentenanta():
             data_interv=data_interv,
             is_unlocked=is_unlocked,
             frecventa_init=tip_int_masina,
-        )
-
-    with st.expander("📋 Date Identificare Echipament & Stare Tehnică", expanded=True):
-        d1, d2, d3, d4 = st.columns(4)
-        draft["punct_lucru"] = d1.text_input("Punct de Lucru / Oraș", value=str(draft.get("punct_lucru", "")))
-        draft["producator_model"] = d2.text_input("Producător / Model", value=str(draft.get("producator_model", "")))
-        draft["serie_fabricatie"] = d3.text_input("Serie Fabricație", value=str(draft.get("serie_fabricatie", "")))
-        draft["nr_inventar"] = d4.text_input("Nr. Inventar Intern", value=str(draft.get("nr_inventar", "")))
-
-        e1, e2, e3 = st.columns(3)
-        draft["ore_functionare"] = e1.text_input("Ore Funcționare Utilaj", value=str(draft.get("ore_functionare", "")), placeholder="ex: 14520")
-        draft["ore_cumulate"] = e2.text_input("Ore Cumulate (din 20h)", value=str(draft.get("ore_cumulate", "")), placeholder="ex: 6 / 20")
-        opt_grila = [
-            "Nivel A – Multimarcă (<20h)",
-            "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
-        ]
-        idx_gr = opt_grila.index(draft["nivel_grila"]) if draft.get("nivel_grila") in opt_grila else 0
-        draft["nivel_grila"] = e3.selectbox("Nivel Grilă Aplicabilă", options=opt_grila, index=idx_gr)
-
-        s1, s2, s3 = st.columns(3)
-        opt_stare_ini = [
-            "Funcțional",
-            "Nefuncțional",
-            "Degradare moderată",
-            "Stare avansată de degradare"
-        ]
-        idx_si = opt_stare_ini.index(draft["stare_initiala"]) if draft.get("stare_initiala") in opt_stare_ini else 0
-        draft["stare_initiala"] = s1.selectbox("Stare Inițială Utilaj", options=opt_stare_ini, index=idx_si)
-
-        opt_stare_fin = [
-            "Funcțional (parametri nominali)",
-            "Funcțional cu restricții (necesită piese)",
-            "Oprit siguranță"
-        ]
-        idx_sf = opt_stare_fin.index(draft["stare_finala"]) if draft.get("stare_finala") in opt_stare_fin else 0
-        draft["stare_finala"] = s2.selectbox("Stare Finală Utilaj", options=opt_stare_fin, index=idx_sf)
-
-        zile_add = durata_implicita_zile
-        urmatoarea_rev_default = data_interv + timedelta(days=zile_add)
-        urmatoarea_revizie = s3.date_input(
-            f"Următoarea Revizie ({tip_int_masina})",
-            value=urmatoarea_rev_default
         )
 
     st.markdown("---")
@@ -879,4 +910,3 @@ def _render_istoric_mentenanta(firme_dict: dict):
             if isinstance(fisa_spec, dict) and fisa_spec.get("randuri"):
                 st.caption(f"**{fisa_spec.get('titlu', 'Operațiuni Mentenanță')}**")
                 st.dataframe(pd.DataFrame(fisa_spec["randuri"]), hide_index=True, use_container_width=True)
-                
