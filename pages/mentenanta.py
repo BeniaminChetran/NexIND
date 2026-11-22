@@ -13,7 +13,11 @@ from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
 from repositories.mentenanta_repository import MentenantaRepository, INTERVALE_ZILE
 from repositories.setari_repository import SetariRepository
 from services.pdf_service import genereaza_pdf_mentenanta
-from pages.fise_mentenanta import FRECVENTE_MENTENANTA, obtine_fisa_pentru_utilaj
+from pages.fise_mentenanta import (
+    FRECVENTE_MENTENANTA,
+    construieste_nume_fisa,
+    obtine_fisa_pentru_utilaj,
+)
 
 SECTIONS_MENTENANTA = [
     {
@@ -119,32 +123,6 @@ SECTIONS_MENTENANTA = [
     }
 ]
 
-FRECVENTE_MENTENANTA = ["Zilnică", "Săptămânală", "Lunară", "Trimestrială", "Anuală"]
-
-FISE_GENERALE_IMPLICITE = {
-    "Zilnică": [
-        {"Ordine": 1, "Operațiune / Verificare": "Curățare zonă de lucru și senzori", "Standard / Observații": "Fără resturi sau praf"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare presiune aer / nivel lichide", "Standard / Observații": "În parametri normali"},
-        {"Ordine": 3, "Operațiune / Verificare": "Control zgomote, vibrații sau scurgeri", "Standard / Observații": "Fără anomalii"},
-    ],
-    "Săptămânală": [
-        {"Ordine": 1, "Operațiune / Verificare": "Curățare filtre și ventilatoare răcire", "Standard / Observații": "Flux aer liber"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare strângere conexiuni și ghidaje", "Standard / Observații": "Fără jocuri"},
-    ],
-    "Lunară": [
-        {"Ordine": 1, "Operațiune / Verificare": "Lubrifiere puncte de ungere conform manual", "Standard / Observații": "Vaselină / ulei prescris"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare cabluri, senzori și siguranțe", "Standard / Observații": "Izolație intactă"},
-    ],
-    "Trimestrială": [
-        {"Ordine": 1, "Operațiune / Verificare": "Calibrare / verificare aliniere și parametri", "Standard / Observații": "În toleranțe"},
-        {"Ordine": 2, "Operațiune / Verificare": "Revizie elemente de uzură și curele/furtunuri", "Standard / Observații": "Înlocuire dacă e cazul"},
-    ],
-    "Anuală": [
-        {"Ordine": 1, "Operațiune / Verificare": "Revizie generală mecanică și electrică", "Standard / Observații": "Verificare completă"},
-        {"Ordine": 2, "Operațiune / Verificare": "Înlocuire consumabile / lichide conform plan", "Standard / Observații": "Conform carte tehnică"},
-    ],
-}
-
 
 def _asigura_coloane_intretinere_ment():
     if st.session_state.get("_ment_coloane_verificate"):
@@ -159,124 +137,6 @@ def _asigura_coloane_intretinere_ment():
         pass
 
 
-@st.cache_data(ttl=120)
-def _incarca_fise_mentenanta_cache() -> list[dict]:
-    try:
-        with db_cursor() as c:
-            c.execute("""
-                SELECT este_generala, denumire_masina, tip_masina, frecventa, pasi_json
-                FROM fise_mentenanta_preventiva
-            """)
-            rows = [dict(r) for r in (c.fetchall() or [])]
-    except Exception:
-        return []
-
-    for r in rows:
-        raw = r.get("pasi_json")
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                r["pasi"] = parsed if isinstance(parsed, list) else []
-            except Exception:
-                r["pasi"] = []
-        elif isinstance(raw, list):
-            r["pasi"] = raw
-        else:
-            r["pasi"] = []
-    return rows
-
-
-def obtine_fisa_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: str) -> dict:
-    """
-    Returnează fișa activă pentru (denumire_masina, tip_masina, frecventa) — fără firmă:
-    1. Fișă proprie salvată pe denumire_masina + tip_masina + frecventa
-    2. Fișă generală pe frecventa
-    3. Fișă implicită pe frecventa
-    """
-    fise_db = _incarca_fise_mentenanta_cache()
-    frec_clean = str(frecventa or "Lunară").strip()
-    den_clean = str(denumire_masina or "").strip()
-    tip_clean = str(tip_masina or "").strip()
-
-    frec_l = frec_clean.lower()
-    den_l = den_clean.lower()
-    tip_l = tip_clean.lower()
-
-    for f in fise_db:
-        if (
-            not bool(f.get("este_generala"))
-            and str(f.get("denumire_masina") or "").strip().lower() == den_l
-            and str(f.get("tip_masina") or "").strip().lower() == tip_l
-            and str(f.get("frecventa") or "").strip().lower() == frec_l
-        ):
-            return {
-                "sursa": "proprie",
-                "frecventa": frec_clean,
-                "denumire_masina": den_clean,
-                "tip_masina": tip_clean,
-                "pasi": f.get("pasi") or [],
-            }
-
-    for f in fise_db:
-        if bool(f.get("este_generala")) and str(f.get("frecventa") or "").strip().lower() == frec_l:
-            return {
-                "sursa": "generala",
-                "frecventa": frec_clean,
-                "denumire_masina": den_clean,
-                "tip_masina": tip_clean,
-                "pasi": f.get("pasi") or [],
-            }
-
-    return {
-        "sursa": "implicita",
-        "frecventa": frec_clean,
-        "denumire_masina": den_clean,
-        "tip_masina": tip_clean,
-        "pasi": FISE_GENERALE_IMPLICITE.get(frec_clean, []),
-    }
-
-def render_fisa_specifica_utilaj(masina_obj: dict, frecventa_init: str = "Lunară"):
-    den_masina = str(masina_obj.get("denumire") or "").strip()
-    tip_masina = str(masina_obj.get("tip_masina") or "").strip()
-
-    idx_frec = FRECVENTE_MENTENANTA.index(frecventa_init) if frecventa_init in FRECVENTE_MENTENANTA else 2
-    frec_sel = st.selectbox(
-        "Frecvență fișă de mentenanță",
-        options=FRECVENTE_MENTENANTA,
-        index=idx_frec,
-        key=f"ment_frec_fisa_{masina_obj['id']}",
-    )
-
-    fisa = obtine_fisa_pentru_utilaj(den_masina, tip_masina, frec_sel)
-    pasi = fisa.get("pasi") or []
-
-    eticheta = "Fișă proprie" if fisa["sursa"] == "proprie" else "Fișă generală"
-    st.caption(f"Utilaj: **{den_masina}** | Tip: **{tip_masina or '-'}** | Frecvență: **{frec_sel}** | Sursă: **{eticheta}**")
-
-    if not pasi:
-        st.info("Nu există pași definiți pentru această combinație.")
-        return pd.DataFrame(columns=["Ordine", "Operațiune / Verificare", "Standard / Observații", "Efectuat", "Observații"])
-
-    df_fisa = pd.DataFrame([
-        {
-            "Ordine": int(p.get("Ordine") or i),
-            "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or ""),
-            "Standard / Observații": str(p.get("Standard / Observații") or ""),
-            "Efectuat": True,
-            "Observații": "",
-        }
-        for i, p in enumerate(pasi, start=1)
-    ])
-
-    return st.data_editor(
-        df_fisa,
-        hide_index=True,
-        num_rows="fixed",
-        use_container_width=True,
-        disabled=["Ordine", "Operațiune / Verificare", "Standard / Observații"],
-        key=f"ment_ed_fisa_spec_{masina_obj['id']}_{frec_sel}",
-    )
-
 def _scoate_masina_din_intretinere_ment(masina_id: int):
     _asigura_coloane_intretinere_ment()
     with db_cursor() as c:
@@ -286,6 +146,7 @@ def _scoate_masina_din_intretinere_ment(masina_id: int):
         )
     if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
         MasiniRepository.get_all.clear()
+
 
 def _programeaza_masina_intretinere_ment(masina_id: int, data_prog: date, interval_zile: int, ultima_d: date | None = None):
     _asigura_coloane_intretinere_ment()
@@ -303,6 +164,7 @@ def _programeaza_masina_intretinere_ment(masina_id: int, data_prog: date, interv
         )
     if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
         MasiniRepository.get_all.clear()
+
 
 def _replanifica_dupa_pasi_ment(masina_id: int, data_efectuare: date, urmatoarea_data: date, interval_zile: int):
     _asigura_coloane_intretinere_ment()
@@ -324,6 +186,7 @@ def _replanifica_dupa_pasi_ment(masina_id: int, data_efectuare: date, urmatoarea
     if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
         MasiniRepository.get_all.clear()
 
+
 def _get_items_pentru_masina(sec: dict, masina_obj: dict | None) -> list:
     s_key = sec["key"]
     if masina_obj:
@@ -331,6 +194,7 @@ def _get_items_pentru_masina(sec: dict, masina_obj: dict | None) -> list:
         if isinstance(custom_map, dict) and s_key in custom_map and isinstance(custom_map[s_key], list):
             return custom_map[s_key]
     return list(sec["items"])
+
 
 def _build_df_for_section(sec: dict, masina_obj: dict | None = None, default_status: str = "DA") -> pd.DataFrame:
     items = _get_items_pentru_masina(sec, masina_obj)
@@ -346,12 +210,14 @@ def _build_df_for_section(sec: dict, masina_obj: dict | None = None, default_sta
         })
     return pd.DataFrame(rows)
 
+
 def _incarca_dfs_pentru_masina(masina_obj: dict | None, default_status: str = "DA"):
     st.session_state["ment_dfs"] = {
         sec["key"]: _build_df_for_section(sec, masina_obj, default_status)
         for sec in SECTIONS_MENTENANTA
     }
     st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
+
 
 def _init_sau_reseteaza_ment_draft(tehnician_def: str, default_status: str = "DA"):
     st.session_state["ment_draft"] = {
@@ -373,9 +239,11 @@ def _init_sau_reseteaza_ment_draft(tehnician_def: str, default_status: str = "DA
         "functie_verificator": "",
         "ultima_firma": "-- Alege firma --",
         "ultima_masina": "-- Alege mașina --",
-        "necesar": {sec["key"]: "" for sec in SECTIONS_MENTENANTA}
+        "necesar": {sec["key"]: "" for sec in SECTIONS_MENTENANTA},
+        "capitole_excluse": [],
     }
     _incarca_dfs_pentru_masina(None, default_status)
+
 
 def _aplica_status_global(status_nou: str):
     if "ment_dfs" not in st.session_state:
@@ -386,6 +254,53 @@ def _aplica_status_global(status_nou: str):
             df["Conformitate"] = status_nou
             st.session_state["ment_dfs"][sec["key"]] = df
     st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
+
+
+def _render_fisa_specifica_utilaj(masina_obj: dict, frecventa_init: str = "Lunară"):
+    den_masina = str(masina_obj.get("denumire") or "").strip()
+    tip_masina = str(masina_obj.get("tip_masina") or "").strip()
+
+    idx_frec = FRECVENTE_MENTENANTA.index(frecventa_init) if frecventa_init in FRECVENTE_MENTENANTA else 2
+    frec_sel = st.selectbox(
+        "Tip întreținere / Frecvență fișă",
+        options=FRECVENTE_MENTENANTA,
+        index=idx_frec,
+        key=f"ment_frec_fisa_{masina_obj['id']}",
+    )
+
+    fisa = obtine_fisa_pentru_utilaj(den_masina, tip_masina, frec_sel)
+    nume_fisa = fisa.get("nume_fisa") or construieste_nume_fisa(den_masina, tip_masina, frec_sel, False)
+    eticheta_sursa = "Fișă proprie" if fisa.get("sursa") == "proprie" else "Fișă generală"
+    pasi = fisa.get("pasi") or []
+
+    st.caption(f"Denumire fișă: **{nume_fisa}** | Sursă: **{eticheta_sursa}**")
+
+    if not pasi:
+        st.info("Nu există pași definiți pentru această combinație.")
+        df_gol = pd.DataFrame(columns=["Ordine", "Operațiune / Verificare", "Standard / Observații", "Efectuat", "Observații"])
+        return df_gol, nume_fisa, frec_sel
+
+    df_fisa = pd.DataFrame([
+        {
+            "Ordine": int(p.get("Ordine") or i),
+            "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or ""),
+            "Standard / Observații": str(p.get("Standard / Observații") or ""),
+            "Efectuat": True,
+            "Observații": "",
+        }
+        for i, p in enumerate(pasi, start=1)
+    ])
+
+    df_ed = st.data_editor(
+        df_fisa,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["Ordine", "Operațiune / Verificare", "Standard / Observații"],
+        key=f"ment_ed_fisa_spec_{masina_obj['id']}_{frec_sel}",
+    )
+    return df_ed, nume_fisa, frec_sel
+
 
 def render_mentenanta():
     st.subheader("🛡️ Fișă de Mentenanță Preventivă & Audit Tehnic")
@@ -400,6 +315,8 @@ def render_mentenanta():
         st.session_state["ment_salvat"] = False
     if "ment_pdf_bytes" not in st.session_state:
         st.session_state["ment_pdf_bytes"] = None
+    if "ment_pdf_name" not in st.session_state:
+        st.session_state["ment_pdf_name"] = None
     if "ment_id_salvat" not in st.session_state:
         st.session_state["ment_id_salvat"] = None
 
@@ -410,10 +327,11 @@ def render_mentenanta():
         c_dl1, c_dl2 = st.columns(2)
         with c_dl1:
             if st.session_state["ment_pdf_bytes"]:
+                nume_pdf = st.session_state.get("ment_pdf_name") or f"Fisa_Mentenanta_Preventiva_{st.session_state['ment_id_salvat']}.pdf"
                 st.download_button(
                     label="📥 Descarcă Fișa de Mentenanță Preventivă (PDF)",
                     data=st.session_state["ment_pdf_bytes"],
-                    file_name=f"Fisa_Mentenanta_Preventiva_{st.session_state['ment_id_salvat']}.pdf",
+                    file_name=nume_pdf,
                     mime="application/pdf",
                     type="primary",
                     use_container_width=True
@@ -422,6 +340,7 @@ def render_mentenanta():
             if st.button("➕ Completează o fișă nouă", use_container_width=True):
                 st.session_state["ment_salvat"] = False
                 st.session_state["ment_pdf_bytes"] = None
+                st.session_state["ment_pdf_name"] = None
                 st.session_state["ment_id_salvat"] = None
                 _init_sau_reseteaza_ment_draft(tehnician_def, "DA")
                 st.rerun()
@@ -581,12 +500,12 @@ def render_mentenanta():
                             f"✅ **{sel_masina}** marcată ca efectuată la **{data_efect_pasi}** și replanificată la **{urm_data_replan}**."
                         )
                         st.rerun()
-    
-    
-    with st.expander(f"📄 Fișă Specifică Utilaj ({sel_masina} — {tip_int_masina})", expanded=True):
-        df_fisa_utilaj = render_fisa_specifica_utilaj(masina_obj, frecventa_init=tip_int_masina)
-    
-    
+
+    with st.expander(f"📄 Fișă Specifică Utilaj — {construieste_nume_fisa(sel_masina, str(masina_obj.get('tip_masina') or ''), tip_int_masina, False)}", expanded=True):
+        df_fisa_utilaj, nume_fisa_activa, frec_fisa_activa = _render_fisa_specifica_utilaj(
+            masina_obj, frecventa_init=tip_int_masina
+        )
+
     sisteme_utilaj = [
         s.strip() for s in str(masina_obj.get("sisteme_active") or ALL_SISTEME_DEFAULT).split(",")
         if s.strip()
@@ -697,14 +616,30 @@ def render_mentenanta():
         if afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
     ]
 
+    capitole_excluse = draft.setdefault("capitole_excluse", [])
+    if capitole_excluse:
+        c_r1, c_r2 = st.columns([3, 1.5], vertical_alignment="center")
+        c_r1.caption(f"🚫 Capitole eliminate din această fișă: **{', '.join(capitole_excluse)}**")
+        if c_r2.button("↩️ Restaurează capitolele", key="btn_rest_cap_ment", use_container_width=True):
+            draft["capitole_excluse"] = []
+            st.rerun()
+
     for sec in sectiuni_active:
         s_key = sec["key"]
+        if s_key in capitole_excluse:
+            continue
+
         df_sec = st.session_state["ment_dfs"][s_key]
         nr_nu = int((df_sec["Conformitate"] == "NU").sum()) if not df_sec.empty else 0
         badge = f" — ⚠️ {nr_nu} neconformități" if nr_nu > 0 else " — ✅ OK"
 
         with st.expander(f"{sec['titlu']}{badge}", expanded=(s_key in ("electric_decuplat", "electric_cuplat", "mecanic") or nr_nu > 0)):
             st.caption(f"ℹ️ {sec['nota']}")
+            if st.button(f"🗑️ Elimină tot capitolul ({sec['sistem_cod']})", key=f"btn_del_cap_{s_key}"):
+                draft["capitole_excluse"].append(s_key)
+                st.toast(f"🗑️ Capitolul „{sec['sistem_cod']}” a fost eliminat din această fișă.")
+                st.rerun()
+
             edited_sec = st.data_editor(
                 df_sec,
                 hide_index=True,
@@ -814,9 +749,12 @@ def render_mentenanta():
 
     if st.button("💾 Salvează Fișa de Mentenanță & Generează PDF", type="primary", use_container_width=True):
         checklist_payload = {}
+        capitole_excluse_set = set(draft.get("capitole_excluse") or [])
         for sec in SECTIONS_MENTENANTA:
             s_key = sec["key"]
-            is_active = afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
+            is_active = (s_key not in capitole_excluse_set) and (
+                afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
+            )
             df_cur = st.session_state["ment_dfs"][s_key].copy()
             if not is_active:
                 df_cur["Conformitate"] = "N/A"
@@ -829,23 +767,21 @@ def render_mentenanta():
                 "randuri": df_cur.to_dict(orient="records")
             }
 
-        fisa_spec_rows = []
-        if "df_fisa_utilaj" in locals() and df_fisa_utilaj is not None and not df_fisa_utilaj.empty:
-            fisa_spec_rows = df_fisa_utilaj.fillna("").to_dict(orient="records")
-
+        fisa_spec_rows = df_fisa_utilaj.fillna("").to_dict(orient="records") if df_fisa_utilaj is not None and not df_fisa_utilaj.empty else []
         checklist_payload["fisa_specifica_utilaj"] = {
-            "titlu": f"Fișă Specifică Utilaj ({sel_masina})",
+            "titlu": nume_fisa_activa,
             "denumire_masina": str(masina_obj.get("denumire") or "").strip(),
             "tip_masina": str(masina_obj.get("tip_masina") or "").strip(),
+            "frecventa": frec_fisa_activa,
             "randuri": fisa_spec_rows,
         }
-        
-        
+
         fisa_data = {
             "firma_id": firma_obj["id"],
             "masina_id": masina_obj["id"],
             "firma_nume": sel_firma,
             "masina_nume": sel_masina,
+            "nume_fisa": nume_fisa_activa,
             "punct_lucru": draft["punct_lucru"],
             "producator_model": draft["producator_model"],
             "serie_fabricatie": draft["serie_fabricatie"],
@@ -867,16 +803,19 @@ def render_mentenanta():
         new_id = MentenantaRepository.insert(fisa_data)
         fisa_data["id"] = new_id
         pdf_bytes = genereaza_pdf_mentenanta(fisa_data)
+        nume_pdf_cur = nume_fisa_activa.replace(" + ", "_").replace(" ", "_") + f"_{new_id}.pdf"
 
         st.session_state["ment_id_salvat"] = new_id
         st.session_state["ment_pdf_bytes"] = pdf_bytes
+        st.session_state["ment_pdf_name"] = nume_pdf_cur
         st.session_state["ment_salvat"] = True
         _init_sau_reseteaza_ment_draft(tehnician_def, "DA")
         st.rerun()
 
     _render_istoric_mentenanta(firme_dict)
 
-def render_istoric_mentenanta(firme_dict: dict):
+
+def _render_istoric_mentenanta(firme_dict: dict):
     st.markdown("---")
     st.subheader("📂 Istoric Fișe de Mentenanță Preventivă")
     fise_salvate = MentenantaRepository.get_all()
@@ -888,30 +827,38 @@ def render_istoric_mentenanta(firme_dict: dict):
         fid = fisa["id"]
         data_str = str(fisa.get("data_interventie", ""))[:10]
         with st.expander(f"🛡️ Fișă #{fid} | {fisa.get('firma_nume')} — {fisa.get('masina_nume')} ({data_str}) | Stare: {fisa.get('stare_finala', '')}"):
+            chk = fisa.get("checklist_json") or {}
+            if isinstance(chk, str):
+                try:
+                    chk = json.loads(chk)
+                except Exception:
+                    chk = {}
+
+            fisa_spec = chk.get("fisa_specifica_utilaj") if isinstance(chk, dict) else None
+            nume_fisa_hist = (
+                (fisa_spec.get("titlu") if isinstance(fisa_spec, dict) else "")
+                or construieste_nume_fisa(
+                    fisa.get("masina_nume") or "",
+                    fisa.get("producator_model") or "",
+                    "Lunară",
+                    False,
+                )
+            )
+
             c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="center")
             with c1:
+                st.write(f"**Fișă:** {nume_fisa_hist}")
                 st.write(f"**Serie:** {fisa.get('serie_fabricatie') or '-'} | **Ore utilaj:** {fisa.get('ore_functionare') or '-'} | **Tehnician:** {fisa.get('tehnician') or '-'}")
                 st.write(f"**Următoarea revizie:** {str(fisa.get('urmatoarea_revizie') or '-')[:10]}")
             with c2:
-                chk = fisa.get("checklist_json") or {}
-               if isinstance(chk, str):
-                    try:
-                        chk = json.loads(chk)
-                    except Exception:
-                        chk = {}
-
-                fisa_spec = chk.get("fisa_specifica_utilaj") if isinstance(chk, dict) else None
-                if isinstance(fisa_spec, dict) and fisa_spec.get("randuri"):
-                    st.caption(f"**{fisa_spec.get('titlu', 'Fișă Specifică Utilaj')}**")
-                    st.dataframe(pd.DataFrame(fisa_spec["randuri"]), hide_index=True, use_container_width=True)
-
                 fisa_pdf_payload = dict(fisa)
                 fisa_pdf_payload["checklist_json"] = chk
                 pdf_hist = genereaza_pdf_mentenanta(fisa_pdf_payload)
+                nume_pdf_hist = nume_fisa_hist.replace(" + ", "_").replace(" ", "_") + f"_{fid}.pdf"
                 st.download_button(
                     label="📥 Descarcă PDF",
                     data=pdf_hist,
-                    file_name=f"Fisa_Mentenanta_{fid}_{str(fisa.get('masina_nume', '')).replace(' ', '_')}.pdf",
+                    file_name=nume_pdf_hist,
                     mime="application/pdf",
                     key=f"dl_ment_hist_{fid}",
                     use_container_width=True
@@ -920,32 +867,7 @@ def render_istoric_mentenanta(firme_dict: dict):
                 if st.button("🗑️ Șterge", key=f"del_ment_{fid}", use_container_width=True):
                     MentenantaRepository.delete(fid)
                     st.rerun()
-                    
-def render_checklist_mentenanta_utilaj(utilaj_row: dict, frecventa: str, key_prefix: str = "ment"):
-    den_masina = str(utilaj_row.get("denumire") or utilaj_row.get("masina") or "").strip()
-    tip_masina = str(utilaj_row.get("tip_masina") or "").strip()
 
-    fisa = obtine_fisa_pentru_utilaj(den_masina, tip_masina, frecventa)
-    pasi = fisa.get("pasi") or []
-
-    eticheta_sursa = "Fișă proprie utilaj" if fisa["sursa"] == "proprie" else "Fișă generală (fallback)"
-    st.markdown(f"**📋 Fișă mentenanță ({frecventa})** — *{eticheta_sursa}*")
-
-    if not pasi:
-        st.info("Nu sunt definiți pași pentru această frecvență.")
-        return []
-
-    rezultate = []
-    for idx, pas in enumerate(pasi, start=1):
-        ordine = pas.get("Ordine") or idx
-        op = str(pas.get("Operațiune / Verificare") or "").strip()
-        std = str(pas.get("Standard / Observații") or "").strip()
-        label = f"{ordine}. {op}" + (f" ({std})" if std else "")
-        bifata = st.checkbox(label, key=f"{key_prefix}_{den_masina}_{tip_masina}_{frecventa}_{idx}")
-        rezultate.append({
-            "ordine": ordine,
-            "operatiune": op,
-            "standard": std,
-            "verificat": bool(bifata),
-        })
-    return rezultate
+            if isinstance(fisa_spec, dict) and fisa_spec.get("randuri"):
+                st.caption(f"**{fisa_spec.get('titlu', 'Fișă Specifică Utilaj')}**")
+                st.dataframe(pd.DataFrame(fisa_spec["randuri"]), hide_index=True, use_container_width=True)
