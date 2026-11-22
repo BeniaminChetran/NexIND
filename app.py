@@ -197,7 +197,7 @@ MENIU_STRUCTURA = {
         "🛡️ Mentenanță preventivă": render_mentenanta,
         "📊 Măsurători": render_masuratori,
         "📋 Istoric": render_istoric,
-        "📈 DashBoard": render_dashboard
+        "📈 DashBoard": render_dashboard,
         "🔮 Predicții": render_predictii,
     },
     "💼 3. Oferte & Comercial": {
