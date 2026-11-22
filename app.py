@@ -186,7 +186,9 @@ with c_status:
 
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {
-    "📈 0. DashBoard": render_dashboard,
+    "📈 0. DashBoard": {
+        "📈 DashBoard": render_dashboard,
+        },
     "🚨 1. Diagnostic & Documentație": {
         "🛠️ Asistent Defecte": render_asistent_defecte,
         "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
