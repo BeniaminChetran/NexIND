@@ -23,10 +23,14 @@ def _normalizeaza_stare_comanda(val) -> str:
     mapa = {
         "de cautat": "De căutat",
         "de căutat": "De căutat",
+        "de ofertat": "De ofertat",
+        "ofertare": "De ofertat",
         "de comandat": "De comandat",
         "comandat": "Comandată",
         "comandata": "Comandată",
         "comandată": "Comandată",
+        "in asteptare": "În așteptare",
+        "în așteptare": "În așteptare",
         "anulata": "Anulată",
         "anulată": "Anulată",
     }
@@ -158,7 +162,7 @@ class PieseRepository(BaseRepository):
             data.get("link_furnizor", ""),
             str(data.get("termen_livrare") or "1").strip(),
             stare_cmd,
-            piesa_id,
+            int(piesa_id),
         )
         cls().execute(query, params)
         cls.get_all.clear()
@@ -170,7 +174,7 @@ class PieseRepository(BaseRepository):
         stare_cmd = _normalizeaza_stare_comanda(stare_noua)
         cls().execute(
             "UPDATE piese SET stare_comandata=%s WHERE id=%s",
-            (stare_cmd, piesa_id),
+            (stare_cmd, int(piesa_id)),
         )
         cls.get_all.clear()
         logger.info(f"Piesa #{piesa_id} -> stare comandă: {stare_cmd}")
@@ -178,6 +182,6 @@ class PieseRepository(BaseRepository):
     @classmethod
     def delete(cls, piesa_id: int):
         query = "DELETE FROM piese WHERE id=%s"
-        cls().execute(query, (piesa_id,))
+        cls().execute(query, (int(piesa_id),))
         cls.get_all.clear()
         logger.info(f"Piesa #{piesa_id} ștearsă.")
