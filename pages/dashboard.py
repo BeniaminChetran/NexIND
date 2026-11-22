@@ -251,7 +251,13 @@ def render_dashboard():
     c4.metric("⚙️ Utilaje active", utilaje_active)
     c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
     c6.metric("👀 Sub supraveghere", utilaje_supr)
-
+    
+    #-------Afisare piese de comandat-----------
+    st.markdown("---")
+    with st.expander("🛒 Piese De Comandat / Necesare & Furnizori", expanded=True):
+        render_piese_de_comandat_dashboard()
+    #-------end Afisare piese de comandat-----------
+    
     m_r1, m_r2 = st.columns(2)
     m_r1.metric("⚙️ Reparații Mașini Reușite", f"{reusite_masini} / {total_masini}", delta=pct_masini)
     m_r2.metric("⚡ Reparații Electronice Reușite", f"{reusite_el} / {total_el}", delta=pct_el)
