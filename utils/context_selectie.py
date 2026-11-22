@@ -66,7 +66,7 @@ def aplica_context_la_tab(
 
     st.session_state[init_flag] = True
     
- def sorteaza_firme_alfabetic(firme: list[dict] | None) -> list[dict]:
+def sorteaza_firme_alfabetic(firme: list[dict] | None) -> list[dict]:
     if not firme:
         return []
     return sorted(
