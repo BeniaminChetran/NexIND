@@ -7,18 +7,26 @@ from repositories.firme_repository import FirmeRepository
 from repositories.setari_repository import SetariRepository
 
 
-def _get_adaos_implicit_setari() -> float:
-    setari = SetariRepository.get_setari() or {}
-    val = setari.get("adaos_comercial_implicit")
+def _get_adaos_implicit_setari(setari: dict | None = None) -> float:
+    s_info = setari if isinstance(setari, dict) else (SetariRepository.get_setari() or {})
+    val = s_info.get("adaos_comercial_implicit")
     try:
         return float(val) if val is not None and str(val).strip() != "" else 35.0
     except (TypeError, ValueError):
         return 35.0
 
 
+def _are_acces_deblocat(setari: dict | None = None) -> bool:
+    s_info = setari if isinstance(setari, dict) else (SetariRepository.get_setari() or {})
+    parola_setata = str(s_info.get("pass", "")).strip()
+    return bool(st.session_state.get("is_unlocked", False)) or (not parola_setata)
+
+
 def render_firme():
     st.subheader("📇 Gestiune Firme și Persoane de Contact")
-    adaos_setari = _get_adaos_implicit_setari()
+    setari_info = SetariRepository.get_setari() or {}
+    adaos_setari = _get_adaos_implicit_setari(setari_info)
+    acces_permis = _are_acces_deblocat(setari_info)
 
     @st.fragment
     def render_form_firme():
@@ -29,12 +37,15 @@ def render_firme():
                 cui = st.text_input("CUI")
                 reg_com = st.text_input("Nr. Reg. Com.")
                 adresa = st.text_input("Adresă Sediu")
-                adaos_comercial = st.number_input(
-                    "Adaos Comercial implicit (%)",
-                    value=adaos_setari,
-                    step=0.5,
-                    format="%.2f"
-                )
+                if acces_permis:
+                    adaos_comercial = st.number_input(
+                        "Adaos Comercial implicit (%)",
+                        value=adaos_setari,
+                        step=0.5,
+                        format="%.2f"
+                    )
+                else:
+                    adaos_comercial = adaos_setari
             with c2:
                 banca = st.text_input("Bancă")
                 cont = st.text_input("Cont (IBAN)")
@@ -73,19 +84,27 @@ def render_firme():
         firme_db = FirmeRepository.get_all()
         for f in firme_db:
             adaos_f_curent = float(f.get("adaos_comercial") if f.get("adaos_comercial") is not None else adaos_setari)
-            with st.expander(f"🏢 {f['nume_firma']} (CUI: {f.get('cui', 'N/A')}) - Adaos: {adaos_f_curent}%"):
+            titlu_expander = (
+                f"🏢 {f['nume_firma']} (CUI: {f.get('cui', 'N/A')}) - Adaos: {adaos_f_curent}%"
+                if acces_permis
+                else f"🏢 {f['nume_firma']} (CUI: {f.get('cui', 'N/A')})"
+            )
+            with st.expander(titlu_expander):
                 with st.form(f"mod_firma_{f['id']}"):
                     mf_nume = st.text_input("Nume Firmă", value=f['nume_firma'], key=f"mf_n_{f['id']}")
                     mf_cui = st.text_input("CUI", value=f.get('cui', ''), key=f"mf_cui_{f['id']}")
                     mf_reg = st.text_input("Reg. Com.", value=f.get('reg_com', ''), key=f"mf_reg_{f['id']}")
                     mf_adr = st.text_input("Adresă", value=f.get('adresa', ''), key=f"mf_adr_{f['id']}")
-                    mf_adaos = st.number_input(
-                        "Adaos Comercial (%)",
-                        value=adaos_f_curent,
-                        step=0.5,
-                        format="%.2f",
-                        key=f"mf_adaos_{f['id']}"
-                    )
+                    if acces_permis:
+                        mf_adaos = st.number_input(
+                            "Adaos Comercial (%)",
+                            value=adaos_f_curent,
+                            step=0.5,
+                            format="%.2f",
+                            key=f"mf_adaos_{f['id']}"
+                        )
+                    else:
+                        mf_adaos = adaos_f_curent
                     mf_banca = st.text_input("Bancă", value=f.get('banca', ''), key=f"mf_b_{f['id']}")
                     mf_cont = st.text_input("Cont", value=f.get('cont', ''), key=f"mf_cont_{f['id']}")
                     mf_pers = st.text_input("Persoană Contact", value=f.get('nume_persoana', ''), key=f"mf_p_{f['id']}")
