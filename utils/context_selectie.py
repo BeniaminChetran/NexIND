@@ -65,3 +65,29 @@ def aplica_context_la_tab(
                 draft[campo_masina] = aleasa_m
 
     st.session_state[init_flag] = True
+    
+ def sorteaza_firme_alfabetic(firme: list[dict] | None) -> list[dict]:
+    if not firme:
+        return []
+    return sorted(
+        firme,
+        key=lambda f: str((f or {}).get("nume_firma") or "").strip().lower(),
+    )
+
+
+def sorteaza_masini_alfabetic(masini: list[dict] | None) -> list[dict]:
+    if not masini:
+        return []
+    return sorted(
+        masini,
+        key=lambda m: str((m or {}).get("denumire") or "").strip().lower(),
+    )
+
+
+def sorteaza_piese_alfabetic(piese: list[dict] | None) -> list[dict]:
+    if not piese:
+        return []
+    return sorted(
+        piese,
+        key=lambda p: str((p or {}).get("denumire") or "").strip().lower(),
+    )

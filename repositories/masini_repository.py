@@ -6,6 +6,7 @@ import json
 import logging
 from repositories.base_repository import BaseRepository
 from config import db_cursor
+from datetime import date, timedelta
 
 logger = logging.getLogger("NexIndCMMS.MasiniRepository")
 
@@ -212,6 +213,94 @@ class MasiniRepository(BaseRepository):
         cls().execute(query, (masina_id,))
         logger.info(f"Mașina #{masina_id} a fost ștearsă")
         
+
+
+def asigura_coloane_mentenanta_masini():
+    with db_cursor() as c:
+        c.execute("""
+            ALTER TABLE masini
+            ADD COLUMN IF NOT EXISTS fara_intretinere BOOLEAN DEFAULT FALSE
+        """)
+        c.execute("""
+            ALTER TABLE masini
+            ADD COLUMN IF NOT EXISTS interval_intretinere_zile INTEGER DEFAULT 0
+        """)
+        c.execute("""
+            ALTER TABLE masini
+            ADD COLUMN IF NOT EXISTS ultima_intretinere DATE
+        """)
+
+
+def calculeaza_urmatoarea_data_intretinere(
+    data_efectuare: date,
+    interval_zile: int | None,
+    fallback_zile: int = 90,
+) -> date:
+    zile = int(interval_zile or 0)
+    if zile <= 0:
+        zile = int(fallback_zile or 90)
+    return data_efectuare + timedelta(days=zile)
+
+
+def scoate_masina_din_intretinere(masina_id: int):
+    asigura_coloane_mentenanta_masini()
+    with db_cursor() as c:
+        c.execute("""
+            UPDATE masini
+            SET fara_intretinere = TRUE,
+                data_intretinere = NULL
+            WHERE id = %s
+        """, (int(masina_id),))
+
+
+def activeaza_si_programeaza_intretinere(
+    masina_id: int,
+    data_programata: date,
+    interval_zile: int = 0,
+    ultima_intretinere: date | None = None,
+):
+    asigura_coloane_mentenanta_masini()
+    with db_cursor() as c:
+        c.execute("""
+            UPDATE masini
+            SET fara_intretinere = FALSE,
+                data_intretinere = %s,
+                interval_intretinere_zile = %s,
+                ultima_intretinere = COALESCE(%s, ultima_intretinere)
+            WHERE id = %s
+        """, (
+            data_programata,
+            max(0, int(interval_zile or 0)),
+            ultima_intretinere,
+            int(masina_id),
+        ))
+
+
+def finalizeaza_si_replanifica_intretinere(
+    masina_id: int,
+    data_finalizare: date,
+    urmatoarea_data: date,
+    interval_zile: int = 0,
+):
+    asigura_coloane_mentenanta_masini()
+    with db_cursor() as c:
+        c.execute("""
+            UPDATE masini
+            SET fara_intretinere = FALSE,
+                ultima_intretinere = %s,
+                data_intretinere = %s,
+                interval_intretinere_zile = CASE
+                    WHEN %s > 0 THEN %s
+                    ELSE COALESCE(interval_intretinere_zile, 0)
+                END
+            WHERE id = %s
+        """, (
+            data_finalizare,
+            urmatoarea_data,
+            int(interval_zile or 0),
+            int(interval_zile or 0),
+            int(masina_id),
+        ))
         
         
 #----------------------------------------------

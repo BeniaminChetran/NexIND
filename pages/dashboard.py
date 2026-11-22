@@ -429,7 +429,7 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
 def render_piese_de_comandat_dashboard():
     st.markdown("### 🛒 Piese De Comandat / Necesare & Stare Comandă")
     st.caption(
-        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De comandat`, `Comandată`, `Anulată`) "
+        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`,`De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
         "și apasă **💾 Actualizează Stările în Tabel**."
     )
 
@@ -469,7 +469,7 @@ def render_piese_de_comandat_dashboard():
             stare_item = str(item.get("stare_comandata") or item.get("Stare") or tip_piesa or "").strip()
             if not den_piesa:
                 continue
-            if tip_piesa.lower() not in ("de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata", "anulată", "anulata"):
+            if tip_piesa.lower() not in ("de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata","de ofertat","in asteptare","în așteptare", "anulată", "anulata"):
                 continue
 
             cant = item.get("Cantitate")
@@ -529,8 +529,7 @@ def render_piese_de_comandat_dashboard():
             den_comp = str(comp.get("Componenta / Cod / Parametri") or comp.get("piesa") or "").strip()
             stare_comp = str(comp.get("stare_comandata") or comp.get("Stare") or "").strip()
             if not den_comp or stare_comp.lower() not in (
-                "necesara", "necesare", "de comandat", "de căutat", "de cautat",
-                "comandată", "comandata", "anulată", "anulata"
+                "de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata","de ofertat","in asteptare","în așteptare", "anulată", "anulata"
             ):
                 continue
 

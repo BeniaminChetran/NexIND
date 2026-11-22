@@ -1,12 +1,13 @@
-#------------------------------------------
-#-------pages/mentenanta.py----------------
-#------------------------------------------
+# ------------------------------------------
+# -------pages/mentenanta.py----------------
+# ------------------------------------------
 
 import json
 import uuid
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+from config import db_cursor
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
 from repositories.mentenanta_repository import MentenantaRepository, INTERVALE_ZILE
@@ -118,8 +119,67 @@ SECTIONS_MENTENANTA = [
 ]
 
 
+def _asigura_coloane_intretinere_ment():
+    try:
+        with db_cursor() as c:
+            c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS fara_intretinere BOOLEAN DEFAULT FALSE")
+            c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS interval_intretinere_zile INTEGER DEFAULT 0")
+            c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS ultima_intretinere DATE")
+    except Exception:
+        pass
+
+
+def _scoate_masina_din_intretinere_ment(masina_id: int):
+    _asigura_coloane_intretinere_ment()
+    with db_cursor() as c:
+        c.execute(
+            "UPDATE masini SET fara_intretinere = TRUE, data_intretinere = NULL WHERE id = %s",
+            (int(masina_id),),
+        )
+    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
+        MasiniRepository.get_all.clear()
+
+
+def _programeaza_masina_intretinere_ment(masina_id: int, data_prog: date, interval_zile: int, ultima_d: date | None = None):
+    _asigura_coloane_intretinere_ment()
+    with db_cursor() as c:
+        c.execute(
+            """
+            UPDATE masini
+            SET fara_intretinere = FALSE,
+                data_intretinere = %s,
+                interval_intretinere_zile = %s,
+                ultima_intretinere = COALESCE(%s, ultima_intretinere)
+            WHERE id = %s
+            """,
+            (data_prog, max(0, int(interval_zile or 0)), ultima_d, int(masina_id)),
+        )
+    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
+        MasiniRepository.get_all.clear()
+
+
+def _replanifica_dupa_pasi_ment(masina_id: int, data_efectuare: date, urmatoarea_data: date, interval_zile: int):
+    _asigura_coloane_intretinere_ment()
+    with db_cursor() as c:
+        c.execute(
+            """
+            UPDATE masini
+            SET fara_intretinere = FALSE,
+                ultima_intretinere = %s,
+                data_intretinere = %s,
+                interval_intretinere_zile = CASE
+                    WHEN %s > 0 THEN %s
+                    ELSE COALESCE(interval_intretinere_zile, 0)
+                END
+            WHERE id = %s
+            """,
+            (data_efectuare, urmatoarea_data, int(interval_zile or 0), int(interval_zile or 0), int(masina_id)),
+        )
+    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
+        MasiniRepository.get_all.clear()
+
+
 def _get_items_pentru_masina(sec: dict, masina_obj: dict | None) -> list:
-    """Returnează lista de verificări individuale ale mașinii pentru secțiunea respectivă (sau cele implicite)."""
     s_key = sec["key"]
     if masina_obj:
         custom_map = masina_obj.get("verificari_custom_json") or {}
@@ -303,13 +363,84 @@ def render_mentenanta():
             draft["nivel_grila"] = "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
         else:
             draft["nivel_grila"] = "Nivel A – Multimarcă (<20h)"
-        # Încarcă verificările specifice acestei mașini!
         _incarca_dfs_pentru_masina(masina_obj, "DA")
 
     if total_int_m >= prag_int_m:
         st.warning(f"🔔 **Atenție Grilă Tarifare:** Utilajul **{sel_masina}** a atins/depășit pragul (**{total_int_m} / {prag_int_m}** intervenții)! Se recomandă trecerea la următoarea grilă de tarifare (**Nivel B**).")
     else:
         st.info(f"📊 **Contor intervenții ({sel_masina}):** {total_int_m} / {prag_int_m} efectuate (mai sunt **{prag_int_m - total_int_m}** până la următoarea grilă).")
+
+    _asigura_coloane_intretinere_ment()
+    este_fara_int = bool(masina_obj.get("fara_intretinere", False))
+    tip_int_masina = masina_obj.get("tip_intretinere") or "Trimestrială"
+    interval_din_db = int(masina_obj.get("interval_intretinere_zile") or 0)
+    durata_implicita_zile = interval_din_db if interval_din_db > 0 else INTERVALE_ZILE.get(tip_int_masina, 90)
+
+    with st.expander(f"🗓️ Planificare & Replanificare Întreținere — {sel_masina}", expanded=True):
+        if este_fara_int:
+            st.info("🚫 Această mașină este scoasă din întreținere (**Fără întreținere**).")
+            with st.form(f"form_prog_ment_{masina_obj['id']}"):
+                cp1, cp2 = st.columns(2)
+                with cp1:
+                    data_prog_noua = st.date_input(
+                        "Programează întreținerea la data",
+                        value=date.today() + timedelta(days=durata_implicita_zile),
+                    )
+                with cp2:
+                    durata_prog_noua = st.number_input(
+                        "Durata până la următoarea întreținere (zile)",
+                        min_value=0,
+                        step=15,
+                        value=durata_implicita_zile,
+                    )
+                if st.form_submit_button("📅 Programează pentru întreținere", type="primary"):
+                    _programeaza_masina_intretinere_ment(masina_obj["id"], data_prog_noua, int(durata_prog_noua))
+                    st.success(f"✅ **{sel_masina}** a fost programată pentru întreținere la **{data_prog_noua}**.")
+                    st.rerun()
+        else:
+            c_st1, c_st2 = st.columns([2.5, 1.3], vertical_alignment="center")
+            with c_st1:
+                st.caption(
+                    f"Scadență curentă: **{masina_obj.get('data_intretinere') or 'Nesetată'}** | "
+                    f"Ultima întreținere: **{masina_obj.get('ultima_intretinere') or 'Nicio înregistrare'}** | "
+                    f"Durată ciclu: **{durata_implicita_zile} zile**"
+                )
+            with c_st2:
+                if st.button("🚫 Scoate din întreținere", key=f"btn_scoate_ment_{masina_obj['id']}", use_container_width=True):
+                    _scoate_masina_din_intretinere_ment(masina_obj["id"])
+                    st.toast(f"🚫 {sel_masina} a fost scoasă din întreținere.")
+                    st.rerun()
+
+            with st.form(f"form_pasi_replan_ment_{masina_obj['id']}"):
+                pasi_parcursi = st.checkbox(
+                    "S-au parcurs toți pașii în întreținere / mentenanță — vreau să o replanific",
+                    value=False,
+                )
+                cr1, cr2, cr3 = st.columns(3)
+                with cr1:
+                    data_efect_pasi = st.date_input("Data la care s-a făcut întreținerea", value=data_interv)
+                with cr2:
+                    durata_replan = st.number_input("Durata până la următoarea întreținere (zile)", min_value=1, step=15, value=durata_implicita_zile)
+                with cr3:
+                    urm_data_calculata = data_efect_pasi + timedelta(days=int(durata_replan))
+                    urm_data_replan = st.date_input("Următoarea dată propusă", value=urm_data_calculata)
+
+                st.caption(f"🧮 Propunere automată: **{data_efect_pasi}** + **{int(durata_replan)} zile** = **{urm_data_calculata}**.")
+
+                if st.form_submit_button("🔁 Confirmă pașii & Replanifică", type="primary"):
+                    if not pasi_parcursi:
+                        st.warning("⚠️ Bifează că s-au parcurs toți pașii în întreținere/mentenanță înainte de replanificare.")
+                    else:
+                        _replanifica_dupa_pasi_ment(
+                            masina_id=masina_obj["id"],
+                            data_efectuare=data_efect_pasi,
+                            urmatoarea_data=urm_data_replan,
+                            interval_zile=int(durata_replan),
+                        )
+                        st.success(
+                            f"✅ **{sel_masina}** marcată ca efectuată la **{data_efect_pasi}** și replanificată la **{urm_data_replan}**."
+                        )
+                        st.rerun()
 
     sisteme_utilaj = [
         s.strip() for s in str(masina_obj.get("sisteme_active") or ALL_SISTEME_DEFAULT).split(",")
@@ -358,15 +489,13 @@ def render_mentenanta():
         idx_sf = opt_stare_fin.index(draft["stare_finala"]) if draft.get("stare_finala") in opt_stare_fin else 0
         draft["stare_finala"] = s2.selectbox("Stare Finală Utilaj", options=opt_stare_fin, index=idx_sf)
 
-        tip_int_masina = masina_obj.get("tip_intretinere") or "Trimestrială"
-        zile_add = INTERVALE_ZILE.get(tip_int_masina, 90)
+        zile_add = durata_implicita_zile
         urmatoarea_rev_default = data_interv + timedelta(days=zile_add)
         urmatoarea_revizie = s3.date_input(
             f"Următoarea Revizie ({tip_int_masina})",
             value=urmatoarea_rev_default
         )
 
-    # TABEL COMPONENȚĂ SISTEM PENTRU UTILAJUL SELECTAT (Punctele 4, 5, 6)
     with st.expander(f"🧩 Componență Sisteme Utilaj: {sel_masina}", expanded=False):
         comp_lista = masina_obj.get("componenta_sisteme_json") or []
         df_comp = pd.DataFrame(comp_lista) if comp_lista else pd.DataFrame(
@@ -454,7 +583,6 @@ def render_mentenanta():
             )
             st.session_state["ment_dfs"][s_key] = edited_sec
 
-            # PANOU PROTEJAT: Adăugare / Ștergere verificări pentru această mașină (Punctele 3, 5, 6)
             if is_unlocked:
                 st.markdown("##### 🔐 Administrare verificări pentru acest sistem (individual pe mașină)")
                 c_add1, c_add2, c_add3 = st.columns([3.5, 1.5, 1.2], vertical_alignment="bottom")
@@ -481,7 +609,6 @@ def render_mentenanta():
                         custom_map[s_key] = items_actualizate
                         MasiniRepository.update_verificari_custom(masina_obj["id"], custom_map)
 
-                        # Adaugă rândul și în dataframe-ul curent din sesiune
                         obs_init = f"{nou_hint.strip()}: " if nou_hint.strip() else ""
                         new_row = pd.DataFrame([{
                             "ID": new_item["id"],

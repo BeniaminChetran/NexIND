@@ -10,8 +10,10 @@ logger = logging.getLogger("NexIndCMMS.PieseRepository")
 
 OPTIUNI_STARE_COMANDA = [
     "De căutat",
+    "De ofertat",
     "De comandat",
     "Comandată",
+    "În așteptare",
     "Anulată",
 ]
 
