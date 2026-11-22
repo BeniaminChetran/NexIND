@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
-from repositories.reparatii_electronice_repository import ReparatiiElectroniceRepository
+#from repositories.reparatii_electronice_repository import ReparatiiElectroniceRepository
 from repositories.reparatii_electronice_repository import (
     ReparatiiElectroniceRepository,
     sincronizeaza_componente_in_piese_generale,
