@@ -8,6 +8,7 @@ from repositories.base_repository import BaseRepository
 
 logger = logging.getLogger("NexIndCMMS.PieseRepository")
 
+
 class PieseRepository(BaseRepository):
     @staticmethod
     def _asigura_coloana_termen_livrare():
@@ -51,8 +52,8 @@ class PieseRepository(BaseRepository):
                 ORDER BY denumire
             """
             params = (
-                f"%{select_masina_unica.strip()}%", 
-                f"{select_masina_unica.strip()},%", 
+                f"%{select_masina_unica.strip()}%",
+                f"{select_masina_unica.strip()},%",
                 f"%, {select_masina_unica.strip()}%"
             )
             return cls().fetch_all(query, params)
@@ -65,6 +66,7 @@ class PieseRepository(BaseRepository):
         valuta = str(data.get('valuta_achizitie') or 'RON').strip().upper()
         if valuta not in ("RON", "EUR"):
             valuta = "RON"
+        masina_val = str(data.get('masina_montaj') or '').strip() or 'General'
         query = """
             INSERT INTO piese (
                 denumire, cod_producator, cod_comercial, masina_montaj, 
@@ -74,10 +76,10 @@ class PieseRepository(BaseRepository):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            data['denumire'], 
-            data.get('cod_producator'), 
-            data.get('cod_comercial'), 
-            data.get('masina_montaj'), 
+            data['denumire'],
+            data.get('cod_producator'),
+            data.get('cod_comercial'),
+            masina_val,
             data.get('subansamblu'),
             data.get('parametri', ''),
             data.get('pret_achizitie', 0.00),
@@ -87,7 +89,7 @@ class PieseRepository(BaseRepository):
         )
         cls().execute(query, params)
         cls.get_all.clear()
-        logger.info(f"Piesă adăugată: {data['denumire']} ({valuta})")
+        logger.info(f"Piesă adăugată: {data['denumire']} ({masina_val}, {valuta})")
 
     @classmethod
     def update(cls, piesa_id: int, data: dict):
@@ -95,12 +97,7 @@ class PieseRepository(BaseRepository):
         valuta = str(data.get('valuta_achizitie') or 'RON').strip().upper()
         if valuta not in ("RON", "EUR"):
             valuta = "RON"
-
-        if "masina_montaj" in data:
-            masina_val = str(data.get("masina_montaj") or "").strip() or "General"
-        else:
-            masina_val = "General"
-
+        masina_val = str(data.get('masina_montaj') or '').strip() or 'General'
         query = """
             UPDATE piese 
             SET denumire=%s, cod_producator=%s, cod_comercial=%s, masina_montaj=%s,
