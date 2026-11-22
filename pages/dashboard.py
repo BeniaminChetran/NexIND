@@ -495,7 +495,8 @@ def render_dashboard():
     else:
         st.success(f"Nu există defecte recurente identificate pentru filtrele selectate (ultimele {zile_defecte} zile).")
         
-    if st.button("🔄 Actualizează", use_container_width=True):
+    with col_refresh:
+        if st.button("🔄 Actualizează", use_container_width=True, key="btn_dash_refresh_top"):
             incarca_date_dashboard.clear()
             incarca_memento_intretinere.clear()
             incarca_defecte_recurente.clear()
