@@ -212,8 +212,8 @@ MENIU_STRUCTURA = {
         "🏢 Firme": render_firme,
     },
     "🔐 SistemAdmin": {
-        "⚙️ Setări": render_setari,
         "🔑 Deblocare": render_deblocare,
+        "⚙️ Setări": render_setari,
     },
 }
 
