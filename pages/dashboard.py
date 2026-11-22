@@ -2,13 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
-import streamlit as st
-
 
 from repositories.piese_repository import PieseRepository
 from repositories.reparatii_repository import ReparatiiRepository
-
-
 from config import db_cursor
 
 
@@ -27,6 +23,33 @@ def incarca_date_dashboard():
             WHERE DATE_TRUNC('month', data_creare) = DATE_TRUNC('month', CURRENT_DATE)
         """)
         kpi_res = c.fetchone()
+
+        # Reparații la mașini (din tabela reparatii): reușite vs total
+        c.execute("""
+            SELECT
+                COUNT(*) AS total_masini_rep,
+                COUNT(*) FILTER (
+                    WHERE LOWER(COALESCE(stare_finala, '')) LIKE 'funcțional%%'
+                       OR LOWER(COALESCE(stare_finala, '')) LIKE 'functional%%'
+                ) AS reusite_masini_rep
+            FROM reparatii
+        """)
+        masini_rep_res = c.fetchone() or {}
+
+        # Reparații electronice: reușite vs total
+        try:
+            c.execute("""
+                SELECT
+                    COUNT(*) AS total_el_rep,
+                    COUNT(*) FILTER (
+                        WHERE LOWER(COALESCE(stare_finala, '')) = 'funcțional'
+                           OR LOWER(COALESCE(stare_finala, '')) = 'functional'
+                    ) AS reusite_el_rep
+                FROM reparatii_electronice
+            """)
+            el_rep_res = c.fetchone() or {}
+        except Exception:
+            el_rep_res = {"total_el_rep": 0, "reusite_el_rep": 0}
 
         c.execute(
             "SELECT defect, COUNT(*) AS aparitii FROM reparatii "
@@ -61,7 +84,7 @@ def incarca_date_dashboard():
         )
         mas_scad = c.fetchall()
 
-    return kpi_res, top_def, top_cli, top_ut, def_rec, mas_scad
+    return kpi_res, masini_rep_res, el_rep_res, top_def, top_cli, top_ut, def_rec, mas_scad
 
 
 @st.cache_data(ttl=120)
@@ -204,7 +227,7 @@ def render_dashboard():
             incarca_clienti_inactivi.clear()
             st.rerun()
 
-    kpi_res, top_def, top_cli, top_ut, def_rec, mas_scad = incarca_date_dashboard()
+    kpi_res, masini_rep_res, el_rep_res, top_def, top_cli, top_ut, def_rec, mas_scad = incarca_date_dashboard()
 
     interventii_luna = kpi_res["interventii"] if kpi_res else 0
     ore_lucrate = round(kpi_res["minute"] / 60, 1) if kpi_res else 0
@@ -213,6 +236,14 @@ def render_dashboard():
     utilaje_oprite = kpi_res["utilaje_oprite"] if kpi_res else 0
     utilaje_supr = kpi_res["utilaje_supraveghere"] if kpi_res else 0
 
+    reusite_masini = int(masini_rep_res.get("reusite_masini_rep") or 0)
+    total_masini = int(masini_rep_res.get("total_masini_rep") or 0)
+    pct_masini = f"{round((reusite_masini / total_masini) * 100)}%" if total_masini > 0 else "0%"
+
+    reusite_el = int(el_rep_res.get("reusite_el_rep") or 0)
+    total_el = int(el_rep_res.get("total_el_rep") or 0)
+    pct_el = f"{round((reusite_el / total_el) * 100)}%" if total_el > 0 else "0%"
+
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("🔧 Intervenții luna curentă", interventii_luna)
     c2.metric("⏱ Ore lucrate", ore_lucrate)
@@ -220,6 +251,10 @@ def render_dashboard():
     c4.metric("⚙️ Utilaje active", utilaje_active)
     c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
     c6.metric("👀 Sub supraveghere", utilaje_supr)
+
+    m_r1, m_r2 = st.columns(2)
+    m_r1.metric("⚙️ Reparații Mașini Reușite", f"{reusite_masini} / {total_masini}", delta=pct_masini)
+    m_r2.metric("⚡ Reparații Electronice Reușite", f"{reusite_el} / {total_el}", delta=pct_el)
 
     st.session_state.setdefault("dash_sectiune_activa", None)
 
@@ -329,7 +364,6 @@ def render_dashboard():
         st.dataframe(pd.DataFrame(mas_scad), use_container_width=True)
     else:
         st.success("Nu există întrețineri programate în următoarele 30 de zile.")
-        
 
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:

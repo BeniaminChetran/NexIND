@@ -14,7 +14,7 @@ from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
 
 OPT_STARI_FINALE = ["În lucru / Diagnosticare", "Funcțional", "Nefuncțional", "Înlocuit complet"]
-OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata"]
+OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata","mASURATA / OK"]
 COL_COMP_DEN = "Componenta / Cod / Parametri"
 COL_COMP_CANT = "Cantitate"
 COL_COMP_STARE = "Stare"
@@ -273,7 +273,7 @@ def render_reparatii_electronice():
                 div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
                 [data-testid="stTextInput"],
                 div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
-                [data-testid="stSelectbox"] {
+                [data-testid="stSelectboxF"] {
                     max-width: 22ch !important;
                 }
             </style>
