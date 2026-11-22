@@ -1,4 +1,3 @@
-
 #------------------------------------------
 #-------reparatii_electronice.py-----------
 #------------------------------------------
@@ -16,6 +15,10 @@ from services.pdf_service import genereaza_pdf_electronic
 
 OPT_STARI_FINALE = ["În lucru / Diagnosticare", "Funcțional", "Nefuncțional", "Înlocuit complet"]
 OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata"]
+COL_COMP_DEN = "Componenta / Cod / Parametri"
+COL_COMP_CANT = "Cantitate"
+COL_COMP_STARE = "Stare"
+COLS_COMP_EDITOR = [COL_COMP_DEN, COL_COMP_CANT, COL_COMP_STARE]
 
 
 def _cauta_docs_electronice(termen: str, masina_id=None) -> list[dict]:
@@ -47,6 +50,14 @@ def _cauta_docs_electronice(termen: str, masina_id=None) -> list[dict]:
     return rezultate[:6]
 
 
+def _normalizeaza_cantitate(val, implicit: float = 1.0) -> float:
+    try:
+        cant = float(val)
+        return cant if cant > 0 else implicit
+    except (TypeError, ValueError):
+        return implicit
+
+
 def _formateaza_componente_index(comp_lista: list[dict]) -> str:
     """Formatează componentele din fișa electronică pentru indexare."""
     if not comp_lista:
@@ -55,25 +66,43 @@ def _formateaza_componente_index(comp_lista: list[dict]) -> str:
     for c in comp_lista:
         if not isinstance(c, dict):
             continue
-        den = str(c.get("Componenta / Cod / Parametri") or "").strip()
+        den = str(c.get(COL_COMP_DEN) or "").strip()
         if not den:
             continue
-        stare_c = str(c.get("Stare") or "").strip()
-        parti.append(f"{den} ({stare_c})" if stare_c else den)
+        cant = _normalizeaza_cantitate(c.get(COL_COMP_CANT), 1.0)
+        cant_txt = f" x{cant:g}" if cant != 1.0 else ""
+        stare_c = str(c.get(COL_COMP_STARE) or "").strip()
+        detalii = f"{cant_txt} ({stare_c})" if stare_c else cant_txt
+        parti.append(f"{den}{detalii}")
     return ", ".join(parti)
 
 
 def _parseaza_componente_json(raw_comp) -> list[dict]:
     if isinstance(raw_comp, list):
-        return [r for r in raw_comp if isinstance(r, dict)]
-    if isinstance(raw_comp, str) and raw_comp.strip():
+        raw_list = [r for r in raw_comp if isinstance(r, dict)]
+    elif isinstance(raw_comp, str) and raw_comp.strip():
         try:
             parsed = json.loads(raw_comp)
-            if isinstance(parsed, list):
-                return [r for r in parsed if isinstance(r, dict)]
+            raw_list = [r for r in parsed if isinstance(r, dict)] if isinstance(parsed, list) else []
         except Exception:
-            pass
-    return []
+            raw_list = []
+    else:
+        raw_list = []
+
+    normalizate = []
+    for r in raw_list:
+        den = str(r.get(COL_COMP_DEN) or "").strip()
+        if not den:
+            continue
+        stare = str(r.get(COL_COMP_STARE) or OPT_STARI_COMP[0]).strip()
+        if stare not in OPT_STARI_COMP:
+            stare = OPT_STARI_COMP[0]
+        normalizate.append({
+            COL_COMP_DEN: den,
+            COL_COMP_CANT: _normalizeaza_cantitate(r.get(COL_COMP_CANT), 1.0),
+            COL_COMP_STARE: stare,
+        })
+    return normalizate
 
 
 def _init_sau_reseteaza_el_draft(tehnician_def: str):
@@ -90,7 +119,7 @@ def _init_sau_reseteaza_el_draft(tehnician_def: str):
         "verificator": "Client",
         "ultima_firma": "-- Alege firma --",
     }
-    st.session_state["df_comp_editor"] = pd.DataFrame(columns=["Componenta / Cod / Parametri", "Stare"])
+    st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
     st.session_state["el_editor_counter"] = st.session_state.get("el_editor_counter", 0) + 1
 
 
@@ -124,9 +153,12 @@ def _incarca_fisa_in_editor(fisa: dict, tehnician_def: str):
         "ultima_firma": fisa.get("firma_nume") or "-- Alege firma --",
     }
     if comp_lista:
-        st.session_state["df_comp_editor"] = pd.DataFrame(comp_lista)[["Componenta / Cod / Parametri", "Stare"]]
+        df_c = pd.DataFrame(comp_lista)
+        if COL_COMP_CANT not in df_c.columns:
+            df_c[COL_COMP_CANT] = 1.0
+        st.session_state["df_comp_editor"] = df_c[COLS_COMP_EDITOR]
     else:
-        st.session_state["df_comp_editor"] = pd.DataFrame(columns=["Componenta / Cod / Parametri", "Stare"])
+        st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
     st.session_state["el_editor_counter"] = st.session_state.get("el_editor_counter", 0) + 1
     st.session_state["electrice_salvat"] = False
 
@@ -228,7 +260,7 @@ def render_reparatii_electronice():
         else:
             draft["sel_masina"] = "General / Fără mașină"
 
-        c1, c2 = st.columns(2)
+        c1, c2 = st.columns([1.3, 1.0])
         with c1:
             piesa_subansamblu = st.text_input(
                 "Piesă sau Subansamblu (ex: Placă de bază CNC, Invertor, Unitate comandă)",
@@ -239,7 +271,7 @@ def render_reparatii_electronice():
             defect_reclamat = st.text_area(
                 "Defect Reclamat & Jurnal Intervenție / Etape (poți completa pe mai multe zile)",
                 value=str(draft.get("defect_reclamat", "")),
-                height=110,
+                height=240,
             )
             draft["defect_reclamat"] = defect_reclamat
         with c2:
@@ -254,20 +286,36 @@ def render_reparatii_electronice():
             draft["verificator"] = verificator
 
         st.markdown("#### 🔌 Componente Electronice / Elemente Defecte sau Înlocuite")
-        st.info("Adăugați componente electronice (cu cod piesă/parametri) sau elemente mecanice mici (arcuri, rotițe, micromotoare).")
+        st.info("Adăugați componente electronice (cu cod piesă/parametri), cantitatea utilizată/necesară și starea fiecărei piese.")
 
         if "df_comp_editor" not in st.session_state:
-            st.session_state["df_comp_editor"] = pd.DataFrame(columns=["Componenta / Cod / Parametri", "Stare"])
+            st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
+        elif COL_COMP_CANT not in st.session_state["df_comp_editor"].columns:
+            st.session_state["df_comp_editor"][COL_COMP_CANT] = 1.0
+            st.session_state["df_comp_editor"] = st.session_state["df_comp_editor"][COLS_COMP_EDITOR]
 
         edited_comp_df = st.data_editor(
             st.session_state["df_comp_editor"],
             num_rows="dynamic",
             column_config={
-                "Componenta / Cod / Parametri": st.column_config.TextColumn(
+                COL_COMP_DEN: st.column_config.TextColumn(
                     "Componentă / Cod / Parametri (ex: C 100uF 50V, Rotiță dințată z=15)",
                     required=True,
                 ),
-                "Stare": st.column_config.SelectboxColumn("Stare Componentă", options=OPT_STARI_COMP, required=True),
+                COL_COMP_CANT: st.column_config.NumberColumn(
+                    "Cantitate",
+                    min_value=0.01,
+                    step=1.0,
+                    format="%.2f",
+                    default=1.0,
+                    required=True,
+                ),
+                COL_COMP_STARE: st.column_config.SelectboxColumn(
+                    "Stare Componentă",
+                    options=OPT_STARI_COMP,
+                    default=OPT_STARI_COMP[0],
+                    required=True,
+                ),
             },
             key=f"el_comp_editor_{st.session_state.get('el_editor_counter', 0)}",
             use_container_width=True,
@@ -322,7 +370,20 @@ def render_reparatii_electronice():
             if not piesa_subansamblu.strip():
                 st.error("Completați denumirea piesei sau subansamblului.")
             else:
-                componente_valide = edited_comp_df.dropna(subset=["Componenta / Cod / Parametri"]).to_dict(orient="records")
+                df_comp_cur = edited_comp_df.dropna(subset=[COL_COMP_DEN]).copy()
+                componente_valide = []
+                for _, r_c in df_comp_cur.iterrows():
+                    den_c = str(r_c.get(COL_COMP_DEN) or "").strip()
+                    if not den_c:
+                        continue
+                    stare_c = str(r_c.get(COL_COMP_STARE) or OPT_STARI_COMP[0]).strip()
+                    if stare_c not in OPT_STARI_COMP:
+                        stare_c = OPT_STARI_COMP[0]
+                    componente_valide.append({
+                        COL_COMP_DEN: den_c,
+                        COL_COMP_CANT: _normalizeaza_cantitate(r_c.get(COL_COMP_CANT), 1.0),
+                        COL_COMP_STARE: stare_c,
+                    })
 
                 payload = {
                     "firma_id": firma_obj["id"],
@@ -451,7 +512,7 @@ def render_reparatii_electronice():
 
             comp_f = _parseaza_componente_json(f_row.get("componente_json"))
             if comp_f:
-                st.dataframe(pd.DataFrame(comp_f), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(comp_f)[COLS_COMP_EDITOR], use_container_width=True, hide_index=True)
             else:
                 st.caption("Fără componente înregistrate.")
 
