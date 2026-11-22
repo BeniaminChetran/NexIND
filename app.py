@@ -193,7 +193,6 @@ MENIU_STRUCTURA = {
         "🛠️ Asistent Defecte": render_asistent_defecte,
         "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
         "📄 Documentații": render_documentatii,
-        "📈 DashBoard": render_dashboard,
     },
     "🛠️ 2. Execuție & Rapoarte": {
         "📝 Intervenții": render_activitati,
@@ -201,19 +200,16 @@ MENIU_STRUCTURA = {
         "🛡️ Mentenanță preventivă": render_mentenanta,
         "📊 Măsurători": render_masuratori,
         "📋 Istoric": render_istoric,
-        "📈 DashBoard": render_dashboard,
         "🔮 Predicții": render_predictii,
     },
     "💼 3. Oferte & Comercial": {
         "💼 Oferte de preț": render_oferte,
         "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
-        "📈 DashBoard": render_dashboard,
     },
     "📦 4. Nomenclatoare & Stocuri": {
         "📦 Piese": render_piese,
         "🦾 Mașini": render_masini,
         "🏢 Firme": render_firme,
-        "📈 DashBoard": render_dashboard,
     },
     "🔐 SistemAdmin": {
         "⚙️ Setări": render_setari,
