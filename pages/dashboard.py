@@ -133,6 +133,29 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
 
+@st.cache_data(ttl=120)
+def incarca_defecte_recurente(zile_inainte: int = 180):
+    zile = max(1, int(zile_inainte))
+    with db_cursor() as c:
+        c.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
+                COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS masina,
+                defect,
+                COUNT(*) AS repetitii
+            FROM reparatii
+            WHERE defect IS NOT NULL AND defect <> ''
+              AND data_creare > CURRENT_DATE - make_interval(days => %s)
+            GROUP BY COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă'), COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat'), defect
+            HAVING COUNT(*) >= 3
+            ORDER BY repetitii DESC, firma ASC, masina ASC
+            LIMIT 50
+            """,
+            (zile,),
+        )
+        return [dict(r) for r in (c.fetchall() or [])]
+
 def render_memento_intretinere_dashboard():
     st.markdown("### 🔔 Memento Scadențe Întreținere")
     col_z, col_info = st.columns([1.4, 3.6], vertical_alignment="bottom")
@@ -433,14 +456,44 @@ def render_dashboard():
     st.markdown("---")
 
     # 2. DEFECTE RECURENTE
-    st.subheader("⚠️ Defecte Recurente (Ultimele 180 zile)")
-    if def_rec:
-        for d in def_rec:
-            st.warning(f"⚠️ **{d['masina']}**\nDefect: {d['defect']}\nNumăr apariții: {d['repetitii']}")
-    else:
-        st.success("Nu există defecte recurente identificate în ultimele 180 de zile.")
+    st.subheader("⚠️ Defecte Recurente")
+    f_col1, f_col2, f_col3 = st.columns(3)
+    with f_col1:
+        zile_defecte = st.selectbox(
+            "Perioadă analizată:",
+            options=[30, 60, 90, 180, 365],
+            index=3,
+            format_func=lambda x: f"Ultimele {x} zile",
+            key="dash_defecte_recurente_zile",
+        )
 
-    st.markdown("---")
+    def_rec_toate = incarca_defecte_recurente(zile_defecte)
+    firme_disp = ["Toate firmele"] + sorted({d["firma"] for d in def_rec_toate if d.get("firma")})
+    with f_col2:
+        firma_sel = st.selectbox("Firmă:", options=firme_disp, key="dash_defecte_recurente_firma")
+
+    masini_disp = ["Toate mașinile"] + sorted({
+        d["masina"] for d in def_rec_toate
+        if d.get("masina") and (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
+    })
+    with f_col3:
+        masina_sel = st.selectbox("Mașină:", options=masini_disp, key="dash_defecte_recurente_masina")
+
+    def_rec_filtrate = [
+        d for d in def_rec_toate
+        if (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
+        and (masina_sel == "Toate mașinile" or d.get("masina") == masina_sel)
+    ]
+
+    if def_rec_filtrate:
+        for d in def_rec_filtrate:
+            st.warning(
+                f"⚠️ **{d['firma']} — {d['masina']}**\n"
+                f"Defect: {d['defect']}\n"
+                f"Număr apariții: {d['repetitii']}"
+            )
+    else:
+        st.success(f"Nu există defecte recurente identificate pentru filtrele selectate (ultimele {zile_defecte} zile).")
 
     # 3. GRAFICELE (Top 10 Defecte, Top Clienți, Top Utilaje)
     if top_def:
