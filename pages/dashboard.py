@@ -3,7 +3,11 @@ import pandas as pd
 import plotly.express as px
 import json
 
-from repositories.piese_repository import PieseRepository
+from repositories.piese_repository import (
+    OPTIUNI_STARE_COMANDA,
+    PieseRepository,
+    _normalizeaza_stare_comanda,
+)
 from repositories.reparatii_repository import ReparatiiRepository
 from config import db_cursor
 
@@ -251,13 +255,13 @@ def render_dashboard():
     c4.metric("⚙️ Utilaje active", utilaje_active)
     c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
     c6.metric("👀 Sub supraveghere", utilaje_supr)
-    
-    #-------Afisare piese de comandat-----------
+
+    # -------Afisare piese de comandat-----------
     st.markdown("---")
     with st.expander("🛒 Piese De Comandat / Necesare & Furnizori", expanded=True):
         render_piese_de_comandat_dashboard()
-    #-------end Afisare piese de comandat-----------
-    
+    # -------end Afisare piese de comandat-----------
+
     m_r1, m_r2 = st.columns(2)
     m_r1.metric("⚙️ Reparații Mașini Reușite", f"{reusite_masini} / {total_masini}", delta=pct_masini)
     m_r2.metric("⚡ Reparații Electronice Reușite", f"{reusite_el} / {total_el}", delta=pct_el)
@@ -373,23 +377,77 @@ def render_dashboard():
 
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:
-    for k in ("furnizor", "nume_furnizor", "furnizor_principal", "supplier"):
+    for k in ("furnizor", "nume_furnizor", "furnizor_principal", "supplier", "link_furnizor"):
         val = str(piesa_row.get(k) or "").strip()
         if val:
             return val
     return "Fără furnizor setat"
 
+
+def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: str, stare_noua: str):
+    camp_json = "piese_json" if tabela == "reparatii" else "componente_json"
+    with db_cursor() as c:
+        c.execute(f"SELECT {camp_json} FROM {tabela} WHERE id = %s", (int(record_id),))
+        row = c.fetchone() or {}
+        raw_val = row.get(camp_json)
+        items = raw_val
+        if isinstance(raw_val, str):
+            try:
+                items = json.loads(raw_val)
+            except Exception:
+                items = []
+        if not isinstance(items, list):
+            return
+
+        modificat = False
+        den_target = " ".join(str(den_piesa or "").strip().lower().split())
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            den_item = str(
+                item.get("Componenta / Cod / Parametri")
+                or item.get("Piesa")
+                or item.get("piesa")
+                or item.get("denumire")
+                or ""
+            ).strip()
+            if " ".join(den_item.lower().split()) == den_target:
+                if "Stare" in item or tabela == "reparatii_electronice":
+                    item["Stare"] = stare_noua
+                if "Tip" in item or tabela == "reparatii":
+                    item["Tip"] = stare_noua
+                item["stare_comandata"] = stare_noua
+                modificat = True
+
+        if modificat:
+            c.execute(
+                f"UPDATE {tabela} SET {camp_json} = %s WHERE id = %s",
+                (json.dumps(items, ensure_ascii=False), int(record_id)),
+            )
+
+
 def render_piese_de_comandat_dashboard():
-    st.markdown("### 🛒 Piese De Comandat / Necesare & Furnizori")
+    st.markdown("### 🛒 Piese De Comandat / Necesare & Stare Comandă")
+    st.caption(
+        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De comandat`, `Comandată`, `Anulată`) "
+        "și apasă **💾 Actualizează Stările în Tabel**."
+    )
 
     piese_db = PieseRepository.get_all() or []
     furnizor_map = {}
+    piesa_id_by_name = {}
+    stare_catalog_by_name = {}
+
     for p in piese_db:
         den = str(p.get("denumire") or p.get("nume") or "").strip()
         if den:
-            furnizor_map[den.lower()] = _extrage_furnizor_piesa(p)
+            cheie = " ".join(den.lower().split())
+            furnizor_map[cheie] = _extrage_furnizor_piesa(p)
+            piesa_id_by_name[cheie] = p.get("id")
+            stare_catalog_by_name[cheie] = _normalizeaza_stare_comanda(p.get("stare_comandata"))
 
     randuri = []
+    idx_counter = 0
 
     # 1. Piese din rapoartele de Mașini (reparatii)
     rapoarte = ReparatiiRepository.get_all() or []
@@ -408,7 +466,10 @@ def render_piese_de_comandat_dashboard():
                 continue
             den_piesa = str(item.get("Piesa") or item.get("piesa") or "").strip()
             tip_piesa = str(item.get("Tip") or item.get("tip") or "").strip()
-            if not den_piesa or tip_piesa.lower() not in ("de comandat", "necesara", "necesare"):
+            stare_item = str(item.get("stare_comandata") or item.get("Stare") or tip_piesa or "").strip()
+            if not den_piesa:
+                continue
+            if tip_piesa.lower() not in ("de comandat", "necesara", "necesare", "de căutat", "comandată", "comandata", "anulată", "anulata"):
                 continue
 
             cant = item.get("Cantitate")
@@ -419,12 +480,27 @@ def render_piese_de_comandat_dashboard():
             except Exception:
                 cant_num = 1.0
 
-            furnizor = furnizor_map.get(den_piesa.lower(), "Fără furnizor setat")
+            cheie = " ".join(den_piesa.lower().split())
+            stare_curenta = (
+                stare_catalog_by_name[cheie]
+                if cheie in stare_catalog_by_name
+                else (
+                    "De comandat"
+                    if stare_item.lower() in ("de comandat", "necesara", "necesare")
+                    else _normalizeaza_stare_comanda(stare_item)
+                )
+            )
+            furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
+            idx_counter += 1
             randuri.append({
+                "_row_id": idx_counter,
+                "_piesa_id": piesa_id_by_name.get(cheie),
+                "_sursa_tbl": "reparatii",
+                "_sursa_rec_id": r.get("id"),
                 "Furnizor": furnizor,
                 "Piesă": den_piesa,
                 "Cantitate": cant_num,
-                "Status Comandă": "De Comandat",
+                "Status Comandă": stare_curenta,
                 "Sursă": "Mașini",
                 "Firmă": r.get("firma") or "",
                 "Mașină": r.get("masina") or "",
@@ -451,8 +527,11 @@ def render_piese_de_comandat_dashboard():
             if not isinstance(comp, dict):
                 continue
             den_comp = str(comp.get("Componenta / Cod / Parametri") or comp.get("piesa") or "").strip()
-            stare_comp = str(comp.get("Stare") or "").strip()
-            if not den_comp or stare_comp.lower() not in ("necesara", "necesare", "de comandat"):
+            stare_comp = str(comp.get("stare_comandata") or comp.get("Stare") or "").strip()
+            if not den_comp or stare_comp.lower() not in (
+                "necesara", "necesare", "de comandat", "de căutat", "de cautat",
+                "comandată", "comandata", "anulată", "anulata"
+            ):
                 continue
 
             cant_c = comp.get("Cantitate", 1.0)
@@ -461,12 +540,27 @@ def render_piese_de_comandat_dashboard():
             except Exception:
                 cant_num = 1.0
 
-            furnizor = furnizor_map.get(den_comp.lower(), "Fără furnizor setat")
+            cheie = " ".join(den_comp.lower().split())
+            stare_curenta = (
+                stare_catalog_by_name[cheie]
+                if cheie in stare_catalog_by_name
+                else (
+                    "De comandat"
+                    if stare_comp.lower() in ("de comandat", "necesara", "necesare")
+                    else _normalizeaza_stare_comanda(stare_comp)
+                )
+            )
+            furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
+            idx_counter += 1
             randuri.append({
+                "_row_id": idx_counter,
+                "_piesa_id": piesa_id_by_name.get(cheie),
+                "_sursa_tbl": "reparatii_electronice",
+                "_sursa_rec_id": f_el.get("id"),
                 "Furnizor": furnizor,
                 "Piesă": den_comp,
                 "Cantitate": cant_num,
-                "Status Comandă": "De Comandat",
+                "Status Comandă": stare_curenta,
                 "Sursă": "Electronică",
                 "Firmă": f_el.get("firma_nume") or "",
                 "Mașină": f_el.get("masina_nume") or f_el.get("piesa_subansamblu") or "",
@@ -479,7 +573,7 @@ def render_piese_de_comandat_dashboard():
 
     df = pd.DataFrame(randuri)
 
-    c1, c2, c3 = st.columns([1.2, 1.5, 1.5])
+    c1, c2, c3, c4 = st.columns([1.1, 1.4, 1.4, 1.4])
     with c1:
         filtru_sursa = st.selectbox(
             "Filtrează după sursă",
@@ -494,6 +588,12 @@ def render_piese_de_comandat_dashboard():
             key="dash_piese_cmd_furn",
         )
     with c3:
+        filtru_stare = st.selectbox(
+            "Filtrează după status",
+            options=["Toate stările"] + OPTIUNI_STARE_COMANDA,
+            key="dash_piese_cmd_stare",
+        )
+    with c4:
         cautare_piesa = st.text_input(
             "Caută piesă / cod",
             placeholder="ex: L6376PD, SFH6106...",
@@ -505,15 +605,103 @@ def render_piese_de_comandat_dashboard():
         df_f = df_f[df_f["Sursă"] == filtru_sursa]
     if filtru_furn != "Toți furnizorii":
         df_f = df_f[df_f["Furnizor"] == filtru_furn]
+    if filtru_stare != "Toate stările":
+        df_f = df_f[df_f["Status Comandă"] == filtru_stare]
     if cautare_piesa:
         df_f = df_f[df_f["Piesă"].str.lower().str.contains(cautare_piesa, na=False)]
 
-    st.dataframe(df_f, hide_index=True, use_container_width=True)
+    if df_f.empty:
+        st.info("Nu există piese care să corespundă filtrelor selectate.")
+        return
 
-    with st.expander("📦 Centralizator cantități De Comandat pe Furnizor & Piesă", expanded=False):
+    cols_afis = [
+        "_row_id",
+        "Furnizor",
+        "Piesă",
+        "Cantitate",
+        "Status Comandă",
+        "Sursă",
+        "Firmă",
+        "Mașină",
+        "Raport",
+    ]
+    df_editor_init = df_f[cols_afis].reset_index(drop=True)
+    editor_dash_key = f"dash_editor_stare_piese_{filtru_sursa}_{filtru_furn}_{filtru_stare}_{len(df_editor_init)}"
+
+    edited_df = st.data_editor(
+        df_editor_init,
+        key=editor_dash_key,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["_row_id", "Furnizor", "Piesă", "Cantitate", "Sursă", "Firmă", "Mașină", "Raport"],
+        column_config={
+            "_row_id": None,
+            "Furnizor": st.column_config.TextColumn("Furnizor", width="medium"),
+            "Piesă": st.column_config.TextColumn("Piesă", width="large"),
+            "Cantitate": st.column_config.NumberColumn("Cantitate", format="%.2f", width="small"),
+            "Status Comandă": st.column_config.SelectboxColumn(
+                "Status Comandă",
+                options=OPTIUNI_STARE_COMANDA,
+                required=True,
+                width="medium",
+            ),
+            "Sursă": st.column_config.TextColumn("Sursă", width="small"),
+            "Firmă": st.column_config.TextColumn("Firmă", width="small"),
+            "Mașină": st.column_config.TextColumn("Mașină", width="small"),
+            "Raport": st.column_config.TextColumn("Raport", width="small"),
+        },
+    )
+
+    if st.button("💾 Actualizează Stările în Tabel", type="primary", key="btn_dash_update_stare_piese"):
+        df_final = edited_df.copy()
+        state_ed = st.session_state.get(editor_dash_key)
+        if isinstance(state_ed, dict):
+            for idx_key, changes in state_ed.get("edited_rows", {}).items():
+                idx = int(idx_key)
+                if 0 <= idx < len(df_final) and isinstance(changes, dict):
+                    for col_name, new_val in changes.items():
+                        if col_name in df_final.columns:
+                            df_final.at[idx, col_name] = new_val
+
+        meta_map = {int(r["_row_id"]): r for _, r in df_f.iterrows()}
+        orig_map = {int(r["_row_id"]): _normalizeaza_stare_comanda(r["Status Comandă"]) for _, r in df_editor_init.iterrows()}
+        nr_mod = 0
+
+        for _, row in df_final.iterrows():
+            rid = int(row["_row_id"])
+            stare_noua = _normalizeaza_stare_comanda(row.get("Status Comandă"))
+            if orig_map.get(rid) != stare_noua:
+                meta = meta_map.get(rid) or {}
+                piesa_id = meta.get("_piesa_id")
+                if piesa_id is not None:
+                    PieseRepository.update_stare_comandata(int(piesa_id), stare_noua)
+                if meta.get("_sursa_tbl") and meta.get("_sursa_rec_id") is not None:
+                    try:
+                        _actualizeaza_stare_in_raport_json(
+                            str(meta["_sursa_tbl"]),
+                            int(meta["_sursa_rec_id"]),
+                            str(row.get("Piesă") or ""),
+                            stare_noua,
+                        )
+                    except Exception:
+                        pass
+                nr_mod += 1
+
+        if editor_dash_key in st.session_state:
+            del st.session_state[editor_dash_key]
+
+        incarca_date_dashboard.clear()
+        if nr_mod == 0:
+            st.info("ℹ️ Nu există modificări nesalvate la statusul comenzii.")
+        else:
+            st.success(f"✅ Stările au fost actualizate pentru **{nr_mod}** poziții.")
+            st.rerun()
+
+    with st.expander("📦 Centralizator cantități pe Status Comandă, Furnizor & Piesă", expanded=False):
         df_sum = (
-            df_f.groupby(["Furnizor", "Piesă", "Status Comandă"], as_index=False)["Cantitate"]
+            df_f.groupby(["Status Comandă", "Furnizor", "Piesă"], as_index=False)["Cantitate"]
             .sum()
-            .sort_values(["Furnizor", "Piesă"])
+            .sort_values(["Status Comandă", "Furnizor", "Piesă"])
         )
         st.dataframe(df_sum, hide_index=True, use_container_width=True)

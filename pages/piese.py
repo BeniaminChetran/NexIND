@@ -11,7 +11,11 @@ import streamlit.components.v1 as components
 from config import db_cursor
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
-from repositories.piese_repository import PieseRepository
+from repositories.piese_repository import (
+    OPTIUNI_STARE_COMANDA,
+    PieseRepository,
+    _normalizeaza_stare_comanda,
+)
 from repositories.setari_repository import SetariRepository
 from utils.context_selectie import aplica_context_la_tab, seteaza_context_selectie
 
@@ -189,10 +193,6 @@ def _parse_lista_componente_raw(raw_comp) -> list[dict]:
 
 
 def _extrage_componente_unice_din_rapoarte_el(fise_el: list[dict]) -> list[dict]:
-    """
-    Extrage componentele din rapoartele electronice selectate și le comasează o singură dată
-    după denumirea/codul normalizat (fără duplicate în lista comasată).
-    """
     unice: dict[str, dict] = {}
     for fisa in fise_el or []:
         if not isinstance(fisa, dict):
@@ -248,11 +248,6 @@ def _comaseaza_si_importa_piese_pe_masina(
     masina_tinta: str,
     firma_tinta: str = "",
 ) -> dict:
-    """
-    Importă piesele comasate în catalogul de piese pentru `masina_tinta`, o singură dată per mașină.
-    Dacă aceeași piesă există deja pentru mașina respectivă, nu o dublează.
-    Poate exista însă pe altă mașină (deoarece o piesă poate fi utilizată la mai multe mașini).
-    """
     masina_curata = str(masina_tinta or "").strip()
     if not masina_curata or masina_curata == "Toate mașinile / General":
         masina_curata = "General"
@@ -296,6 +291,7 @@ def _comaseaza_si_importa_piese_pe_masina(
             "pret_achizitie": 0.0,
             "valuta_achizitie": "EUR",
             "masina_montaj": masina_curata,
+            "stare_comandata": "De căutat",
         })
         existente_pe_masina.add(cheie)
         adaugate += 1
@@ -498,6 +494,11 @@ def render_piese():
                     cod_producator = st.text_input("Cod Producător")
                     cod_comercial = st.text_input("Cod Comercial")
                     subansamblu = st.text_input("Subansamblu")
+                    stare_cmd_noua = st.selectbox(
+                        "Stare comandă",
+                        options=OPTIUNI_STARE_COMANDA,
+                        index=0,
+                    )
                 with col2:
                     parametri = st.text_area("Parametri Piesă (dimensiuni, tensiune, putere etc.)", height=100)
                     termen_livrare_nou = st.text_input("Termen livrare (ex: 1, 3-5 zile, Stoc)", value="1")
@@ -541,11 +542,12 @@ def render_piese():
                                 "pret_achizitie": pret_calculat,
                                 "valuta_achizitie": valuta_noua,
                                 "masina_montaj": masina_tinta_noua,
+                                "stare_comandata": stare_cmd_noua,
                             })
                             _obtine_corpus_utilizare_istoric.clear()
                             st.success(
                                 f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
-                                f"(Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou})!"
+                                f"[Stare: **{stare_cmd_noua}** | Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou}]!"
                             )
                             st.rerun()
 
@@ -629,28 +631,33 @@ def render_piese():
                         st.rerun()
 
         st.markdown("---")
-        st.subheader("📋 Repere Înregistrate, Căutare, Editare & Ștergere")
+        st.subheader("📋 Repere Înregistrate, Stare Comandă, Căutare, Editare & Ștergere")
 
-        c_search1, c_search2, c_search3 = st.columns([3.2, 1.8, 1.0], vertical_alignment="bottom")
+        c_search1, c_stare_f, c_g_btn = st.columns([2.6, 1.8, 1.6], vertical_alignment="bottom")
         with c_search1:
             termen_cautare = st.text_input(
                 "Filtrează după nume / denumire (sau cod/parametru):",
                 placeholder="ex: L6376PD, manometru, releu, comutator...",
                 key="termen_cautare_piese",
             ).strip().lower()
-        with c_search2:
+        with c_stare_f:
+            filtru_stare_cmd = st.selectbox(
+                "Filtrează după Stare comandă:",
+                options=["Toate stările"] + OPTIUNI_STARE_COMANDA,
+                key="sel_filtru_stare_comanda_piese",
+            )
+        with c_g_btn:
             ascunde_general = st.checkbox(
                 "Scoate piesele «General»",
                 value=False,
                 key="chk_scoate_general_piese",
             )
-        with c_search3:
-            st.button(
-                "🧹 Resetează",
-                key="btn_reset_cautare_piese",
-                on_click=_reseteaza_termen_cautare_piese,
-                use_container_width=True,
-            )
+
+        st.button(
+            "🧹 Resetează căutarea",
+            key="btn_reset_cautare_piese",
+            on_click=_reseteaza_termen_cautare_piese,
+        )
 
         piese_raw_m = PieseRepository.get_filtrate(sel_m) or []
 
@@ -697,9 +704,12 @@ def render_piese():
                 piese_baza = piese_raw_m
 
         cuvinte_cautate = [c for c in termen_cautare.split() if c]
-        if cuvinte_cautate:
-            piese_filtrate = []
-            for p in piese_baza:
+        piese_filtrate = []
+        for p in piese_baza:
+            stare_p = _normalizeaza_stare_comanda(p.get("stare_comandata"))
+            if filtru_stare_cmd != "Toate stările" and stare_p != filtru_stare_cmd:
+                continue
+            if cuvinte_cautate:
                 index_cautare = " ".join([
                     str(p.get("denumire") or ""),
                     str(p.get("cod_producator") or ""),
@@ -707,11 +717,11 @@ def render_piese():
                     str(p.get("parametri") or ""),
                     str(p.get("subansamblu") or ""),
                     str(p.get("masina_montaj") or ""),
+                    stare_p,
                 ]).lower()
-                if all(cuv in index_cautare for cuv in cuvinte_cautate):
-                    piese_filtrate.append(p)
-        else:
-            piese_filtrate = list(piese_baza)
+                if not all(cuv in index_cautare for cuv in cuvinte_cautate):
+                    continue
+            piese_filtrate.append(p)
 
         if mod_sortare == "Denumire (A-Z)":
             piese_filtrate.sort(key=lambda x: str(x.get("denumire") or "").lower())
@@ -731,6 +741,13 @@ def render_piese():
             f"(Firmă: **{sel_firma_p}** | Mașină: **{sel_m}**)."
         )
 
+        # Control de editare directă a tabelului (inclusiv rubrica Stare comandă)
+        st.markdown("##### ✏️ Tabel Editabil Piese & Stare Comandă")
+        st.caption(
+            "Schimbă direct în tabel coloana **Stare comandă** (`De căutat`, `De comandat`, `Comandată`, `Anulată`) "
+            "pentru unul sau mai multe repere, apoi apasă **💾 Actualizează Stările în Tabel**."
+        )
+
         randuri_tabel = []
         for p in piese_filtrate[:150]:
             m_nom = str(p.get("masina_montaj") or "General")
@@ -743,7 +760,10 @@ def render_piese():
 
             pret_v = float(p.get("pret_achizitie") or 0.0)
             val_v = str(p.get("valuta_achizitie") or "RON").strip().upper()
+            stare_cmd_v = _normalizeaza_stare_comanda(p.get("stare_comandata"))
+
             randuri_tabel.append({
+                "id": int(p.get("id")),
                 "Denumire Piesă": str(p.get("denumire") or ""),
                 "Cod Producător": str(p.get("cod_producator") or ""),
                 "Firmă": f_nom,
@@ -751,13 +771,71 @@ def render_piese():
                 "Subansamblu": str(p.get("subansamblu") or ""),
                 "Termen": str(p.get("termen_livrare") or "1"),
                 "Preț Achiziție": f"{pret_v:.2f} {val_v}" if acces_permis else "🔒",
+                "Stare comandă": stare_cmd_v,
             })
 
-        st.dataframe(pd.DataFrame(randuri_tabel), hide_index=True, use_container_width=True)
+        df_tabel_init = pd.DataFrame(randuri_tabel)
+        editor_stare_key = f"editor_stare_piese_{sel_firma_p}_{sel_m}_{filtru_stare_cmd}_{len(df_tabel_init)}"
+
+        edited_tabel = st.data_editor(
+            df_tabel_init,
+            key=editor_stare_key,
+            hide_index=True,
+            num_rows="fixed",
+            use_container_width=True,
+            disabled=["id", "Denumire Piesă", "Cod Producător", "Firmă", "Mașină", "Subansamblu", "Termen", "Preț Achiziție"],
+            column_config={
+                "id": None,
+                "Denumire Piesă": st.column_config.TextColumn("Denumire Piesă", width="medium"),
+                "Cod Producător": st.column_config.TextColumn("Cod Producător", width="small"),
+                "Firmă": st.column_config.TextColumn("Firmă", width="small"),
+                "Mașină": st.column_config.TextColumn("Mașină", width="small"),
+                "Subansamblu": st.column_config.TextColumn("Subansamblu", width="small"),
+                "Termen": st.column_config.TextColumn("Termen", width="small"),
+                "Preț Achiziție": st.column_config.TextColumn("Preț Achiziție", width="small"),
+                "Stare comandă": st.column_config.SelectboxColumn(
+                    "Stare comandă",
+                    options=OPTIUNI_STARE_COMANDA,
+                    required=True,
+                    width="medium",
+                ),
+            },
+        )
+
+        if st.button("💾 Actualizează Stările în Tabel", type="primary", key="btn_update_stare_tabel_piese"):
+            df_stare_final = edited_tabel.copy()
+            state_ed = st.session_state.get(editor_stare_key)
+            if isinstance(state_ed, dict):
+                for idx_key, changes in state_ed.get("edited_rows", {}).items():
+                    idx = int(idx_key)
+                    if 0 <= idx < len(df_stare_final) and isinstance(changes, dict):
+                        for col_name, new_val in changes.items():
+                            if col_name in df_stare_final.columns:
+                                df_stare_final.at[idx, col_name] = new_val
+
+            orig_stare_map = {int(r["id"]): _normalizeaza_stare_comanda(r["Stare comandă"]) for _, r in df_tabel_init.iterrows()}
+            nr_actualizate = 0
+
+            for _, row in df_stare_final.iterrows():
+                pid = int(row["id"])
+                stare_noua = _normalizeaza_stare_comanda(row.get("Stare comandă"))
+                if orig_stare_map.get(pid) != stare_noua:
+                    PieseRepository.update_stare_comandata(pid, stare_noua)
+                    nr_actualizate += 1
+
+            if editor_stare_key in st.session_state:
+                del st.session_state[editor_stare_key]
+
+            if nr_actualizate == 0:
+                st.info("ℹ️ Nu au fost detectate modificări la rubrica Stare comandă.")
+            else:
+                st.success(f"✅ Tabelul a fost actualizat: **{nr_actualizate}** piese au primit o nouă stare de comandă.")
+                st.rerun()
 
         for p in piese_filtrate[:100]:
             masina_eticheta = p.get("masina_montaj", "General")
             pid = p.get("id")
+            stare_cmd_val = _normalizeaza_stare_comanda(p.get("stare_comandata"))
             pret_val = float(p.get("pret_achizitie", 0.0) or 0.0)
             valuta_val = str(p.get("valuta_achizitie") or "RON").strip().upper()
             if valuta_val not in ("RON", "EUR"):
@@ -771,7 +849,10 @@ def render_piese():
                 else (f" — {p.get('parametri')}" if p.get("parametri") else "")
             )
 
-            expander_title = f"🔩 {p['denumire']}{cod_antet}{param_scurt} ({masina_eticheta} | Termen: {termen_val}){pret_antet}"
+            expander_title = (
+                f"🔩 {p['denumire']}{cod_antet}{param_scurt} "
+                f"({masina_eticheta} | Stare: {stare_cmd_val} | Termen: {termen_val}){pret_antet}"
+            )
             with st.expander(expander_title, expanded=(len(piese_filtrate) == 1)):
                 if acces_permis and p.get("link_furnizor"):
                     st.markdown(f"🔗 **Link Furnizor:** [{p['link_furnizor']}]({p['link_furnizor']})")
@@ -801,6 +882,17 @@ def render_piese():
                     with cp2:
                         mod_param = st.text_area("Parametri Piesă", value=p.get("parametri", "") or "", height=100, key=f"param_{pid}")
                         mod_termen = st.text_input("Termen livrare", value=termen_val, key=f"termen_{pid}")
+                        idx_stare_cmd = (
+                            OPTIUNI_STARE_COMANDA.index(stare_cmd_val)
+                            if stare_cmd_val in OPTIUNI_STARE_COMANDA
+                            else 0
+                        )
+                        mod_stare_cmd = st.selectbox(
+                            "Stare comandă",
+                            options=OPTIUNI_STARE_COMANDA,
+                            index=idx_stare_cmd,
+                            key=f"stare_cmd_{pid}",
+                        )
 
                         if acces_permis:
                             mod_link = st.text_input("Link Furnizor", value=p.get("link_furnizor", "") or "", key=f"link_{pid}")
@@ -839,9 +931,13 @@ def render_piese():
                                 "pret_achizitie": mod_pret_calc,
                                 "valuta_achizitie": mod_valuta,
                                 "masina_montaj": mod_masina.strip() or "General",
+                                "stare_comandata": mod_stare_cmd,
                             })
                             _obtine_corpus_utilizare_istoric.clear()
-                            st.toast(f"✅ Salvat: {mod_den.strip()} ({mod_masina.strip()}) -> {mod_pret_calc:.2f} {mod_valuta}")
+                            st.toast(
+                                f"✅ Salvat: {mod_den.strip()} ({mod_masina.strip()} | {mod_stare_cmd}) -> "
+                                f"{mod_pret_calc:.2f} {mod_valuta}"
+                            )
                             st.rerun()
                     if bt2.form_submit_button("🗑️ Șterge Piesa", key=f"del_{pid}"):
                         PieseRepository.delete(pid)
@@ -1207,6 +1303,7 @@ def render_piese():
                         "pret_achizitie": nou_pret,
                         "valuta_achizitie": nou_val,
                         "masina_montaj": p_orig_db.get("masina_montaj") or "General",
+                        "stare_comandata": p_orig_db.get("stare_comandata") or "De căutat",
                     })
                     nr_act += 1
 
