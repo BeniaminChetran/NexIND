@@ -12,25 +12,80 @@ FRECVENTE_MENTENANTA = ["Zilnică", "Săptămânală", "Lunară", "Trimestrială
 
 FISE_GENERALE_IMPLICITE = {
     "Zilnică": [
-        {"Ordine": 1, "Operațiune / Verificare": "Curățare zonă de lucru și senzori", "Standard / Observații": "Fără resturi sau praf"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare presiune aer / nivel lichide", "Standard / Observații": "În parametri normali"},
-        {"Ordine": 3, "Operațiune / Verificare": "Control zgomote, vibrații sau scurgeri", "Standard / Observații": "Fără anomalii"},
+        {
+            "Ordine": 1,
+            "Operațiune / Verificare": "Curățare zonă de lucru și senzori",
+            "Standard / Observații": "Fără resturi sau praf",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 2,
+            "Operațiune / Verificare": "Verificare presiune aer / nivel lichide",
+            "Standard / Observații": "În parametri normali",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 3,
+            "Operațiune / Verificare": "Control zgomote, vibrații sau scurgeri",
+            "Standard / Observații": "Fără anomalii",
+            "Documentație Drive": "",
+        },
     ],
     "Săptămânală": [
-        {"Ordine": 1, "Operațiune / Verificare": "Curățare filtre și ventilatoare răcire", "Standard / Observații": "Flux aer liber"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare strângere conexiuni și ghidaje", "Standard / Observații": "Fără jocuri"},
+        {
+            "Ordine": 1,
+            "Operațiune / Verificare": "Curățare filtre și ventilatoare răcire",
+            "Standard / Observații": "Flux aer liber",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 2,
+            "Operațiune / Verificare": "Verificare strângere conexiuni și ghidaje",
+            "Standard / Observații": "Fără jocuri",
+            "Documentație Drive": "",
+        },
     ],
     "Lunară": [
-        {"Ordine": 1, "Operațiune / Verificare": "Lubrifiere puncte de ungere conform manual", "Standard / Observații": "Vaselină / ulei prescris"},
-        {"Ordine": 2, "Operațiune / Verificare": "Verificare cabluri, senzori și siguranțe", "Standard / Observații": "Izolație intactă"},
+        {
+            "Ordine": 1,
+            "Operațiune / Verificare": "Lubrifiere puncte de ungere conform manual",
+            "Standard / Observații": "Vaselină / ulei prescris",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 2,
+            "Operațiune / Verificare": "Verificare cabluri, senzori și siguranțe",
+            "Standard / Observații": "Izolație intactă",
+            "Documentație Drive": "",
+        },
     ],
     "Trimestrială": [
-        {"Ordine": 1, "Operațiune / Verificare": "Calibrare / verificare aliniere și parametri", "Standard / Observații": "În toleranțe"},
-        {"Ordine": 2, "Operațiune / Verificare": "Revizie elemente de uzură și curele/furtunuri", "Standard / Observații": "Înlocuire dacă e cazul"},
+        {
+            "Ordine": 1,
+            "Operațiune / Verificare": "Calibrare / verificare aliniere și parametri",
+            "Standard / Observații": "În toleranțe",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 2,
+            "Operațiune / Verificare": "Revizie elemente de uzură și curele/furtunuri",
+            "Standard / Observații": "Înlocuire dacă e cazul",
+            "Documentație Drive": "",
+        },
     ],
     "Anuală": [
-        {"Ordine": 1, "Operațiune / Verificare": "Revizie generală mecanică și electrică", "Standard / Observații": "Verificare completă"},
-        {"Ordine": 2, "Operațiune / Verificare": "Înlocuire consumabile / lichide conform plan", "Standard / Observații": "Conform carte tehnică"},
+        {
+            "Ordine": 1,
+            "Operațiune / Verificare": "Revizie generală mecanică și electrică",
+            "Standard / Observații": "Verificare completă",
+            "Documentație Drive": "",
+        },
+        {
+            "Ordine": 2,
+            "Operațiune / Verificare": "Înlocuire consumabile / lichide conform plan",
+            "Standard / Observații": "Conform carte tehnică",
+            "Documentație Drive": "",
+        },
     ],
 }
 
@@ -137,20 +192,34 @@ def _incarca_fise_din_db() -> list[dict]:
 
 def _normalizare_pasi_df(pasi: list[dict]) -> pd.DataFrame:
     if not pasi:
-        return pd.DataFrame([{"Ordine": 1, "Operațiune / Verificare": "", "Standard / Observații": ""}])
+        return pd.DataFrame([{
+            "Ordine": 1,
+            "Operațiune / Verificare": "",
+            "Standard / Observații": "",
+            "Documentație Drive": "",
+        }])
     randuri = []
     for idx, p in enumerate(pasi, start=1):
         if isinstance(p, dict):
+            doc_link = (
+                p.get("Documentație Drive")
+                or p.get("Documentatie Drive")
+                or p.get("documentatie_drive")
+                or p.get("drive_url")
+                or ""
+            )
             randuri.append({
                 "Ordine": int(p.get("Ordine") or p.get("ordine") or idx),
                 "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or p.get("operatiune") or p.get("pas") or ""),
                 "Standard / Observații": str(p.get("Standard / Observații") or p.get("observatii") or ""),
+                "Documentație Drive": str(doc_link or "").strip(),
             })
         else:
             randuri.append({
                 "Ordine": idx,
                 "Operațiune / Verificare": str(p),
                 "Standard / Observații": "",
+                "Documentație Drive": "",
             })
     return pd.DataFrame(randuri)
 
@@ -160,7 +229,8 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
     for i, (_, row) in enumerate(df.iterrows(), start=1):
         op = str(row.get("Operațiune / Verificare") or "").strip()
         obs = str(row.get("Standard / Observații") or "").strip()
-        if not op and not obs:
+        doc_link = str(row.get("Documentație Drive") or "").strip()
+        if not op and not obs and not doc_link:
             continue
         try:
             ord_val = int(row.get("Ordine") or i)
@@ -170,6 +240,7 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
             "Ordine": ord_val,
             "Operațiune / Verificare": op,
             "Standard / Observații": obs,
+            "Documentație Drive": doc_link,
         })
     return pasi
 
@@ -281,9 +352,22 @@ def obtine_fisa_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: 
     }
 
 
+def _editor_config_fise():
+    return {
+        "Ordine": st.column_config.NumberColumn("Ordine", width="small", step=1),
+        "Operațiune / Verificare": st.column_config.TextColumn("Operațiune / Verificare", width="large"),
+        "Standard / Observații": st.column_config.TextColumn("Standard / Observații", width="medium"),
+        "Documentație Drive": st.column_config.TextColumn(
+            "Documentație Drive",
+            help="Liye link-ul complet (https://drive.google.com/...) către documentația operațiunii",
+            width="medium",
+        ),
+    }
+
+
 def render_fise_mentenanta():
     st.subheader("📋 Fișe Mentenanță Preventivă (Denumire + Tip Mașină + Frecvență)")
-    st.caption("Fără legătură cu firma: aceeași combinație Denumire + Tip mașină + Frecvență se aplică oriunde apare utilajul.")
+    st.caption("Fără legătură cu firma: poți încărca operațiuni, linkuri Google Drive către documentație și salva fișa cu denumirea standard.")
 
     fise_db = _incarca_fise_din_db()
     catalog_masini = _incarca_catalog_masini_fara_firma()
@@ -304,6 +388,7 @@ def render_fise_mentenanta():
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
+            column_config=_editor_config_fise(),
             key=f"editor_fisa_gen_{frec_gen}",
         )
         if st.button("💾 Salvează Fișa Generală", type="primary", key="btn_salveaza_fisa_gen"):
@@ -313,7 +398,7 @@ def render_fise_mentenanta():
             st.rerun()
 
     with tab_proprie:
-        st.markdown("Alege sau introdu **Denumirea mașinii**, **Tipul mașinii** și **Frecvența**, apoi desfășoară fișa generală și adapteaz-o.")
+        st.markdown("Alege sau introdu **Denumirea mașinii**, **Tipul mașinii** și **Frecvența**, adaugă operațiunile și linkurile Google Drive, apoi salvează.")
 
         optiuni_preset = ["-- Introdu manual --"] + [
             f"{x['denumire_masina']} | {x['tip_masina']}" for x in catalog_masini
@@ -373,6 +458,7 @@ def render_fise_mentenanta():
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
+            column_config=_editor_config_fise(),
             key=f"editor_fisa_prop_{state_key_pasi}",
         )
 
@@ -407,3 +493,4 @@ def render_fise_mentenanta():
                 for f in fise_db
             ]
             st.dataframe(pd.DataFrame(rezumat), hide_index=True, use_container_width=True)
+            
