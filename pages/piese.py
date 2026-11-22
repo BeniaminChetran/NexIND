@@ -593,14 +593,20 @@ def render_piese():
         st.markdown("---")
         st.subheader("📋 Repere Înregistrate, Căutare, Editare & Ștergere")
 
-        c_search1, c_search2 = st.columns([5, 1], vertical_alignment="bottom")
+        c_search1, c_search2, c_search3 = st.columns([3.2, 1.8, 1.0], vertical_alignment="bottom")
         with c_search1:
             termen_cautare = st.text_input(
-                "Filtrează / caută în reperele afișate (denumire, cod, parametru, subansamblu):",
-                placeholder="Opțional: scrie denumire, cod producător, parametru sau subansamblu...",
+                "Filtrează după nume / denumire (sau cod/parametru):",
+                placeholder="ex: L6376PD, manometru, releu, comutator...",
                 key="termen_cautare_piese",
             ).strip().lower()
         with c_search2:
+            ascunde_general = st.checkbox(
+                "Scoate piesele «General»",
+                value=False,
+                key="chk_scoate_general_piese",
+            )
+        with c_search3:
             st.button(
                 "🧹 Resetează",
                 key="btn_reset_cautare_piese",
@@ -608,7 +614,7 @@ def render_piese():
                 use_container_width=True,
             )
 
-        piese_baza = PieseRepository.get_filtrate(sel_m) or []
+        piese_raw_m = PieseRepository.get_filtrate(sel_m) or []
 
         # Dacă s-a ales o firmă și nu s-a ales o mașină anume, filtrăm și după mașinile firmei respective
         if sel_firma_p != "Toate firmele" and sel_m == "Toate mașinile / General":
@@ -618,10 +624,42 @@ def render_piese():
                 if m.get("firma_id") == firme_by_nume.get(sel_firma_p, {}).get("id")
             }
             if masini_firma_set:
-                piese_baza = [
-                    p for p in piese_baza
+                piese_raw_m = [
+                    p for p in piese_raw_m
                     if str(p.get("masina_montaj") or "").strip().lower() in masini_firma_set
+                    or (not ascunde_general and str(p.get("masina_montaj") or "").strip().lower() == "general")
                 ]
+
+        # Când este aleasă o mașină anume: evităm dublarea pieselor care există și pe mașină și la General,
+        # și aplicăm opțiunea de a scoate piesele «General» dacă este bifată
+        if sel_m != "Toate mașinile / General":
+            m_sel_low = sel_m.strip().lower()
+            piese_pe_masina = [
+                p for p in piese_raw_m
+                if str(p.get("masina_montaj") or "").strip().lower() == m_sel_low
+            ]
+            if ascunde_general:
+                piese_baza = piese_pe_masina
+            else:
+                den_pe_masina = {
+                    " ".join(str(p.get("denumire") or "").strip().lower().split())
+                    for p in piese_pe_masina
+                    if str(p.get("denumire") or "").strip()
+                }
+                piese_general = [
+                    p for p in piese_raw_m
+                    if str(p.get("masina_montaj") or "").strip().lower() == "general"
+                    and " ".join(str(p.get("denumire") or "").strip().lower().split()) not in den_pe_masina
+                ]
+                piese_baza = piese_pe_masina + piese_general
+        else:
+            if ascunde_general:
+                piese_baza = [
+                    p for p in piese_raw_m
+                    if str(p.get("masina_montaj") or "").strip().lower() != "general"
+                ]
+            else:
+                piese_baza = piese_raw_m
 
         cuvinte_cautate = [c for c in termen_cautare.split() if c]
         if cuvinte_cautate:
