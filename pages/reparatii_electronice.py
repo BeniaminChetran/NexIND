@@ -19,6 +19,11 @@ COL_COMP_DEN = "Componenta / Cod / Parametri"
 COL_COMP_CANT = "Cantitate"
 COL_COMP_STARE = "Stare"
 COLS_COMP_EDITOR = [COL_COMP_DEN, COL_COMP_CANT, COL_COMP_STARE]
+MAX_LEN_DREAPTA = 30
+
+
+def _limita_30(val) -> str:
+    return str(val or "")[:MAX_LEN_DREAPTA]
 
 
 def _cauta_docs_electronice(termen: str, masina_id=None) -> list[dict]:
@@ -114,9 +119,9 @@ def _init_sau_reseteaza_el_draft(tehnician_def: str):
         "sel_masina": "General / Fără mașină",
         "piesa_subansamblu": "",
         "defect_reclamat": "",
-        "stare_finala": OPT_STARI_FINALE[0],
-        "tehnician": tehnician_def,
-        "verificator": "Client",
+        "stare_finala": _limita_30(OPT_STARI_FINALE[0]),
+        "tehnician": _limita_30(tehnician_def),
+        "verificator": _limita_30("Client"),
         "ultima_firma": "-- Alege firma --",
     }
     st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
@@ -129,8 +134,8 @@ def _incarca_fisa_in_editor(fisa: dict, tehnician_def: str):
     are_masina = bool(fisa.get("masina_id")) or (
         bool(fisa.get("masina_nume")) and str(fisa.get("masina_nume")).strip() != "General / Fără mașină"
     )
-    stare_db = str(fisa.get("stare_finala") or OPT_STARI_FINALE[0]).strip()
-    if stare_db not in OPT_STARI_FINALE:
+    stare_db = _limita_30(fisa.get("stare_finala") or OPT_STARI_FINALE[0]).strip()
+    if stare_db and stare_db not in OPT_STARI_FINALE:
         OPT_STARI_FINALE.append(stare_db)
 
     st.session_state["el_editing_id"] = fisa.get("id")
@@ -147,9 +152,9 @@ def _incarca_fisa_in_editor(fisa: dict, tehnician_def: str):
         "sel_masina": fisa.get("masina_nume") or "General / Fără mașină",
         "piesa_subansamblu": str(fisa.get("piesa_subansamblu") or ""),
         "defect_reclamat": str(fisa.get("defect_reclamat") or ""),
-        "stare_finala": stare_db,
-        "tehnician": str(fisa.get("tehnician") or tehnician_def),
-        "verificator": str(fisa.get("verificator") or "Client"),
+        "stare_finala": stare_db or OPT_STARI_FINALE[0],
+        "tehnician": _limita_30(fisa.get("tehnician") or tehnician_def),
+        "verificator": _limita_30(fisa.get("verificator") or "Client"),
         "ultima_firma": fisa.get("firma_nume") or "-- Alege firma --",
     }
     if comp_lista:
@@ -167,7 +172,7 @@ def render_reparatii_electronice():
     st.subheader("⚡ Gestiune Reparații Electronice & Mecatronice")
 
     setari_el = SetariRepository.get_setari() or {}
-    tehnician_def_el = setari_el.get("tehnician_implicit") or "Tehnician Nexus"
+    tehnician_def_el = _limita_30(setari_el.get("tehnician_implicit") or "Tehnician Nexus")
 
     if "el_draft" not in st.session_state:
         _init_sau_reseteaza_el_draft(tehnician_def_el)
@@ -236,7 +241,9 @@ def render_reparatii_electronice():
         if draft.get("ultima_firma") != sel_firma:
             draft["ultima_firma"] = sel_firma
             if editing_id is None:
-                draft["verificator"] = firma_obj.get("nume_persoana") or firma_obj.get("persoana_contact") or "Client"
+                draft["verificator"] = _limita_30(
+                    firma_obj.get("nume_persoana") or firma_obj.get("persoana_contact") or "Client"
+                )
 
         masini_db = MasiniRepository.get_by_firma(firma_obj["id"])
         masini_nume = [m["denumire"] for m in masini_db]
@@ -260,7 +267,7 @@ def render_reparatii_electronice():
         else:
             draft["sel_masina"] = "General / Fără mașină"
 
-        c1, c2 = st.columns([1.3, 1.0])
+        c1, c2 = st.columns([1.5, 1.0])
         with c1:
             piesa_subansamblu = st.text_input(
                 "Piesă sau Subansamblu (ex: Placă de bază CNC, Invertor, Unitate comandă)",
@@ -271,18 +278,35 @@ def render_reparatii_electronice():
             defect_reclamat = st.text_area(
                 "Defect Reclamat & Jurnal Intervenție / Etape (poți completa pe mai multe zile)",
                 value=str(draft.get("defect_reclamat", "")),
-                height=240,
+                height=360,
             )
             draft["defect_reclamat"] = defect_reclamat
         with c2:
-            idx_st = OPT_STARI_FINALE.index(draft["stare_finala"]) if draft.get("stare_finala") in OPT_STARI_FINALE else 0
-            stare_finala = st.selectbox("Stare Reparație", options=OPT_STARI_FINALE, index=idx_st)
+            stare_draft = _limita_30(draft.get("stare_finala", OPT_STARI_FINALE[0]))
+            if stare_draft and stare_draft not in OPT_STARI_FINALE:
+                OPT_STARI_FINALE.append(stare_draft)
+            idx_st = OPT_STARI_FINALE.index(stare_draft) if stare_draft in OPT_STARI_FINALE else 0
+            stare_finala = _limita_30(
+                st.selectbox("Stare Reparație (max 30 caractere)", options=OPT_STARI_FINALE, index=idx_st)
+            )
             draft["stare_finala"] = stare_finala
 
-            tehnician = st.text_input("Tehnician Electronică", value=str(draft.get("tehnician", tehnician_def_el)))
+            tehnician = _limita_30(
+                st.text_input(
+                    "Tehnician Electronică (max 30 caractere)",
+                    value=_limita_30(draft.get("tehnician", tehnician_def_el)),
+                    max_chars=MAX_LEN_DREAPTA,
+                )
+            )
             draft["tehnician"] = tehnician
 
-            verificator = st.text_input("Verificat de", value=str(draft.get("verificator", "Client")))
+            verificator = _limita_30(
+                st.text_input(
+                    "Verificat de (max 30 caractere)",
+                    value=_limita_30(draft.get("verificator", "Client")),
+                    max_chars=MAX_LEN_DREAPTA,
+                )
+            )
             draft["verificator"] = verificator
 
         st.markdown("#### 🔌 Componente Electronice / Elemente Defecte sau Înlocuite")
@@ -385,6 +409,10 @@ def render_reparatii_electronice():
                         COL_COMP_STARE: stare_c,
                     })
 
+                stare_finala_cur = _limita_30(stare_finala)
+                tehnician_cur = _limita_30(tehnician)
+                verificator_cur = _limita_30(verificator)
+
                 payload = {
                     "firma_id": firma_obj["id"],
                     "masina_id": masina_obj_id,
@@ -393,9 +421,9 @@ def render_reparatii_electronice():
                     "piesa_subansamblu": piesa_subansamblu.strip(),
                     "defect_reclamat": defect_reclamat,
                     "componente_json": componente_valide,
-                    "stare_finala": stare_finala,
-                    "tehnician": tehnician,
-                    "verificator": verificator,
+                    "stare_finala": stare_finala_cur,
+                    "tehnician": tehnician_cur,
+                    "verificator": verificator_cur,
                 }
 
                 if editing_id is not None:
@@ -413,7 +441,7 @@ def render_reparatii_electronice():
                             parti_doc = []
                             if str(defect_reclamat or "").strip():
                                 parti_doc.append(f"Defect reclamat: {str(defect_reclamat).strip()}")
-                            parti_doc.append(f"Stare finală: {stare_finala}")
+                            parti_doc.append(f"Stare finală: {stare_finala_cur}")
                             if comp_txt:
                                 parti_doc.append(f"Piese necesare: {comp_txt}")
 
@@ -422,7 +450,7 @@ def render_reparatii_electronice():
                                 "masina_id": masina_obj_id,
                                 "categorie": "CNC",
                                 "tip_sistem": piesa_subansamblu.strip(),
-                                "titlu": f"{piesa_subansamblu.strip()} ({sel_masina}) — {stare_finala}",
+                                "titlu": f"{piesa_subansamblu.strip()} ({sel_masina}) — {stare_finala_cur}",
                                 "gdrive_file_id": "",
                                 "gdrive_url": "",
                                 "tip_fisier": "doc",
@@ -444,9 +472,9 @@ def render_reparatii_electronice():
                         "piesa_subansamblu": piesa_subansamblu.strip(),
                         "defect_reclamat": defect_reclamat,
                         "componente_json": componente_valide,
-                        "stare_finala": stare_finala,
-                        "tehnician": tehnician,
-                        "verificator": verificator,
+                        "stare_finala": stare_finala_cur,
+                        "tehnician": tehnician_cur,
+                        "verificator": verificator_cur,
                         "data": datetime.now(),
                     })
 
@@ -500,14 +528,14 @@ def render_reparatii_electronice():
     for f_row in fise_filtrate[:50]:
         fid = f_row.get("id")
         data_str = str(f_row.get("data_creare") or "")[:16]
-        stare_f = f_row.get("stare_finala") or "Nespecificat"
+        stare_f = _limita_30(f_row.get("stare_finala") or "Nespecificat")
         titlu_exp = (
             f"⚡ Fișa #{fid} | {f_row.get('firma_nume') or '-'} | "
             f"{f_row.get('piesa_subansamblu') or '-'} — {stare_f} ({data_str})"
         )
         with st.expander(titlu_exp, expanded=False):
             st.write(f"**Mașină:** {f_row.get('masina_nume') or 'General / Fără mașină'}")
-            st.write(f"**Tehnician:** {f_row.get('tehnician') or '-'} | **Verificat de:** {f_row.get('verificator') or '-'}")
+            st.write(f"**Tehnician:** {_limita_30(f_row.get('tehnician') or '-')} | **Verificat de:** {_limita_30(f_row.get('verificator') or '-')}")
             st.write(f"**Defect / Note / Etape:**\n{f_row.get('defect_reclamat') or '-'}")
 
             comp_f = _parseaza_componente_json(f_row.get("componente_json"))
@@ -531,8 +559,8 @@ def render_reparatii_electronice():
                         "defect_reclamat": f_row.get("defect_reclamat") or "",
                         "componente_json": comp_f,
                         "stare_finala": stare_f,
-                        "tehnician": f_row.get("tehnician") or tehnician_def_el,
-                        "verificator": f_row.get("verificator") or "Client",
+                        "tehnician": _limita_30(f_row.get("tehnician") or tehnician_def_el),
+                        "verificator": _limita_30(f_row.get("verificator") or "Client"),
                         "data": f_row.get("data_creare") or datetime.now(),
                     })
                     st.download_button(
