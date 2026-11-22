@@ -100,8 +100,9 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                 SELECT
                     m.id,
                     COALESCE(
-                        NULLIF(TRIM(f.nume_firma), ''),
-                        NULLIF(TRIM(f.nume), ''),
+                        NULLIF(TRIM(to_jsonb(f)->>'nume_firma'), ''),
+                        NULLIF(TRIM(to_jsonb(f)->>'nume'), ''),
+                        NULLIF(TRIM(to_jsonb(f)->>'denumire'), ''),
                         'Fără firmă'
                     ) AS firma,
                     m.denumire AS utilaj,
@@ -123,15 +124,14 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                     'Fără firmă' AS firma,
                     denumire AS utilaj,
                     CAST(data_intretinere AS DATE) AS data_scadenta,
-                    (CAST(data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
-                FROM masini
-                WHERE COALESCE(fara_intretinere, FALSE) = FALSE
-                  AND data_intretinere IS NOT NULL
-                  AND CAST(data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY CAST(data_intretinere AS DATE) ASC, denumire ASC
+                    (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
+                FROM masini m
+                WHERE COALESCE(m.fara_intretinere, FALSE) = FALSE
+                  AND m.data_intretinere IS NOT NULL
+                  AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
+                ORDER BY CAST(m.data_intretinere AS DATE) ASC, m.denumire ASC
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
-
 
 def render_memento_intretinere_dashboard():
     st.markdown("### 🔔 Memento Scadențe Întreținere")
@@ -429,8 +429,6 @@ def render_dashboard():
     # 1. ÎNTREȚINERI SCADENTE
     st.subheader("📅 Întrețineri Scadente")
     render_memento_intretinere_dashboard()
-    if mas_scad:
-        st.dataframe(pd.DataFrame(mas_scad), use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
