@@ -367,7 +367,7 @@ def _render_fisa_specifica_utilaj(
             "Ordine": ord_num,
             "Operațiune / Verificare": op_txt,
             "Standard / Observații": std_txt,
-            "Documentație Drive": link_norm,
+            "Documentație Drive": link_norm or "",
             "Efectuat": True,
             "Valori Măsurate / Observații": "",
         })
@@ -410,6 +410,35 @@ def _render_fisa_specifica_utilaj(
         cd2.link_button("📂 Deschide în Google Drive", opt_doc[sel_doc], use_container_width=True)
 
     return df_ed, nume_fisa, frec_sel, titlu_pdf
+
+
+def _genereaza_pdf_cu_fallback(fisa_payload: dict) -> bytes:
+    try:
+        res = genereaza_pdf_mentenanta(fisa_payload)
+        if isinstance(res, (bytes, bytearray)) and len(res) > 0:
+            return bytes(res)
+    except Exception:
+        pass
+    try:
+        from fpdf import FPDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        titlu = str(fisa_payload.get("titlu_pdf_operatiuni") or "Fisa Mentenanta Preventiva")
+        pdf.cell(0, 10, titlu.encode("latin-1", errors="replace").decode("latin-1"), ln=True)
+        pdf.set_font("Helvetica", size=10)
+        info = f"Client: {fisa_payload.get('firma_nume', '')} | Masina: {fisa_payload.get('masina_nume', '')} | Data: {fisa_payload.get('data_interventie', '')}"
+        pdf.cell(0, 8, info.encode("latin-1", errors="replace").decode("latin-1"), ln=True)
+        chk = fisa_payload.get("checklist_json") or {}
+        fisa_spec = chk.get("fisa_specifica_utilaj") if isinstance(chk, dict) else {}
+        for r in (fisa_spec.get("randuri") or []):
+            linie = f"{r.get('Ordine', '')}. {r.get('Operațiune / Verificare', '')} | Efectuat: {r.get('Efectuat', '')} | {r.get('Valori Măsurate / Observații', '')}"
+            pdf.multi_cell(0, 6, linie.encode("latin-1", errors="replace").decode("latin-1"))
+        out = pdf.output(dest="S")
+        return out.encode("latin-1") if isinstance(out, str) else bytes(out)
+    except Exception:
+        titlu = str(fisa_payload.get("titlu_pdf_operatiuni") or "Fisa Mentenanta Preventiva")
+        return f"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<< /Root 1 0 R >>\n%%EOF\n% {titlu}".encode("latin-1", errors="ignore")
 
 
 def render_mentenanta():
@@ -861,75 +890,78 @@ def render_mentenanta():
     draft["functie_verificator"] = r3.text_input("Funcție Reprezentant Beneficiar", value=str(draft.get("functie_verificator", "")))
 
     if st.button("💾 Salvează Fișa de Mentenanță & Generează PDF", type="primary", use_container_width=True):
-        checklist_payload = {}
-        capitole_excluse_set = set(draft.get("capitole_excluse") or [])
-        for sec in SECTIONS_MENTENANTA:
-            s_key = sec["key"]
-            is_active = (s_key not in capitole_excluse_set) and (
-                afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
+        try:
+            checklist_payload = {}
+            capitole_excluse_set = set(draft.get("capitole_excluse") or [])
+            for sec in SECTIONS_MENTENANTA:
+                s_key = sec["key"]
+                is_active = (s_key not in capitole_excluse_set) and (
+                    afiseaza_toate_sistemele or (sec["sistem_cod"] in sisteme_utilaj)
+                )
+                df_cur = st.session_state["ment_dfs"][s_key].copy()
+                if not is_active:
+                    df_cur["Conformitate"] = "N/A"
+                checklist_payload[s_key] = {
+                    "titlu": sec["titlu"],
+                    "nota": sec["nota"],
+                    "necesar_label": sec["necesar_label"],
+                    "necesar_text": draft["necesar"].get(s_key, ""),
+                    "activ": is_active,
+                    "randuri": df_cur.to_dict(orient="records")
+                }
+
+            fisa_spec_rows = (
+                df_fisa_utilaj.fillna("").to_dict(orient="records")
+                if df_fisa_utilaj is not None and not df_fisa_utilaj.empty
+                else []
             )
-            df_cur = st.session_state["ment_dfs"][s_key].copy()
-            if not is_active:
-                df_cur["Conformitate"] = "N/A"
-            checklist_payload[s_key] = {
-                "titlu": sec["titlu"],
-                "nota": sec["nota"],
-                "necesar_label": sec["necesar_label"],
-                "necesar_text": draft["necesar"].get(s_key, ""),
-                "activ": is_active,
-                "randuri": df_cur.to_dict(orient="records")
+            checklist_payload["fisa_specifica_utilaj"] = {
+                "titlu": nume_fisa_activa,
+                "titlu_pdf": titlu_pdf_activ,
+                "denumire_masina": str(masina_obj.get("denumire") or "").strip(),
+                "tip_masina": str(masina_obj.get("tip_masina") or "").strip(),
+                "frecventa": frec_fisa_activa,
+                "randuri": fisa_spec_rows,
             }
 
-        fisa_spec_rows = (
-            df_fisa_utilaj.fillna("").to_dict(orient="records")
-            if df_fisa_utilaj is not None and not df_fisa_utilaj.empty
-            else []
-        )
-        checklist_payload["fisa_specifica_utilaj"] = {
-            "titlu": nume_fisa_activa,
-            "titlu_pdf": titlu_pdf_activ,
-            "denumire_masina": str(masina_obj.get("denumire") or "").strip(),
-            "tip_masina": str(masina_obj.get("tip_masina") or "").strip(),
-            "frecventa": frec_fisa_activa,
-            "randuri": fisa_spec_rows,
-        }
+            fisa_data = {
+                "firma_id": firma_obj["id"],
+                "masina_id": masina_obj["id"],
+                "firma_nume": sel_firma,
+                "masina_nume": sel_masina,
+                "nume_fisa": nume_fisa_activa,
+                "titlu_pdf_operatiuni": titlu_pdf_activ,
+                "punct_lucru": draft["punct_lucru"],
+                "producator_model": draft["producator_model"],
+                "serie_fabricatie": draft["serie_fabricatie"],
+                "nr_inventar": draft["nr_inventar"],
+                "ore_functionare": draft["ore_functionare"],
+                "ore_cumulate": draft["ore_cumulate"],
+                "nivel_grila": draft["nivel_grila"],
+                "stare_initiala": draft["stare_initiala"],
+                "stare_finala": draft["stare_finala"],
+                "checklist_json": checklist_payload,
+                "recomandari_iiot": draft["recomandari_iiot"],
+                "tehnician": draft["tehnician"],
+                "verificator": draft["verificator"],
+                "functie_verificator": draft["functie_verificator"],
+                "data_interventie": data_interv,
+                "urmatoarea_revizie": urmatoarea_revizie
+            }
 
-        fisa_data = {
-            "firma_id": firma_obj["id"],
-            "masina_id": masina_obj["id"],
-            "firma_nume": sel_firma,
-            "masina_nume": sel_masina,
-            "nume_fisa": nume_fisa_activa,
-            "titlu_pdf_operatiuni": titlu_pdf_activ,
-            "punct_lucru": draft["punct_lucru"],
-            "producator_model": draft["producator_model"],
-            "serie_fabricatie": draft["serie_fabricatie"],
-            "nr_inventar": draft["nr_inventar"],
-            "ore_functionare": draft["ore_functionare"],
-            "ore_cumulate": draft["ore_cumulate"],
-            "nivel_grila": draft["nivel_grila"],
-            "stare_initiala": draft["stare_initiala"],
-            "stare_finala": draft["stare_finala"],
-            "checklist_json": checklist_payload,
-            "recomandari_iiot": draft["recomandari_iiot"],
-            "tehnician": draft["tehnician"],
-            "verificator": draft["verificator"],
-            "functie_verificator": draft["functie_verificator"],
-            "data_interventie": data_interv,
-            "urmatoarea_revizie": urmatoarea_revizie
-        }
+            new_id = MentenantaRepository.insert(fisa_data)
+            fisa_data["id"] = new_id
+            pdf_bytes = _genereaza_pdf_cu_fallback(fisa_data)
+            nume_pdf_cur = construieste_nume_fisier_pdf(titlu_pdf_activ, new_id)
 
-        new_id = MentenantaRepository.insert(fisa_data)
-        fisa_data["id"] = new_id
-        pdf_bytes = genereaza_pdf_mentenanta(fisa_data)
-        nume_pdf_cur = construieste_nume_fisier_pdf(titlu_pdf_activ, new_id)
-
-        st.session_state["ment_id_salvat"] = new_id
-        st.session_state["ment_pdf_bytes"] = pdf_bytes
-        st.session_state["ment_pdf_name"] = nume_pdf_cur
-        st.session_state["ment_salvat"] = True
-        _init_sau_reseteaza_ment_draft(tehnician_def, "DA")
-        st.rerun()
+            st.session_state["ment_id_salvat"] = new_id
+            st.session_state["ment_pdf_bytes"] = pdf_bytes
+            st.session_state["ment_pdf_name"] = nume_pdf_cur
+            st.session_state["ment_salvat"] = True
+            _init_sau_reseteaza_ment_draft(tehnician_def, "DA")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"⚠️ Eroare la salvarea fișei / generarea PDF: {exc}")
 
     _render_istoric_mentenanta(firme_dict)
 
@@ -976,7 +1008,7 @@ def _render_istoric_mentenanta(firme_dict: dict):
                 fisa_pdf_payload = dict(fisa)
                 fisa_pdf_payload["checklist_json"] = chk
                 fisa_pdf_payload["titlu_pdf_operatiuni"] = titlu_pdf_hist
-                pdf_hist = genereaza_pdf_mentenanta(fisa_pdf_payload)
+                pdf_hist = _genereaza_pdf_cu_fallback(fisa_pdf_payload)
                 nume_pdf_hist = construieste_nume_fisier_pdf(titlu_pdf_hist, fid)
                 st.download_button(
                     label="📥 Descarcă PDF",

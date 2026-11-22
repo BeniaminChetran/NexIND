@@ -10,6 +10,99 @@ from repositories.masini_repository import MasiniRepository
 
 FRECVENTE_MENTENANTA = ["Zilnică", "Săptămânală", "Lunară", "Trimestrială", "Anuală"]
 
+CATALOG_OPERATIUNI_PREDEFINITE = [
+    {
+        "sistem": "Electric",
+        "operatiune": "Curățarea tablourilor electrice de praf/șpan, strângerea conexiunilor și a șuruburilor de forță/comandă, aplicare spray de contact.",
+        "standard": "Conexiuni ferme, fără praf/șpan",
+        "drive": "",
+    },
+    {
+        "sistem": "Electric",
+        "operatiune": "Măsurarea tensiunilor de alimentare pe faze și a surselor DC 24V (abatere maximă admisă ±5% față de nominal).",
+        "standard": "U nominală (±5%) / 24V DC",
+        "drive": "",
+    },
+    {
+        "sistem": "Electric",
+        "operatiune": "Testarea circuitelor de siguranță: senzori/interlock-uri uși și panouri de acces, bariere optice, butoane E-Stop.",
+        "standard": "Oprire imediată și sigură la activare",
+        "drive": "",
+    },
+    {
+        "sistem": "Electric",
+        "operatiune": "Verificarea conexiunilor senzorilor (inductivi/optici/capacitivi), a distanțelor de comutare și a integrității cablurilor.",
+        "standard": "Semnal stabil, cabluri intacte",
+        "drive": "",
+    },
+    {
+        "sistem": "Electric",
+        "operatiune": "Curățarea filtrelor, ventilatoarelor și căilor de aerisire ale tablourilor electrice și unităților chiller tablou.",
+        "standard": "Flux aer liber, fără depuneri",
+        "drive": "",
+    },
+    {
+        "sistem": "Mecanic",
+        "operatiune": "Verificarea și completarea nivelului de ulei în reductoare/cutii de viteze; gresarea punctelor de ungere / pompă ungere centralizată.",
+        "standard": "Nivel conform reper, lubrifiant prescris",
+        "drive": "",
+    },
+    {
+        "sistem": "Mecanic",
+        "operatiune": "Verificarea tensionării și stării de uzură a curelelor (trapezoidale, dințate) și lanțurilor de transmisie.",
+        "standard": "Tensiune corectă, fără fisuri/uzură",
+        "drive": "",
+    },
+    {
+        "sistem": "Mecanic",
+        "operatiune": "Verificarea jocurilor la elementele articulate (cuple cinematice, bucșe, rulmenți, șuruburi cu bile și ghidaje liniare).",
+        "standard": "Fără jocuri anormale sau zgomote",
+        "drive": "",
+    },
+    {
+        "sistem": "Mecanic",
+        "operatiune": "Înlocuirea simeringurilor, racletorilor de ghidaj și a elementelor de etanșare uzate.",
+        "standard": "Etanșare bună, ghidaje curate",
+        "drive": "",
+    },
+    {
+        "sistem": "Hidraulic",
+        "operatiune": "Verificarea presiunii de lucru pe manometre și a presiunii de preîncărcare a acumulatorilor hidraulici.",
+        "standard": "Presiune în plaja nominală (bar)",
+        "drive": "",
+    },
+    {
+        "sistem": "Hidraulic",
+        "operatiune": "Inspectarea etanșeității circuitului: strângere racorduri, înlocuire furtunuri sau garnituri cu scurgeri de ulei.",
+        "standard": "Fără scurgeri sau pierderi vizibile",
+        "drive": "",
+    },
+    {
+        "sistem": "Hidraulic",
+        "operatiune": "Curățarea jojei magnetice de retur, curățarea/înlocuirea filtrelor de ulei și completarea/schimbul uleiului hidraulic.",
+        "standard": "Filtre curate, nivel ulei conform",
+        "drive": "",
+    },
+    {
+        "sistem": "Pneumatic",
+        "operatiune": "Verificarea grupului de preparare aer (FRL): presiune de lucru, curățare decantoare condens, verificare nivel ulei ungător.",
+        "standard": "P_aer nominală, condens evacuat",
+        "drive": "",
+    },
+    {
+        "sistem": "Pneumatic",
+        "operatiune": "Detectarea și remedierea pierderilor de aer (înlocuire furtunuri, fitinguri rapide, garnituri de etanșare).",
+        "standard": "Fără pierderi audibile/vizibile de aer",
+        "drive": "",
+    },
+    {
+        "sistem": "Auxiliare",
+        "operatiune": "Instalații de răcire / emulsie / apă: izolare vane, verificare obturare conducte, curățare filtre/schimbătoare, verificare pompe.",
+        "standard": "Circulație normală, concentrație/debit ok",
+        "drive": "",
+    },
+]
+
 FISE_GENERALE_IMPLICITE = {
     "Zilnică": [
         {
@@ -359,47 +452,63 @@ def _editor_config_fise():
         "Standard / Observații": st.column_config.TextColumn("Standard / Observații", width="medium"),
         "Documentație Drive": st.column_config.TextColumn(
             "Documentație Drive",
-            help="Liye link-ul complet (https://drive.google.com/...) către documentația operațiunii",
+            help="Link-ul complet (https://drive.google.com/...) către documentația operațiunii",
             width="medium",
         ),
     }
 
 
+def _render_selector_operatiuni_din_lista(state_key_pasi: str, prefix_key: str):
+    st.markdown("#### ➕ Adaugă operațiuni din listă (cu link Google Drive)")
+    opt_dict = {
+        f"[{item['sistem']}] {item['operatiune'][:90]}": item
+        for item in CATALOG_OPERATIUNI_PREDEFINITE
+    }
+    selectate = st.multiselect(
+        "Alege una sau mai multe operațiuni din listă",
+        options=list(opt_dict.keys()),
+        key=f"ms_ops_{prefix_key}",
+    )
+    link_drive_nou = st.text_input(
+        "Link Google Drive pentru operațiunile selectate (opțional)",
+        placeholder="https://drive.google.com/...",
+        key=f"inp_drive_ops_{prefix_key}",
+    ).strip()
+
+    if st.button("📥 Adaugă operațiunile selectate în fișă", key=f"btn_add_ops_{prefix_key}"):
+        if not selectate:
+            st.warning("Selectează cel puțin o operațiune din listă.")
+            return
+        curente = list(st.session_state.get(state_key_pasi) or [])
+        urm_ord = len(curente) + 1
+        for label in selectate:
+            it = opt_dict[label]
+            curente.append({
+                "Ordine": urm_ord,
+                "Operațiune / Verificare": it["operatiune"],
+                "Standard / Observații": it["standard"],
+                "Documentație Drive": link_drive_nou or it.get("drive", ""),
+            })
+            urm_ord += 1
+        st.session_state[state_key_pasi] = curente
+        st.toast(f"✅ S-au adăugat {len(selectate)} operațiuni în fișă.")
+        st.rerun()
+
+
 def render_fise_mentenanta():
-    st.subheader("📋 Fișe Mentenanță Preventivă (Denumire + Tip Mașină + Frecvență)")
-    st.caption("Fără legătură cu firma: poți încărca operațiuni, linkuri Google Drive către documentație și salva fișa cu denumirea standard.")
+    st.subheader("📋 Creare & Administrare Fișe de Mentenanță Preventivă")
+    st.caption("Fără legătură cu firma: adaugi operațiuni dintr-o listă cu trimitere în Google Drive și salvezi fișa pe Denumire mașină + Tip mașină + Frecvență.")
 
     fise_db = _incarca_fise_din_db()
     catalog_masini = _incarca_catalog_masini_fara_firma()
 
-    tab_gen, tab_proprie, tab_lista = st.tabs([
+    tab_proprie, tab_gen, tab_lista = st.tabs([
+        "🧩 Creare / Editare Fișă Mașină",
         "📄 Fișă Generală (pe frecvență)",
-        "🧩 Desfășurare / Fișă Proprie Mașină",
         "📚 Toate Fișele Salvate",
     ])
 
-    with tab_gen:
-        frec_gen = st.selectbox("Frecvență fișă generală", options=FRECVENTE_MENTENANTA, key="fmp_gen_frec")
-        fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_gen)
-        pasi_gen_init = fisa_gen["pasi"] if fisa_gen else FISE_GENERALE_IMPLICITE.get(frec_gen, [])
-
-        df_gen_ed = st.data_editor(
-            _normalizare_pasi_df(pasi_gen_init),
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config=_editor_config_fise(),
-            key=f"editor_fisa_gen_{frec_gen}",
-        )
-        if st.button("💾 Salvează Fișa Generală", type="primary", key="btn_salveaza_fisa_gen"):
-            pasi_noi = _df_la_pasi(df_gen_ed)
-            _salveaza_fisa(True, "", "", frec_gen, pasi_noi, nume_fisa=construieste_nume_fisa("", "", frec_gen, True))
-            st.success(f"✅ Fișa generală ({frec_gen}) a fost salvată.")
-            st.rerun()
-
     with tab_proprie:
-        st.markdown("Alege sau introdu **Denumirea mașinii**, **Tipul mașinii** și **Frecvența**, adaugă operațiunile și linkurile Google Drive, apoi salvează.")
-
         optiuni_preset = ["-- Introdu manual --"] + [
             f"{x['denumire_masina']} | {x['tip_masina']}" for x in catalog_masini
         ]
@@ -440,18 +549,23 @@ def render_fise_mentenanta():
 
         state_key_pasi = f"fmp_pasi_lucru_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}"
         if state_key_pasi not in st.session_state:
-            st.session_state[state_key_pasi] = fisa_prop["pasi"] if fisa_prop else pasi_gen_sursa
+            st.session_state[state_key_pasi] = list(fisa_prop["pasi"]) if fisa_prop else list(pasi_gen_sursa)
 
         col_b1, col_b2 = st.columns([1.6, 2.4])
         with col_b1:
-            if st.button("📂 Desfășoară din Fișa Generală", key="btn_desfasoara_fisa_gen", use_container_width=True):
+            if st.button("📂 Încarcă din Fișa Generală", key="btn_desfasoara_fisa_gen", use_container_width=True):
                 st.session_state[state_key_pasi] = list(pasi_gen_sursa)
                 st.rerun()
         with col_b2:
             if fisa_prop:
-                st.info(f"✏️ Există deja o fișă proprie salvată: **{nume_fisa_input}**.")
+                st.info(f"✏️ Fișă proprie existentă: **{nume_fisa_input}**.")
             else:
                 st.caption("ℹ️ Se pornește de la fișa generală; la salvare se creează fișa proprie.")
+
+        _render_selector_operatiuni_din_lista(
+            state_key_pasi=state_key_pasi,
+            prefix_key=f"prop_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}",
+        )
 
         df_prop_ed = st.data_editor(
             _normalizare_pasi_df(st.session_state[state_key_pasi]),
@@ -462,15 +576,44 @@ def render_fise_mentenanta():
             key=f"editor_fisa_prop_{state_key_pasi}",
         )
 
-        if st.button("💾 Salvează Fișa Proprie", type="primary", key="btn_salveaza_fisa_prop"):
+        if st.button("💾 Salvează Fișa de Mentenanță", type="primary", key="btn_salveaza_fisa_prop"):
             if not den_masina and not tip_masina:
                 st.error("⚠️ Completează cel puțin **Denumirea mașinii** sau **Tipul mașinii**.")
             else:
                 pasi_prop_noi = _df_la_pasi(df_prop_ed)
                 st.session_state[state_key_pasi] = pasi_prop_noi
                 _salveaza_fisa(False, den_masina, tip_masina, frec_prop, pasi_prop_noi, nume_fisa=nume_fisa_input)
-                st.success(f"✅ Fișa proprie **„{nume_fisa_input}”** a fost salvată.")
+                st.success(f"✅ Fișa **„{nume_fisa_input}”** a fost salvată.")
                 st.rerun()
+
+    with tab_gen:
+        frec_gen = st.selectbox("Frecvență fișă generală", options=FRECVENTE_MENTENANTA, key="fmp_gen_frec")
+        fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_gen)
+        pasi_gen_init = fisa_gen["pasi"] if fisa_gen else FISE_GENERALE_IMPLICITE.get(frec_gen, [])
+
+        state_key_gen = f"fmp_pasi_gen_{frec_gen.lower()}"
+        if state_key_gen not in st.session_state:
+            st.session_state[state_key_gen] = list(pasi_gen_init)
+
+        _render_selector_operatiuni_din_lista(
+            state_key_pasi=state_key_gen,
+            prefix_key=f"gen_{frec_gen.lower()}",
+        )
+
+        df_gen_ed = st.data_editor(
+            _normalizare_pasi_df(st.session_state[state_key_gen]),
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config=_editor_config_fise(),
+            key=f"editor_fisa_gen_{frec_gen}",
+        )
+        if st.button("💾 Salvează Fișa Generală", type="primary", key="btn_salveaza_fisa_gen"):
+            pasi_noi = _df_la_pasi(df_gen_ed)
+            st.session_state[state_key_gen] = pasi_noi
+            _salveaza_fisa(True, "", "", frec_gen, pasi_noi, nume_fisa=construieste_nume_fisa("", "", frec_gen, True))
+            st.success(f"✅ Fișa generală ({frec_gen}) a fost salvată.")
+            st.rerun()
 
     with tab_lista:
         if not fise_db:
@@ -488,9 +631,8 @@ def render_fise_mentenanta():
                     "Denumire mașină": "-" if f.get("este_generala") else (f.get("denumire_masina") or "-"),
                     "Tip mașină": "-" if f.get("este_generala") else (f.get("tip_masina") or "-"),
                     "Frecvență": f.get("frecventa"),
-                    "Nr. pași": len(f.get("pasi") or []),
+                    "Nr. operațiuni": len(f.get("pasi") or []),
                 }
                 for f in fise_db
             ]
             st.dataframe(pd.DataFrame(rezumat), hide_index=True, use_container_width=True)
-            
