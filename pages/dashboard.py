@@ -389,6 +389,8 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
     with db_cursor() as c:
         c.execute(f"SELECT {camp_json} FROM {tabela} WHERE id = %s", (int(record_id),))
         row = c.fetchone() or {}
+        if not isinstance(row, dict):
+            row = dict(row)
         raw_val = row.get(camp_json)
         items = raw_val
         if isinstance(raw_val, str):
@@ -412,7 +414,8 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 or item.get("denumire")
                 or ""
             ).strip()
-            if " ".join(den_item.lower().split()) == den_target:
+            den_item_norm = " ".join(den_item.lower().split())
+            if den_item_norm == den_target or (den_target and (den_target in den_item_norm or den_item_norm in den_target)):
                 if tabela == "reparatii_electronice":
                     item["Stare"] = stare_noua
                 elif tabela == "reparatii":
@@ -425,6 +428,8 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 f"UPDATE {tabela} SET {camp_json} = %s WHERE id = %s",
                 (json.dumps(items, ensure_ascii=False), int(record_id)),
             )
+            if hasattr(c, "connection") and hasattr(c.connection, "commit"):
+                c.connection.commit()
     return modificat
 
 
@@ -676,14 +681,20 @@ def render_piese_de_comandat_dashboard():
 
     if st.button("💾 Actualizează Stările în Tabel", type="primary", key="btn_dash_update_stare_piese"):
         df_final = edited_df.copy()
+        if "Status Comandă" in df_final.columns:
+            df_final["Status Comandă"] = df_final["Status Comandă"].astype(object)
+
         state_ed = st.session_state.get(editor_dash_key)
         if isinstance(state_ed, dict):
-            for idx_key, changes in state_ed.get("edited_rows", {}).items():
-                idx = int(idx_key)
+            for idx_key, changes in (state_ed.get("edited_rows") or {}).items():
+                try:
+                    idx = int(idx_key)
+                except (TypeError, ValueError):
+                    continue
                 if 0 <= idx < len(df_final) and isinstance(changes, dict):
                     for col_name, new_val in changes.items():
                         if col_name in df_final.columns:
-                            df_final.at[idx, col_name] = new_val
+                            df_final.at[idx, col_name] = _normalizeaza_stare_comanda(new_val) if col_name == "Status Comandă" else new_val
 
         meta_map = {}
         for _, r in df_f.iterrows():
@@ -707,7 +718,8 @@ def render_piese_de_comandat_dashboard():
         for _, row in df_final.iterrows():
             rid = int(row["_row_id"])
             stare_noua = _normalizeaza_stare_comanda(row.get("Status Comandă"))
-            if orig_map.get(rid) != stare_noua:
+            stare_veche = _normalizeaza_stare_comanda(orig_map.get(rid))
+            if stare_veche != stare_noua:
                 meta = meta_map.get(rid) or {}
                 salvat_ceva = False
 
