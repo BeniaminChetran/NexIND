@@ -453,6 +453,19 @@ def render_piese():
                 key="sel_sortare_piese",
             )
 
+        toate_optiuni_masini = list(dict.fromkeys(
+            ["General"]
+            + [
+                str(m.get("denumire") or "").strip()
+                for m in masini_all
+                if str(m.get("denumire") or "").strip()
+            ]
+        ))
+        masina_implicit_noua = (
+            sel_m if (sel_m != "Toate mașinile / General" and sel_m in toate_optiuni_masini)
+            else "General"
+        )
+
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
@@ -464,6 +477,16 @@ def render_piese():
                 with col2:
                     parametri = st.text_area("Parametri Piesă (dimensiuni, tensiune, putere etc.)", height=100)
                     termen_livrare_nou = st.text_input("Termen livrare (ex: 1, 3-5 zile, Stoc)", value="1")
+                    idx_m_nou = (
+                        toate_optiuni_masini.index(masina_implicit_noua)
+                        if masina_implicit_noua in toate_optiuni_masini
+                        else 0
+                    )
+                    masina_piesa_noua = st.selectbox(
+                        "Selectează Mașina",
+                        options=toate_optiuni_masini,
+                        index=idx_m_nou,
+                    )
                     if acces_permis:
                         link_furnizor = st.text_input("Link Furnizor / Magazin (URL)")
                         cp_nou1, cp_nou2 = st.columns([3, 1], vertical_alignment="bottom")
@@ -482,7 +505,7 @@ def render_piese():
                         valuta_noua = "RON"
 
                 st.caption(
-                    f"📌 Piesa se va înregistra pentru mașina: **{sel_m}** (firmă: **{sel_firma_p}**)."
+                    f"📌 Piesa se va înregistra pentru mașina selectată în formular (firmă filtrată: **{sel_firma_p}**)."
                 )
 
                 if st.form_submit_button("💾 Salvează Piesa", type="primary"):
@@ -493,6 +516,11 @@ def render_piese():
                         if err_pret:
                             st.error(f"⚠️ {err_pret}")
                         else:
+                            masina_salvata_noua = (
+                                masina_piesa_noua.strip()
+                                if str(masina_piesa_noua or "").strip()
+                                else "General"
+                            )
                             PieseRepository.insert({
                                 "denumire": denumire.strip(),
                                 "cod_producator": cod_producator.strip(),
@@ -503,11 +531,12 @@ def render_piese():
                                 "link_furnizor": link_furnizor.strip(),
                                 "pret_achizitie": pret_calculat,
                                 "valuta_achizitie": valuta_noua,
-                                "masina_montaj": sel_m if sel_m != "Toate mașinile / General" else "General",
+                                "masina_montaj": masina_salvata_noua,
                             })
                             _obtine_corpus_utilizare_istoric.clear()
                             st.success(
-                                f"✅ Piesa '{denumire}' a fost salvată (Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou})!"
+                                f"✅ Piesa '{denumire}' a fost salvată pe **{masina_salvata_noua}** "
+                                f"(Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou})!"
                             )
                             st.rerun()
 
@@ -750,6 +779,21 @@ def render_piese():
                         mod_prod = st.text_input("Cod Producător", value=p.get("cod_producator", ""), key=f"prod_{pid}")
                         mod_com = st.text_input("Cod Comercial", value=p.get("cod_comercial", ""), key=f"com_{pid}")
                         mod_sub = st.text_input("Subansamblu", value=p.get("subansamblu", ""), key=f"sub_{pid}")
+                        opt_mod_mas = list(dict.fromkeys(
+                            toate_optiuni_masini
+                            + ([str(masina_eticheta).strip()] if str(masina_eticheta or "").strip() else [])
+                        ))
+                        idx_mod_m = (
+                            opt_mod_mas.index(str(masina_eticheta).strip())
+                            if str(masina_eticheta or "").strip() in opt_mod_mas
+                            else 0
+                        )
+                        mod_masina = st.selectbox(
+                            "Mașină",
+                            options=opt_mod_mas,
+                            index=idx_mod_m,
+                            key=f"mas_mod_{pid}",
+                        )
                     with cp2:
                         mod_param = st.text_area("Parametri Piesă", value=p.get("parametri", "") or "", height=100, key=f"param_{pid}")
                         mod_termen = st.text_input("Termen livrare", value=termen_val, key=f"termen_{pid}")
@@ -790,9 +834,10 @@ def render_piese():
                                 "link_furnizor": mod_link.strip(),
                                 "pret_achizitie": mod_pret_calc,
                                 "valuta_achizitie": mod_valuta,
+                                "masina_montaj": mod_masina.strip() or "General",
                             })
                             _obtine_corpus_utilizare_istoric.clear()
-                            st.toast(f"✅ Salvat: {mod_den.strip()} -> {mod_pret_calc:.2f} {mod_valuta}")
+                            st.toast(f"✅ Salvat: {mod_den.strip()} ({mod_masina.strip()}) -> {mod_pret_calc:.2f} {mod_valuta}")
                             st.rerun()
                     if bt2.form_submit_button("🗑️ Șterge Piesa", key=f"del_{pid}"):
                         PieseRepository.delete(pid)
