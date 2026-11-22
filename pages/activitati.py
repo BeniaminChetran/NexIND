@@ -15,7 +15,7 @@ from repositories.setari_repository import SetariRepository
 from services.email_service import trimite_email_raport
 from services.pdf_service import genereaza_pdf
 from services.sync_service import background_sync_task
-from utils.draft_state import init_draft, lega_camp, reset_draft, sync_camp
+from utils.draft_state import init_draft, lega_camp, reset_draft, sync_camp, widget_key
 
 
 def _extrage_email_client(firma_obj: dict) -> str:
@@ -54,8 +54,40 @@ def _init_sau_reseteaza_act_draft(tehnician_def: str):
     st.session_state["act_editor_counter"] = st.session_state.get("act_editor_counter", 0) + 1
 
 
+def _sincronizeaza_piese_activitate():
+    cnt = st.session_state.get("act_editor_counter", 0)
+    w_key = f"act_editor_piese_{cnt}"
+    base_df = st.session_state.get("df_piese_editor")
+    if base_df is None or w_key not in st.session_state:
+        return base_df
+    delta = st.session_state[w_key]
+    if not isinstance(delta, dict):
+        return base_df
+
+    df_work = base_df.copy().reset_index(drop=True)
+    for r_idx_str, changes in delta.get("edited_rows", {}).items():
+        r_idx = int(r_idx_str)
+        if 0 <= r_idx < len(df_work):
+            for col_k, val_v in changes.items():
+                if col_k in df_work.columns:
+                    df_work.at[r_idx, col_k] = val_v
+
+    del_rows = sorted(
+        [int(i) for i in delta.get("deleted_rows", []) if 0 <= int(i) < len(df_work)],
+        reverse=True,
+    )
+    if del_rows:
+        df_work = df_work.drop(index=del_rows).reset_index(drop=True)
+
+    added_rows = delta.get("added_rows", [])
+    if added_rows:
+        df_work = pd.concat([df_work, pd.DataFrame(added_rows)], ignore_index=True)
+
+    st.session_state["df_piese_editor"] = df_work
+    return df_work
+
+
 def _cauta_docs_rapide_interventie(termen: str, masina_id=None) -> list[dict]:
-    """Caută rapid în documentatie_tehnica după cod eroare, utilaj sau cuvinte cheie."""
     q = str(termen or "").strip().lower()
     try:
         toate_doc = DocumentatieRepository.get_all() or []
@@ -285,6 +317,8 @@ def render_activitati():
     piese_catalog = [p["denumire"] for p in PieseRepository.get_all()]
     if "df_piese_editor" not in st.session_state:
         st.session_state["df_piese_editor"] = pd.DataFrame(columns=["Piesa", "Cantitate", "Tip"])
+
+    _sincronizeaza_piese_activitate()
 
     st.markdown("##### 🔩 Piese Utilizate / Necesare")
     edited_df = st.data_editor(
