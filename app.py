@@ -186,10 +186,12 @@ with c_status:
 
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {
+    "📈 0. DashBoard": render_dashboard,
     "🚨 1. Diagnostic & Documentație": {
         "🛠️ Asistent Defecte": render_asistent_defecte,
         "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
         "📄 Documentații": render_documentatii,
+        "📈 DashBoard": render_dashboard,
     },
     "🛠️ 2. Execuție & Rapoarte": {
         "📝 Intervenții": render_activitati,
@@ -209,6 +211,7 @@ MENIU_STRUCTURA = {
         "📦 Piese": render_piese,
         "🦾 Mașini": render_masini,
         "🏢 Firme": render_firme,
+        "📈 DashBoard": render_dashboard,
     },
     "🔐 SistemAdmin": {
         "⚙️ Setări": render_setari,
