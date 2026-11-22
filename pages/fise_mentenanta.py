@@ -12,176 +12,60 @@ from repositories.masini_repository import MasiniRepository
 FRECVENTE_MENTENANTA = ["Zilnică", "Săptămânală", "Lunară", "Trimestrială", "Anuală"]
 
 CATALOG_OPERATIUNI_PREDEFINITE = [
-    {
-        "sistem": "Electric",
-        "operatiune": "Curățarea tablourilor electrice de praf/șpan, strângerea conexiunilor și a șuruburilor de forță/comandă, aplicare spray de contact.",
-        "standard": "Conexiuni ferme, fără praf/șpan",
-        "drive": "",
-    },
-    {
-        "sistem": "Electric",
-        "operatiune": "Măsurarea tensiunilor de alimentare pe faze și a surselor DC 24V (abatere maximă admisă ±5% față de nominal).",
-        "standard": "U nominală (±5%) / 24V DC",
-        "drive": "",
-    },
-    {
-        "sistem": "Electric",
-        "operatiune": "Testarea circuitelor de siguranță: senzori/interlock-uri uși și panouri de acces, bariere optice, butoane E-Stop.",
-        "standard": "Oprire imediată și sigură la activare",
-        "drive": "",
-    },
-    {
-        "sistem": "Electric",
-        "operatiune": "Verificarea conexiunilor senzorilor (inductivi/optici/capacitivi), a distanțelor de comutare și a integrității cablurilor.",
-        "standard": "Semnal stabil, cabluri intacte",
-        "drive": "",
-    },
-    {
-        "sistem": "Electric",
-        "operatiune": "Curățarea filtrelor, ventilatoarelor și căilor de aerisire ale tablourilor electrice și unităților chiller tablou.",
-        "standard": "Flux aer liber, fără depuneri",
-        "drive": "",
-    },
-    {
-        "sistem": "Mecanic",
-        "operatiune": "Verificarea și completarea nivelului de ulei în reductoare/cutii de viteze; gresarea punctelor de ungere / pompă ungere centralizată.",
-        "standard": "Nivel conform reper, lubrifiant prescris",
-        "drive": "",
-    },
-    {
-        "sistem": "Mecanic",
-        "operatiune": "Verificarea tensionării și stării de uzură a curelelor (trapezoidale, dințate) și lanțurilor de transmisie.",
-        "standard": "Tensiune corectă, fără fisuri/uzură",
-        "drive": "",
-    },
-    {
-        "sistem": "Mecanic",
-        "operatiune": "Verificarea jocurilor la elementele articulate (cuple cinematice, bucșe, rulmenți, șuruburi cu bile și ghidaje liniare).",
-        "standard": "Fără jocuri anormale sau zgomote",
-        "drive": "",
-    },
-    {
-        "sistem": "Mecanic",
-        "operatiune": "Înlocuirea simeringurilor, racletorilor de ghidaj și a elementelor de etanșare uzate.",
-        "standard": "Etanșare bună, ghidaje curate",
-        "drive": "",
-    },
-    {
-        "sistem": "Hidraulic",
-        "operatiune": "Verificarea presiunii de lucru pe manometre și a presiunii de preîncărcare a acumulatorilor hidraulici.",
-        "standard": "Presiune în plaja nominală (bar)",
-        "drive": "",
-    },
-    {
-        "sistem": "Hidraulic",
-        "operatiune": "Inspectarea etanșeității circuitului: strângere racorduri, înlocuire furtunuri sau garnituri cu scurgeri de ulei.",
-        "standard": "Fără scurgeri sau pierderi vizibile",
-        "drive": "",
-    },
-    {
-        "sistem": "Hidraulic",
-        "operatiune": "Curățarea jojei magnetice de retur, curățarea/înlocuirea filtrelor de ulei și completarea/schimbul uleiului hidraulic.",
-        "standard": "Filtre curate, nivel ulei conform",
-        "drive": "",
-    },
-    {
-        "sistem": "Pneumatic",
-        "operatiune": "Verificarea grupului de preparare aer (FRL): presiune de lucru, curățare decantoare condens, verificare nivel ulei ungător.",
-        "standard": "P_aer nominală, condens evacuat",
-        "drive": "",
-    },
-    {
-        "sistem": "Pneumatic",
-        "operatiune": "Detectarea și remedierea pierderilor de aer (înlocuire furtunuri, fitinguri rapide, garnituri de etanșare).",
-        "standard": "Fără pierderi audibile/vizibile de aer",
-        "drive": "",
-    },
-    {
-        "sistem": "Auxiliare",
-        "operatiune": "Instalații de răcire / emulsie / apă: izolare vane, verificare obturare conducte, curățare filtre/schimbătoare, verificare pompe.",
-        "standard": "Circulație normală, concentrație/debit ok",
-        "drive": "",
-    },
+    # 1.A. SISTEM ELECTRIC - DECUPLAT (LOTO)
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Verificarea și curățarea ștecherelor, prizelor industriale și conexiunilor principale de alimentare; aplicare spray de contact.", "standard": "Conexiuni ferme, fără praf/șpan", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Curățarea tablourilor electrice de praf/șpan, strângerea conexiunilor și a șuruburilor de forță/comandă, aplicare spray de contact.", "standard": "Tablou curat, strângeri ferme", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Decuplarea pe rând a conectorilor priză-ștecher / mufe industriale (Harting, M12), curățare și recuplare securizată.", "standard": "Conectori curați, fixați", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Măsurarea rezistențelor electrice de putere și a rezistenței de izolație a circuitelor.", "standard": "Izolație conform normativ", "parametru": "R_iz", "valoare": "MΩ", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Măsurarea bobinelor motoarelor electrice (simetrie faze) și verificarea periilor / tahogeneratoarelor (unde este cazul).", "standard": "Faze echilibrate", "parametru": "L1/L2/L3", "valoare": "Ω", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Verificarea absenței infiltrațiilor de lichide (ulei, emulsie de răcire, condens) în zona traseelor și conexiunilor electrice.", "standard": "Fără infiltrații", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Verificarea conexiunilor senzorilor (inductivi/optici/capacitivi), a distanțelor de comutare și a integrității cablurilor.", "standard": "Semnal stabil, cabluri intacte", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Măsurarea rezistenței de contact a butoanelor de comandă, E-Stop, releelor și contactoarelor (valoare admisă < 4 Ω).", "standard": "Sub 4 Ω", "parametru": "R_contact", "valoare": "Ω", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Măsurarea valorilor rezistive ale senzorilor de temperatură (PT100 / PT1000 / termocuple) conform fișei tehnice.", "standard": "Conform tabel temperatură", "parametru": "R_senzor", "valoare": "Ω", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Curățarea filtrelor, ventilatoarelor și căilor de aerisire ale tablourilor electrice și unităților chiller tablou.", "standard": "Flux aer liber, fără depuneri", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.A Electric (LOTO)", "operatiune": "Verificare/înlocuire baterii backup (PLC CPU, memorie CNC, encodere axe) + backup complet program PLC/CNC/HMI.", "standard": "Backup salvat, baterie OK", "parametru": "Tensiune baterie", "valoare": "V", "drive": ""},
+
+    # 1.B. SISTEM ELECTRIC - CUPLAT
+    {"sistem": "1.B Electric (Sub tensiune)", "operatiune": "Măsurarea tensiunilor de alimentare pe faze și a surselor DC 24V (abatere maximă admisă ±5% față de nominal).", "standard": "U nominală (±5%) / 24V DC", "parametru": "U / 24V DC", "valoare": "V", "drive": ""},
+    {"sistem": "1.B Electric (Sub tensiune)", "operatiune": "Testarea circuitelor de siguranță: senzori/interlock-uri uși și panouri de acces, bariere optice, butoane E-Stop.", "standard": "Oprire imediată și sigură la activare", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "1.B Electric (Sub tensiune)", "operatiune": "Verificarea funcționării motoarelor electrice, servomotoarelor și convertizoarelor (zgomot, vibrații, temperatură, curenți).", "standard": "Funcționare normală", "parametru": "I_abs", "valoare": "A", "drive": ""},
+    {"sistem": "1.B Electric (Sub tensiune)", "operatiune": "Verificarea funcționării normale a senzorilor de poziție/presiune/debit și reglarea pragurilor de detecție.", "standard": "Comutare corectă", "parametru": "", "valoare": "", "drive": ""},
+
+    # 2. SISTEM MECANIC
+    {"sistem": "2. Mecanic", "operatiune": "Verificarea jocurilor la elementele articulate (cuple cinematice, bucșe, rulmenți, șuruburi cu bile și ghidaje liniare).", "standard": "Fără jocuri anormale sau zgomote", "parametru": "Joc axe X/Y/Z", "valoare": "mm", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Înlocuirea bucșelor, rulmenților sau cuplelor sferice cu uzură avansată sau durată de viață depășită.", "standard": "Piese noi montate corect", "parametru": "Piesă înlocuită", "valoare": "buc", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Înlocuirea simeringurilor, racletorilor de ghidaj și a elementelor de etanșare uzate.", "standard": "Etanșare bună, ghidaje curate", "parametru": "Element etanșare", "valoare": "buc", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Verificarea tensionării și stării de uzură a curelelor (trapezoidale, dințate) și lanțurilor de transmisie.", "standard": "Tensiune corectă, fără fisuri/uzură", "parametru": "Tensiune / Săgeată", "valoare": "mm / Hz", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Verificarea și estimarea jocurilor (backlash) în angrenaje, reductoare și casete de antrenare.", "standard": "În limitele admise", "parametru": "Backlash", "valoare": "mm", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Verificarea funcționării și eficienței frânelor electromagnetice/mecanice ale motoarelor și axelor verticale.", "standard": "Frânare sigură fără alunecare", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Verificarea și completarea nivelului de ulei în reductoare/cutii de viteze; gresarea punctelor de ungere / pompă ungere centralizată.", "standard": "Nivel conform reper, lubrifiant prescris", "parametru": "Lubrifiant / Nivel", "valoare": "OK", "drive": ""},
+    {"sistem": "2. Mecanic", "operatiune": "Verificare arbore principal / spindle (forță strângere portsculă, runout, vibrații) și curățare evacuare șpan.", "standard": "Parametri nominali, curat", "parametru": "Forță strângere", "valoare": "kN", "drive": ""},
+
+    # 3. SISTEM HIDRAULIC
+    {"sistem": "3. Hidraulic", "operatiune": "Pornirea grupului hidraulic și verificarea nivelului de zgomot, cavitației și vibrațiilor pompei hidraulice.", "standard": "Fără cavitație sau vibrații excesive", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "3. Hidraulic", "operatiune": "Verificarea presiunii de lucru pe manometre și a presiunii de preîncărcare a acumulatorilor hidraulici.", "standard": "Presiune în plaja nominală", "parametru": "P_sistem", "valoare": "bar", "drive": ""},
+    {"sistem": "3. Hidraulic", "operatiune": "Verificarea funcționării electrovalvelor/distribuitoarelor (inclusiv acționare manuală) și a curselor/vitezelor cilindrilor.", "standard": "Curse complete și fluide", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "3. Hidraulic", "operatiune": "Inspectarea etanșeității circuitului: strângere racorduri, înlocuire furtunuri sau garnituri cu scurgeri de ulei.", "standard": "Fără scurgeri sau pierderi vizibile", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "3. Hidraulic", "operatiune": "Curățarea jojei magnetice de retur, curățarea/înlocuirea filtrelor de ulei și completarea/schimbul uleiului hidraulic.", "standard": "Filtre curate, nivel ulei conform", "parametru": "Tip ulei / Filtru", "valoare": "L / buc", "drive": ""},
+
+    # 4. SISTEM PNEUMATIC
+    {"sistem": "4. Pneumatic", "operatiune": "Verificarea grupului de preparare aer (FRL): presiune de lucru, curățare decantoare condens, verificare nivel ulei ungător.", "standard": "P_aer nominală, condens evacuat", "parametru": "P_aer", "valoare": "bar", "drive": ""},
+    {"sistem": "4. Pneumatic", "operatiune": "Verificarea funcționării distribuitoarelor pneumatice și reglarea curselor/vitezelor cilindrilor din drosele.", "standard": "Acționare rapidă și precisă", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "4. Pneumatic", "operatiune": "Detectarea și remedierea pierderilor de aer (înlocuire furtunuri, fitinguri rapide, garnituri de etanșare).", "standard": "Fără pierderi audibile/vizibile de aer", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "4. Pneumatic", "operatiune": "Testarea garniturilor interioare ale pistoanelor și distribuitoarelor prin decuplarea traseului nepresurizat (piston vs. distribuitor).", "standard": "Fără scăpări interne", "parametru": "", "valoare": "", "drive": ""},
+
+    # 5. SISTEM VACUUM
+    {"sistem": "5. Vacuum", "operatiune": "Verificarea zgomotului și temperaturii pompei de vacuum în funcționare; inspectare scurgeri ulei de vid.", "standard": "Temperatură și zgomot normale", "parametru": "Temp pompă", "valoare": "°C", "drive": ""},
+    {"sistem": "5. Vacuum", "operatiune": "Cu utilajul oprit: curățare/înlocuire filtre vacuum, curățare traseu în amonte de filtru, verificare/completare ulei de vid.", "standard": "Filtre și trasee curate", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "5. Vacuum", "operatiune": "Verificarea nivelului de vacuum cu manometrul/vacuummetrul și inspectarea furtunurilor de aspirație și colierelor.", "standard": "Nivel vacuum conform", "parametru": "Vid", "valoare": "mbar", "drive": ""},
+
+    # 6. INSTALAȚII AUXILIARE
+    {"sistem": "6. Auxiliare", "operatiune": "Instalații de răcire / emulsie / apă: izolare vane, verificare obturare conducte, curățare filtre/schimbătoare, verificare pompe.", "standard": "Circulație normală, concentrație/debit ok", "parametru": "Concentrație emulsie", "valoare": "%", "drive": ""},
+    {"sistem": "6. Auxiliare", "operatiune": "Instalații de abur: izolare vane manuale, verificare presiune zero, verificare obturare conducte și vane de admisie.", "standard": "Vane și conducte fără obturări", "parametru": "", "valoare": "", "drive": ""},
+    {"sistem": "6. Auxiliare", "operatiune": "Instalații de afumare / exhaustare: verificare obturare conducte evacuare, curățare depuneri și vane de admisie.", "standard": "Evacuare liberă, fără depuneri", "parametru": "", "valoare": "", "drive": ""},
 ]
 
-FISE_GENERALE_IMPLICITE = {
-    "Zilnică": [
-        {
-            "Ordine": 1,
-            "Operațiune / Verificare": "Curățare zonă de lucru și senzori",
-            "Standard / Observații": "Fără resturi sau praf",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 2,
-            "Operațiune / Verificare": "Verificare presiune aer / nivel lichide",
-            "Standard / Observații": "În parametri normali",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 3,
-            "Operațiune / Verificare": "Control zgomote, vibrații sau scurgeri",
-            "Standard / Observații": "Fără anomalii",
-            "Documentație Drive": "",
-        },
-    ],
-    "Săptămânală": [
-        {
-            "Ordine": 1,
-            "Operațiune / Verificare": "Curățare filtre și ventilatoare răcire",
-            "Standard / Observații": "Flux aer liber",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 2,
-            "Operațiune / Verificare": "Verificare strângere conexiuni și ghidaje",
-            "Standard / Observații": "Fără jocuri",
-            "Documentație Drive": "",
-        },
-    ],
-    "Lunară": [
-        {
-            "Ordine": 1,
-            "Operațiune / Verificare": "Lubrifiere puncte de ungere conform manual",
-            "Standard / Observații": "Vaselină / ulei prescris",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 2,
-            "Operațiune / Verificare": "Verificare cabluri, senzori și siguranțe",
-            "Standard / Observații": "Izolație intactă",
-            "Documentație Drive": "",
-        },
-    ],
-    "Trimestrială": [
-        {
-            "Ordine": 1,
-            "Operațiune / Verificare": "Calibrare / verificare aliniere și parametri",
-            "Standard / Observații": "În toleranțe",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 2,
-            "Operațiune / Verificare": "Revizie elemente de uzură și curele/furtunuri",
-            "Standard / Observații": "Înlocuire dacă e cazul",
-            "Documentație Drive": "",
-        },
-    ],
-    "Anuală": [
-        {
-            "Ordine": 1,
-            "Operațiune / Verificare": "Revizie generală mecanică și electrică",
-            "Standard / Observații": "Verificare completă",
-            "Documentație Drive": "",
-        },
-        {
-            "Ordine": 2,
-            "Operațiune / Verificare": "Înlocuire consumabile / lichide conform plan",
-            "Standard / Observații": "Conform carte tehnică",
-            "Documentație Drive": "",
-        },
-    ],
-}
+FISE_GENERALE_IMPLICITE = {f: [] for f in FRECVENTE_MENTENANTA}
 
 
 def construieste_nume_fisa(
@@ -286,34 +170,52 @@ def _incarca_fise_din_db() -> list[dict]:
 
 def _normalizare_pasi_df(pasi: list[dict]) -> pd.DataFrame:
     if not pasi:
-        return pd.DataFrame([{
-            "Ordine": 1,
-            "Operațiune / Verificare": "",
-            "Standard / Observații": "",
-            "Documentație Drive": "",
-        }])
+        return pd.DataFrame(columns=[
+            "Ordine",
+            "Operațiune / Verificare",
+            "Piese / Parametri Măsurați",
+            "Valori / Observații",
+            "Documentație",
+        ])
     randuri = []
     for idx, p in enumerate(pasi, start=1):
         if isinstance(p, dict):
             doc_link = (
-                p.get("Documentație Drive")
+                p.get("Documentație")
+                or p.get("Documentație Drive")
                 or p.get("Documentatie Drive")
                 or p.get("documentatie_drive")
                 or p.get("drive_url")
                 or ""
             )
+            param_val = (
+                p.get("Piese / Parametri Măsurați")
+                or p.get("Parametru")
+                or p.get("parametru")
+                or p.get("Standard / Observații")
+                or ""
+            )
+            val_obs = (
+                p.get("Valori / Observații")
+                or p.get("Valoare")
+                or p.get("valoare")
+                or p.get("observatii")
+                or ""
+            )
             randuri.append({
                 "Ordine": int(p.get("Ordine") or p.get("ordine") or idx),
                 "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or p.get("operatiune") or p.get("pas") or ""),
-                "Standard / Observații": str(p.get("Standard / Observații") or p.get("observatii") or ""),
-                "Documentație Drive": str(doc_link or "").strip(),
+                "Piese / Parametri Măsurați": str(param_val or ""),
+                "Valori / Observații": str(val_obs or ""),
+                "Documentație": str(doc_link or "").strip(),
             })
         else:
             randuri.append({
                 "Ordine": idx,
                 "Operațiune / Verificare": str(p),
-                "Standard / Observații": "",
-                "Documentație Drive": "",
+                "Piese / Parametri Măsurați": "",
+                "Valori / Observații": "",
+                "Documentație": "",
             })
     return pd.DataFrame(randuri)
 
@@ -322,9 +224,10 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
     pasi = []
     for i, (_, row) in enumerate(df.iterrows(), start=1):
         op = str(row.get("Operațiune / Verificare") or "").strip()
-        obs = str(row.get("Standard / Observații") or "").strip()
-        doc_link = str(row.get("Documentație Drive") or "").strip()
-        if not op and not obs and not doc_link:
+        prm = str(row.get("Piese / Parametri Măsurați") or "").strip()
+        val = str(row.get("Valori / Observații") or "").strip()
+        doc_link = str(row.get("Documentație") or row.get("Documentație Drive") or "").strip()
+        if not op and not prm and not val and not doc_link:
             continue
         try:
             ord_val = int(row.get("Ordine") or i)
@@ -333,7 +236,10 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
         pasi.append({
             "Ordine": ord_val,
             "Operațiune / Verificare": op,
-            "Standard / Observații": obs,
+            "Piese / Parametri Măsurați": prm,
+            "Valori / Observații": val,
+            "Standard / Observații": f"{prm}: {val}".strip(": ") if (prm or val) else "",
+            "Documentație": doc_link,
             "Documentație Drive": doc_link,
         })
     return pasi
@@ -406,12 +312,6 @@ def _gaseste_fisa(
 
 
 def obtine_fisa_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: str) -> dict:
-    """
-    Returnează fișa activă pentru (denumire_masina, tip_masina, frecventa) — fără firmă:
-    1. Fișă proprie salvată pe denumire_masina + tip_masina + frecventa
-    2. Fișă generală pe frecventa
-    3. Fișă implicită pe frecventa
-    """
     fise_db = _incarca_fise_din_db()
     frec_clean = str(frecventa or "Lunară").strip()
     den_clean = str(denumire_masina or "").strip()
@@ -435,7 +335,7 @@ def obtine_fisa_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: 
         }
 
     fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_clean)
-    pasi_gen = (fisa_gen.get("pasi") if fisa_gen else None) or FISE_GENERALE_IMPLICITE.get(frec_clean, [])
+    pasi_gen = (fisa_gen.get("pasi") if fisa_gen else None) or []
     return {
         "sursa": "generala",
         "frecventa": frec_clean,
@@ -450,12 +350,9 @@ def _editor_config_fise():
     return {
         "Ordine": st.column_config.NumberColumn("Ordine", width="small", step=1),
         "Operațiune / Verificare": st.column_config.TextColumn("Operațiune / Verificare", width="large"),
-        "Standard / Observații": st.column_config.TextColumn("Standard / Observații", width="medium"),
-        "Documentație Drive": st.column_config.TextColumn(
-            "Documentație Drive",
-            help="Link-ul Google Drive (https://drive.google.com/...) sau calea documentației operațiunii",
-            width="medium",
-        ),
+        "Piese / Parametri Măsurați": st.column_config.TextColumn("Piese / Parametri Măsurați", width="medium"),
+        "Valori / Observații": st.column_config.TextColumn("Valori / Observații", width="medium"),
+        "Documentație": st.column_config.TextColumn("Documentație", width="medium"),
     }
 
 
@@ -471,91 +368,92 @@ def _salveaza_fisier_documentatie_local(uploaded_file, prefix_key: str) -> str:
 def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
     curente = list(st.session_state.get(state_key_pasi) or [])
 
-    st.markdown("#### ➕ Adaugă operațiuni din listă")
+    st.markdown("#### ➕ Încarcă / Setează operațiune și documentație")
     opt_dict = {
-        f"[{item['sistem']}] {item['operatiune'][:90]}": item
-        for item in CATALOG_OPERATIUNI_PREDEFINITE
+        f"-- Introdu manual / copy-paste --": None,
     }
-    selectate = st.multiselect(
-        "Alege una sau mai multe operațiuni din listă",
-        options=list(opt_dict.keys()),
-        key=f"ms_ops_{prefix_key}",
-    )
-    link_drive_nou = st.text_input(
-        "Link Google Drive pentru operațiunile adăugate (opțional)",
-        placeholder="https://drive.google.com/...",
-        key=f"inp_drive_ops_{prefix_key}",
-    ).strip()
+    for item in CATALOG_OPERATIUNI_PREDEFINITE:
+        lbl = f"[{item['sistem']}] {item['operatiune']}"
+        opt_dict[lbl] = item
 
-    if st.button("📥 Adaugă operațiunile selectate în fișă", key=f"btn_add_ops_{prefix_key}"):
-        if not selectate:
-            st.warning("Selectează cel puțin o operațiune din listă.")
+    sel_op_label = st.selectbox(
+        "Alege operațiunea din listă (sau lasă manual / copy-paste)",
+        options=list(opt_dict.keys()),
+        key=f"sel_op_cat_{prefix_key}",
+    )
+    item_cat = opt_dict.get(sel_op_label)
+
+    c1, c2, c3 = st.columns([2.4, 1.3, 1.0])
+    with c1:
+        op_text = st.text_input(
+            "Operațiune / Verificare (poți scrie sau lipi cu copy-paste)",
+            value=(item_cat["operatiune"] if item_cat else ""),
+            key=f"inp_op_txt_{prefix_key}_{sel_op_label[:25]}",
+        ).strip()
+    with c2:
+        param_text = st.text_input(
+            "Piesă / Parametru măsurat",
+            value=(item_cat.get("parametru") or item_cat.get("standard") or "" if item_cat else ""),
+            placeholder="ex: Rulment SKF / Tensiune 24V",
+            key=f"inp_param_txt_{prefix_key}_{sel_op_label[:25]}",
+        ).strip()
+    with c3:
+        val_text = st.text_input(
+            "Valoare / Observații",
+            value=(item_cat.get("valoare") or "" if item_cat else ""),
+            placeholder="ex: 24.1 V / 1 buc",
+            key=f"inp_val_txt_{prefix_key}_{sel_op_label[:25]}",
+        ).strip()
+
+    d1, d2 = st.columns([2.2, 1.8])
+    with d1:
+        link_drive_nou = st.text_input(
+            "Link Google Drive / Documentație (opțional)",
+            value=(item_cat.get("drive", "") if item_cat else ""),
+            placeholder="https://drive.google.com/...",
+            key=f"inp_drive_ops_{prefix_key}",
+        ).strip()
+    with d2:
+        fisier_doc = st.file_uploader(
+            "Sau încarcă fișier documentație",
+            type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
+            key=f"up_doc_ops_{prefix_key}",
+        )
+
+    if st.button("📥 Adaugă operațiunea în tabel", key=f"btn_add_ops_{prefix_key}"):
+        if not op_text:
+            st.warning("Introdu sau selectează o operațiune.")
             return
-        urm_ord = len(curente) + 1
-        for label in selectate:
-            it = opt_dict[label]
-            curente.append({
-                "Ordine": urm_ord,
-                "Operațiune / Verificare": it["operatiune"],
-                "Standard / Observații": it["standard"],
-                "Documentație Drive": link_drive_nou or it.get("drive", ""),
-            })
-            urm_ord += 1
+        doc_final = link_drive_nou
+        if fisier_doc is not None:
+            doc_final = _salveaza_fisier_documentatie_local(fisier_doc, f"{prefix_key}_op{len(curente)+1}")
+        curente.append({
+            "Ordine": len(curente) + 1,
+            "Operațiune / Verificare": op_text,
+            "Piese / Parametri Măsurați": param_text,
+            "Valori / Observații": val_text,
+            "Standard / Observații": f"{param_text}: {val_text}".strip(": ") if (param_text or val_text) else "",
+            "Documentație": doc_final,
+            "Documentație Drive": doc_final,
+        })
         st.session_state[state_key_pasi] = curente
-        st.toast(f"✅ S-au adăugat {len(selectate)} operațiuni în fișă.")
+        st.toast("✅ Operațiunea a fost adăugată.")
         st.rerun()
 
     if curente:
-        st.markdown("#### 📎 Încarcă / Setează documentația pe operațiune")
-        opt_idx = {
-            f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:75]}": i
-            for i, p in enumerate(curente)
-        }
-        idx_sel = st.selectbox(
-            "Selectează operațiunea pentru documentație",
-            options=list(opt_idx.keys()),
-            key=f"sel_doc_op_{prefix_key}",
-        )
-        pos = opt_idx[idx_sel]
-        doc_curent = str(curente[pos].get("Documentație Drive") or "")
-
-        cd1, cd2 = st.columns([2.2, 1.8])
-        with cd1:
-            link_manual = st.text_input(
-                "Link Google Drive operațiune",
-                value=doc_curent,
-                placeholder="https://drive.google.com/...",
-                key=f"inp_doc_op_{prefix_key}_{pos}",
-            ).strip()
-        with cd2:
-            fisier_doc = st.file_uploader(
-                "Sau încarcă fișier documentație",
-                type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
-                key=f"up_doc_op_{prefix_key}_{pos}",
-            )
-
-        if st.button("💾 Aplică documentația pe operațiune", key=f"btn_apply_doc_{prefix_key}_{pos}"):
-            val_final = link_manual
-            if fisier_doc is not None:
-                val_final = _salveaza_fisier_documentatie_local(fisier_doc, f"{prefix_key}_op{pos+1}")
-            curente[pos]["Documentație Drive"] = val_final
-            st.session_state[state_key_pasi] = curente
-            st.toast("✅ Documentația a fost actualizată pe operațiune.")
-            st.rerun()
-
-        st.markdown("#### 🗑️ Ștergere multiplă operațiuni")
+        st.markdown("#### 🗑️ Ștergere una sau mai multe operațiuni deodată")
         opt_del = {
-            f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:80]}": i
+            f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:85]}": i
             for i, p in enumerate(curente)
         }
         de_sters = st.multiselect(
-            "Selectează una sau mai multe operațiuni de șters",
+            "Selectează operațiunile de șters",
             options=list(opt_del.keys()),
             key=f"ms_del_ops_{prefix_key}",
         )
         if st.button("🗑️ Șterge operațiunile selectate", key=f"btn_del_ops_{prefix_key}"):
             if not de_sters:
-                st.warning("Selectează cel puțin o operațiune de șters.")
+                st.warning("Selectează cel puțin o operațiune.")
             else:
                 indici_sters = {opt_del[k] for k in de_sters}
                 ramase = []
@@ -580,7 +478,7 @@ def render_fise_mentenanta():
         )
         return
 
-    st.caption("🔓 **Sistem deblocat:** poți încărca operațiuni dintr-o listă, atașa documentație pe fiecare operațiune, șterge mai multe operațiuni deodată și salva fișa pe Denumire mașină + Tip mașină + Frecvență.")
+    st.caption("🔓 **Sistem deblocat:** alege operațiuni din listă (sau introdu manual / copy-paste), atașează documentație, completează piese/parametri/valori și șterge una sau mai multe operațiuni deodată.")
 
     fise_db = _incarca_fise_din_db()
     catalog_masini = _incarca_catalog_masini_fara_firma()
@@ -619,8 +517,6 @@ def render_fise_mentenanta():
             tip_masina=tip_masina,
             frecventa=frec_prop,
         )
-        fisa_gen_sursa = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_prop)
-        pasi_gen_sursa = fisa_gen_sursa["pasi"] if fisa_gen_sursa else FISE_GENERALE_IMPLICITE.get(frec_prop, [])
 
         nume_auto = construieste_nume_fisa(den_masina, tip_masina, frec_prop, este_generala=False)
         nume_init = (fisa_prop.get("nume_fisa") if fisa_prop else "") or nume_auto
@@ -632,18 +528,7 @@ def render_fise_mentenanta():
 
         state_key_pasi = f"fmp_pasi_lucru_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}"
         if state_key_pasi not in st.session_state:
-            st.session_state[state_key_pasi] = list(fisa_prop["pasi"]) if fisa_prop else list(pasi_gen_sursa)
-
-        col_b1, col_b2 = st.columns([1.6, 2.4])
-        with col_b1:
-            if st.button("📂 Încarcă din Fișa Generală", key="btn_desfasoara_fisa_gen", use_container_width=True):
-                st.session_state[state_key_pasi] = list(pasi_gen_sursa)
-                st.rerun()
-        with col_b2:
-            if fisa_prop:
-                st.info(f"✏️ Fișă proprie existentă: **{nume_fisa_input}**.")
-            else:
-                st.caption("ℹ️ Se pornește de la fișa generală; la salvare se creează fișa proprie.")
+            st.session_state[state_key_pasi] = list(fisa_prop["pasi"]) if fisa_prop else []
 
         _render_controale_editare_operatiuni(
             state_key_pasi=state_key_pasi,
@@ -672,7 +557,7 @@ def render_fise_mentenanta():
     with tab_gen:
         frec_gen = st.selectbox("Frecvență fișă generală", options=FRECVENTE_MENTENANTA, key="fmp_gen_frec")
         fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_gen)
-        pasi_gen_init = fisa_gen["pasi"] if fisa_gen else FISE_GENERALE_IMPLICITE.get(frec_gen, [])
+        pasi_gen_init = fisa_gen["pasi"] if fisa_gen else []
 
         state_key_gen = f"fmp_pasi_gen_{frec_gen.lower()}"
         if state_key_gen not in st.session_state:
