@@ -532,9 +532,11 @@ def render_reparatii_electronice():
                     st.session_state["el_a_fost_editare"] = False
 
                 if rid:
+                    masina_tinta_el = sel_masina if apartenenta_masina else "General"
                     sincronizeaza_componente_in_piese_generale(
                         componente_valide,
                         sursa_info=f"Reparație electronică #{rid} — {sel_firma} ({piesa_cur})",
+                        masina_tinta=masina_tinta_el,
                     )
                     if salveaza_in_index_el:
                         try:

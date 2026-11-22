@@ -70,15 +70,26 @@ class ReparatiiElectroniceRepository(BaseRepository):
             return (c.rowcount or 0) > 0
 
 
-def sincronizeaza_componente_in_piese_generale(componente_lista: list[dict], sursa_info: str = "") -> int:
+def sincronizeaza_componente_in_piese_generale(
+    componente_lista: list[dict],
+    sursa_info: str = "",
+    masina_tinta: str = "General",
+) -> int:
     """
-    Trege automat componentele din reparațiile electronice în tabelul general `piese`
-    pentru a putea fi folosite la oferte de preț. Returnează numărul de piese procesate.
+    Comasează componentele din reparațiile electronice în tabelul `piese`
+    o singură dată per mașină (`masina_montaj`), permițând aceeași piesă pe mașini diferite.
+    Returnează numărul de piese procesate.
     """
     if not componente_lista:
         return 0
 
+    masina_curata = str(masina_tinta or "").strip()
+    if not masina_curata or masina_curata == "General / Fără mașină":
+        masina_curata = "General"
+
     procesate = 0
+    vazute_in_lot = set()
+
     with db_cursor() as c:
         c.execute("""
             SELECT column_name
@@ -97,13 +108,20 @@ def sincronizeaza_componente_in_piese_generale(componente_lista: list[dict], sur
             "cantitate" if "cantitate" in cols_piese
             else ("stoc" if "stoc" in cols_piese else ("cantitate_stoc" if "cantitate_stoc" in cols_piese else None))
         )
+        are_masina_montaj = "masina_montaj" in cols_piese
 
         for item in componente_lista:
             if not isinstance(item, dict):
                 continue
-            den = str(item.get("Componenta / Cod / Parametri") or "").strip()
+            den_raw = str(item.get("Componenta / Cod / Parametri") or "").strip()
+            den = " ".join(den_raw.split())
             if not den:
                 continue
+
+            cheie_lot = (masina_curata.lower(), den.lower())
+            if cheie_lot in vazute_in_lot:
+                continue
+            vazute_in_lot.add(cheie_lot)
 
             try:
                 cant_val = float(item.get("Cantitate") if item.get("Cantitate") is not None else 1.0)
@@ -112,24 +130,34 @@ def sincronizeaza_componente_in_piese_generale(componente_lista: list[dict], sur
             except (TypeError, ValueError):
                 cant_val = 1.0
 
-            c.execute(
-                f"SELECT id{', ' + col_cant if col_cant else ''} FROM piese WHERE LOWER(TRIM({col_den})) = LOWER(TRIM(%s)) LIMIT 1",
-                (den,),
-            )
+            if are_masina_montaj:
+                c.execute(
+                    f"""
+                    SELECT id{', ' + col_cant if col_cant else ''}
+                    FROM piese
+                    WHERE LOWER(TRIM({col_den})) = LOWER(TRIM(%s))
+                      AND LOWER(TRIM(COALESCE(masina_montaj, 'General'))) = LOWER(TRIM(%s))
+                    LIMIT 1
+                    """,
+                    (den, masina_curata),
+                )
+            else:
+                c.execute(
+                    f"SELECT id{', ' + col_cant if col_cant else ''} FROM piese WHERE LOWER(TRIM({col_den})) = LOWER(TRIM(%s)) LIMIT 1",
+                    (den,),
+                )
+
             existent = c.fetchone()
 
             if existent:
-                if col_cant:
-                    cant_veche = float(existent.get(col_cant) or 0.0)
-                    cant_noua = cant_veche + cant_val
-                    c.execute(
-                        f"UPDATE piese SET {col_cant} = %s WHERE id = %s",
-                        (cant_noua, existent["id"]),
-                    )
                 procesate += 1
             else:
                 campuri = [col_den]
                 valori = [den]
+
+                if are_masina_montaj:
+                    campuri.append("masina_montaj")
+                    valori.append(masina_curata)
 
                 if col_cant:
                     campuri.append(col_cant)
