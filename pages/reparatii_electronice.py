@@ -9,6 +9,10 @@ from datetime import datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.reparatii_electronice_repository import ReparatiiElectroniceRepository
+from repositories.reparatii_electronice_repository import (
+    ReparatiiElectroniceRepository,
+    sincronizeaza_componente_in_piese_generale,
+)
 from repositories.setari_repository import SetariRepository
 from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
@@ -528,6 +532,10 @@ def render_reparatii_electronice():
                     st.session_state["el_a_fost_editare"] = False
 
                 if rid:
+                    sincronizeaza_componente_in_piese_generale(
+                        componente_valide,
+                        sursa_info=f"Reparație electronică #{rid} — {sel_firma} ({piesa_cur})",
+                    )
                     if salveaza_in_index_el:
                         try:
                             comp_txt = _formateaza_componente_index(componente_valide)

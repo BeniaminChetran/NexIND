@@ -373,7 +373,6 @@ def _extrage_furnizor_piesa(piesa_row: dict) -> str:
             return val
     return "Fără furnizor setat"
 
-
 def render_piese_de_comandat_dashboard():
     st.markdown("### 🛒 Piese De Comandat / Necesare & Furnizori")
 
@@ -384,9 +383,10 @@ def render_piese_de_comandat_dashboard():
         if den:
             furnizor_map[den.lower()] = _extrage_furnizor_piesa(p)
 
-    rapoarte = ReparatiiRepository.get_all() or []
     randuri = []
 
+    # 1. Piese din rapoartele de Mașini (reparatii)
+    rapoarte = ReparatiiRepository.get_all() or []
     for r in rapoarte:
         piese_raw = r.get("piese_valide")
         if not piese_raw:
@@ -402,7 +402,7 @@ def render_piese_de_comandat_dashboard():
                 continue
             den_piesa = str(item.get("Piesa") or item.get("piesa") or "").strip()
             tip_piesa = str(item.get("Tip") or item.get("tip") or "").strip()
-            if not den_piesa or tip_piesa not in ("De Comandat", "Necesara"):
+            if not den_piesa or tip_piesa.lower() not in ("de comandat", "necesara", "necesare"):
                 continue
 
             cant = item.get("Cantitate")
@@ -418,24 +418,67 @@ def render_piese_de_comandat_dashboard():
                 "Furnizor": furnizor,
                 "Piesă": den_piesa,
                 "Cantitate": cant_num,
-                "Tip": tip_piesa,
+                "Status Comandă": "De Comandat",
+                "Sursă": "Mașini",
                 "Firmă": r.get("firma") or "",
                 "Mașină": r.get("masina") or "",
                 "Raport": f"#{r.get('id')}",
             })
 
+    # 2. Piese din rapoartele de Reparații Electronice (reparatii_electronice)
+    try:
+        with db_cursor() as c:
+            c.execute("SELECT * FROM reparatii_electronice ORDER BY id DESC")
+            fise_el = [dict(row) for row in (c.fetchall() or [])]
+    except Exception:
+        fise_el = []
+
+    for f_el in fise_el:
+        comp_raw = f_el.get("componente_json") or []
+        if isinstance(comp_raw, str):
+            try:
+                comp_raw = json.loads(comp_raw)
+            except Exception:
+                comp_raw = []
+
+        for comp in comp_raw:
+            if not isinstance(comp, dict):
+                continue
+            den_comp = str(comp.get("Componenta / Cod / Parametri") or comp.get("piesa") or "").strip()
+            stare_comp = str(comp.get("Stare") or "").strip()
+            if not den_comp or stare_comp.lower() not in ("necesara", "necesare", "de comandat"):
+                continue
+
+            cant_c = comp.get("Cantitate", 1.0)
+            try:
+                cant_num = float(cant_c)
+            except Exception:
+                cant_num = 1.0
+
+            furnizor = furnizor_map.get(den_comp.lower(), "Fără furnizor setat")
+            randuri.append({
+                "Furnizor": furnizor,
+                "Piesă": den_comp,
+                "Cantitate": cant_num,
+                "Status Comandă": "De Comandat",
+                "Sursă": "Electronică",
+                "Firmă": f_el.get("firma_nume") or "",
+                "Mașină": f_el.get("masina_nume") or f_el.get("piesa_subansamblu") or "",
+                "Raport": f"EL #{f_el.get('id')}",
+            })
+
     if not randuri:
-        st.info("Nu există piese marcate ca `De Comandat` sau `Necesara` în rapoarte.")
+        st.info("Nu există piese marcate ca necesare / de comandat în rapoartele de mașini sau reparații electronice.")
         return
 
     df = pd.DataFrame(randuri)
 
-    c1, c2 = st.columns([1.5, 1.5])
+    c1, c2, c3 = st.columns([1.2, 1.5, 1.5])
     with c1:
-        filtru_tip = st.selectbox(
-            "Filtrează după tip",
-            options=["Toate (De Comandat + Necesara)", "De Comandat", "Necesara"],
-            key="dash_piese_cmd_tip",
+        filtru_sursa = st.selectbox(
+            "Filtrează după sursă",
+            options=["Toate", "Mașini", "Electronică"],
+            key="dash_piese_cmd_sursa",
         )
     with c2:
         opt_furn = ["Toți furnizorii"] + sorted(df["Furnizor"].unique().tolist())
@@ -444,18 +487,26 @@ def render_piese_de_comandat_dashboard():
             options=opt_furn,
             key="dash_piese_cmd_furn",
         )
+    with c3:
+        cautare_piesa = st.text_input(
+            "Caută piesă / cod",
+            placeholder="ex: L6376PD, SFH6106...",
+            key="dash_piese_cmd_cautare",
+        ).strip().lower()
 
     df_f = df.copy()
-    if filtru_tip != "Toate (De Comandat + Necesara)":
-        df_f = df_f[df_f["Tip"] == filtru_tip]
+    if filtru_sursa != "Toate":
+        df_f = df_f[df_f["Sursă"] == filtru_sursa]
     if filtru_furn != "Toți furnizorii":
         df_f = df_f[df_f["Furnizor"] == filtru_furn]
+    if cautare_piesa:
+        df_f = df_f[df_f["Piesă"].str.lower().str.contains(cautare_piesa, na=False)]
 
     st.dataframe(df_f, hide_index=True, use_container_width=True)
 
-    with st.expander("📦 Centralizator cantități pe Furnizor & Piesă", expanded=False):
+    with st.expander("📦 Centralizator cantități De Comandat pe Furnizor & Piesă", expanded=False):
         df_sum = (
-            df_f.groupby(["Furnizor", "Piesă", "Tip"], as_index=False)["Cantitate"]
+            df_f.groupby(["Furnizor", "Piesă", "Status Comandă"], as_index=False)["Cantitate"]
             .sum()
             .sort_values(["Furnizor", "Piesă"])
         )
