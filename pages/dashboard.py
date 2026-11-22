@@ -461,7 +461,7 @@ def render_dashboard():
     with f_col1:
         zile_defecte = st.selectbox(
             "Perioadă analizată:",
-            options=[30, 60, 90, 180, 365],
+            options=[30, 60, 90, 180, 365, 730,1095, None],
             index=3,
             format_func=lambda x: f"Ultimele {x} zile",
             key="dash_defecte_recurente_zile",
@@ -494,6 +494,14 @@ def render_dashboard():
             )
     else:
         st.success(f"Nu există defecte recurente identificate pentru filtrele selectate (ultimele {zile_defecte} zile).")
+        
+    if st.button("🔄 Actualizează", use_container_width=True):
+            incarca_date_dashboard.clear()
+            incarca_memento_intretinere.clear()
+            incarca_defecte_recurente.clear()
+            incarca_utilaje_dupa_stare.clear()
+            incarca_clienti_inactivi.clear()
+            st.rerun()
 
     # 3. GRAFICELE (Top 10 Defecte, Top Clienți, Top Utilaje)
     if top_def:
