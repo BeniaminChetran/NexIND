@@ -461,7 +461,7 @@ def render_dashboard():
     with f_col1:
         zile_defecte = st.selectbox(
             "Perioadă analizată:",
-            options=[30, 60, 90, 180, 365, 730,1095, None],
+            options=[30, 60, 90, 180, 365, 730,1095],
             index=3,
             format_func=lambda x: f"Ultimele {x} zile",
             key="dash_defecte_recurente_zile",
