@@ -664,23 +664,41 @@ def render_piese_de_comandat_dashboard():
                         if col_name in df_final.columns:
                             df_final.at[idx, col_name] = new_val
 
-        meta_map = {int(r["_row_id"]): r for _, r in df_f.iterrows()}
-        orig_map = {int(r["_row_id"]): _normalizeaza_stare_comanda(r["Status Comandă"]) for _, r in df_editor_init.iterrows()}
+        meta_map = {}
+        for _, r in df_f.iterrows():
+            k = int(r["_row_id"])
+            if k not in meta_map:
+                pid_raw = r.get("_piesa_id")
+                sid_raw = r.get("_sursa_rec_id")
+                meta_map[k] = {
+                    "_piesa_id": int(pid_raw) if pd.notna(pid_raw) and str(pid_raw).strip() != "" else None,
+                    "_sursa_tbl": str(r.get("_sursa_tbl") or "").strip(),
+                    "_sursa_rec_id": int(sid_raw) if pd.notna(sid_raw) and str(sid_raw).strip() != "" else None,
+                }
+
+        orig_map = {
+            int(r["_row_id"]): _normalizeaza_stare_comanda(r["Status Comandă"])
+            for _, r in df_editor_init.iterrows()
+        }
         nr_mod = 0
 
         for _, row in df_final.iterrows():
             rid = int(row["_row_id"])
             stare_noua = _normalizeaza_stare_comanda(row.get("Status Comandă"))
             if orig_map.get(rid) != stare_noua:
-                meta = meta_map.get(rid) or {}
+                meta = meta_map.get(rid)
+                if not isinstance(meta, dict):
+                    meta = {}
                 piesa_id = meta.get("_piesa_id")
-                if piesa_id is not None:
+                if piesa_id is not None and pd.notna(piesa_id):
                     PieseRepository.update_stare_comandata(int(piesa_id), stare_noua)
-                if meta.get("_sursa_tbl") and meta.get("_sursa_rec_id") is not None:
+                sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
+                sursa_rec_id = meta.get("_sursa_rec_id")
+                if sursa_tbl and sursa_rec_id is not None and pd.notna(sursa_rec_id):
                     try:
                         _actualizeaza_stare_in_raport_json(
-                            str(meta["_sursa_tbl"]),
-                            int(meta["_sursa_rec_id"]),
+                            sursa_tbl,
+                            int(sursa_rec_id),
                             str(row.get("Piesă") or ""),
                             stare_noua,
                         )
