@@ -8,7 +8,6 @@ import pandas as pd
 from datetime import datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
-#from repositories.reparatii_electronice_repository import ReparatiiElectroniceRepository
 from repositories.reparatii_electronice_repository import (
     ReparatiiElectroniceRepository,
     sincronizeaza_componente_in_piese_generale,
@@ -16,6 +15,7 @@ from repositories.reparatii_electronice_repository import (
 from repositories.setari_repository import SetariRepository
 from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
+from utils.context_selectie import aplica_context_la_tab, seteaza_context_selectie
 
 OPT_STARI_FINALE = ["În lucru / Diagnosticare", "Funcțional", "Nefuncțional", "Înlocuit complet"]
 OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata", "Masurata/OK"]
@@ -164,6 +164,8 @@ def _init_sau_reseteaza_el_draft(tehnician_def: str):
     }
     st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
     st.session_state["el_editor_counter"] = st.session_state.get("el_editor_counter", 0) + 1
+    st.session_state.pop("_el_ctx_aplicat", None)
+    st.session_state.pop("_el_mas_ctx_aplicat", None)
 
 
 def _incarca_fisa_in_editor(fisa: dict, tehnician_def: str):
@@ -204,6 +206,8 @@ def _incarca_fisa_in_editor(fisa: dict, tehnician_def: str):
         st.session_state["df_comp_editor"] = pd.DataFrame(columns=COLS_COMP_EDITOR)
     st.session_state["el_editor_counter"] = st.session_state.get("el_editor_counter", 0) + 1
     st.session_state["electrice_salvat"] = False
+    st.session_state["_el_ctx_aplicat"] = True
+    st.session_state["_el_mas_ctx_aplicat"] = True
 
 
 def render_reparatii_electronice():
@@ -270,6 +274,16 @@ def render_reparatii_electronice():
             st.rerun()
 
     optiuni_firme = ["-- Alege firma --"] + list(firme_dict.keys())
+    if editing_id is None and not st.session_state.get("_el_ctx_aplicat"):
+        ctx_firma = st.session_state.get("ctx_firma")
+        ctx_masina = st.session_state.get("ctx_masina")
+        if ctx_firma and ctx_firma in optiuni_firme:
+            draft["sel_firma"] = ctx_firma
+            if ctx_masina:
+                draft["apartenenta_masina"] = True
+                draft["sel_masina"] = ctx_masina
+        st.session_state["_el_ctx_aplicat"] = True
+
     idx_f = optiuni_firme.index(draft["sel_firma"]) if draft.get("sel_firma") in optiuni_firme else 0
     sel_firma = st.selectbox("1. Alege Firma", options=optiuni_firme, index=idx_f)
     draft["sel_firma"] = sel_firma
@@ -287,6 +301,15 @@ def render_reparatii_electronice():
 
         masini_db = MasiniRepository.get_by_firma(firma_obj["id"])
         masini_nume = [m["denumire"] for m in masini_db]
+
+        if editing_id is None and not st.session_state.get("_el_mas_ctx_aplicat"):
+            ctx_masina = st.session_state.get("ctx_masina")
+            if ctx_masina and ctx_masina in masini_nume:
+                draft["apartenenta_masina"] = True
+                draft["sel_masina"] = ctx_masina
+                st.session_state.pop(_widget_key("apartenenta_masina"), None)
+                st.session_state.pop(_widget_key("sel_masina"), None)
+            st.session_state["_el_mas_ctx_aplicat"] = True
 
         k_ap, val_ap = _lega_camp("apartenenta_masina", False)
         apartenenta_masina = bool(
@@ -320,6 +343,11 @@ def render_reparatii_electronice():
                 masina_obj_id = m_match["id"]
         else:
             draft["sel_masina"] = "General / Fără mașină"
+
+        seteaza_context_selectie(
+            firma=sel_firma,
+            masina=(sel_masina if apartenenta_masina else None),
+        )
 
         st.markdown(
             """
@@ -441,7 +469,6 @@ def render_reparatii_electronice():
         )
         st.session_state["df_comp_editor"] = edited_comp_df
 
-        # --- CONSULTARE RAPIDA IN INDEXUL DE DOCUMENTATIE ---
         with st.expander("📚 Consultare rapidă Index GDrive (scheme [SCH], parametri [PRM], coduri [ERR]/[ALM])", expanded=False):
             termen_sugerat = str(piesa_subansamblu or defect_reclamat or "").strip()
             q_el_doc = st.text_input(

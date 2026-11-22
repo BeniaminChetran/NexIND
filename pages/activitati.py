@@ -15,6 +15,7 @@ from repositories.setari_repository import SetariRepository
 from services.email_service import trimite_email_raport
 from services.pdf_service import genereaza_pdf
 from services.sync_service import background_sync_task
+from utils.context_selectie import aplica_context_la_tab, seteaza_context_selectie
 from utils.draft_state import init_draft, lega_camp, reset_draft, sync_camp, widget_key
 
 
@@ -52,6 +53,7 @@ def _init_sau_reseteaza_act_draft(tehnician_def: str):
     reset_draft("act_draft", _defaults_activitati(tehnician_def), "act_cnt")
     st.session_state["df_piese_editor"] = pd.DataFrame(columns=["Piesa", "Cantitate", "Tip"])
     st.session_state["act_editor_counter"] = st.session_state.get("act_editor_counter", 0) + 1
+    st.session_state.pop("_act_ctx_aplicat", None)
 
 
 def _sincronizeaza_piese_activitate():
@@ -240,6 +242,18 @@ def render_activitati():
             st.toast("🗑️ Datele activității au fost resetate.")
             st.rerun()
 
+    k_firma = widget_key("act", "sel_firma", "act_cnt")
+    k_masina = widget_key("act", "sel_masina", "act_cnt")
+    aplica_context_la_tab(
+        tab_prefix="act",
+        optiuni_firme=optiuni_firme,
+        default_firma="-- Alege firma --",
+        key_firma=k_firma,
+        draft=draft,
+        campo_firma="sel_firma",
+        campo_masina="sel_masina",
+    )
+
     k_firma, v_firma = lega_camp("act_draft", "sel_firma", "-- Alege firma --", "act", "act_cnt")
     if v_firma not in optiuni_firme:
         st.session_state[k_firma] = "-- Alege firma --"
@@ -256,6 +270,7 @@ def render_activitati():
         )
 
     if sel_firma == "-- Alege firma --":
+        seteaza_context_selectie(firma=None, masina=None)
         st.info("ℹ️ Vă rugăm să selectați o firmă din listă pentru a continua.")
         return
 
@@ -272,6 +287,19 @@ def render_activitati():
     masini_db = MasiniRepository.get_by_firma(firma_obj["id"])
     masini_nume = [m["denumire"] for m in masini_db] if masini_db else ["Nicio mașină"]
 
+    aplica_context_la_tab(
+        tab_prefix="act_mas",
+        optiuni_firme=optiuni_firme,
+        default_firma=sel_firma,
+        key_firma=k_firma,
+        optiuni_masini=masini_nume,
+        default_masina=masini_nume[0],
+        key_masina=k_masina,
+        draft=draft,
+        campo_firma="sel_firma",
+        campo_masina="sel_masina",
+    )
+
     k_masina, v_masina = lega_camp("act_draft", "sel_masina", "Nicio mașină", "act", "act_cnt")
     if v_masina not in masini_nume:
         st.session_state[k_masina] = masini_nume[0]
@@ -285,6 +313,8 @@ def render_activitati():
             on_change=sync_camp,
             args=("act_draft", k_masina, "sel_masina"),
         )
+
+    seteaza_context_selectie(firma=sel_firma, masina=sel_masina)
 
     subansambluri, erori = [], []
     masina_id_sel = None
