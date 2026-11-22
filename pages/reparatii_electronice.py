@@ -14,12 +14,13 @@ from repositories.documentatie_repository import DocumentatieRepository
 from services.pdf_service import genereaza_pdf_electronic
 
 OPT_STARI_FINALE = ["În lucru / Diagnosticare", "Funcțional", "Nefuncțional", "Înlocuit complet"]
-OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata","Masurata/OK"]
+OPT_STARI_COMP = ["Inlocuita", "Necesara", "Reparata", "Masurata/OK"]
 COL_COMP_DEN = "Componenta / Cod / Parametri"
 COL_COMP_CANT = "Cantitate"
 COL_COMP_STARE = "Stare"
 COLS_COMP_EDITOR = [COL_COMP_DEN, COL_COMP_CANT, COL_COMP_STARE]
 MAX_LEN_DREAPTA = 30
+CAMPURI_DREAPTA_30 = {"stare_finala", "tehnician", "verificator"}
 
 
 def _limita_30(val) -> str:
@@ -108,6 +109,39 @@ def _parseaza_componente_json(raw_comp) -> list[dict]:
             COL_COMP_STARE: stare,
         })
     return normalizate
+
+
+def _widget_key(camp: str) -> str:
+    ses_id = st.session_state.get("el_editing_id")
+    ses_prefix = f"edit_{ses_id}" if ses_id is not None else "nou"
+    counter = st.session_state.get("el_editor_counter", 0)
+    return f"el_w_{ses_prefix}_{counter}_{camp}"
+
+
+def _sincronizeaza_camp(camp: str):
+    w_key = _widget_key(camp)
+    draft = st.session_state.get("el_draft")
+    if isinstance(draft, dict) and w_key in st.session_state:
+        val = st.session_state[w_key]
+        if camp in CAMPURI_DREAPTA_30:
+            val = _limita_30(val)
+        draft[camp] = val
+
+
+def _lega_camp(camp: str, val_implicit):
+    draft = st.session_state["el_draft"]
+    if camp not in draft:
+        draft[camp] = _limita_30(val_implicit) if camp in CAMPURI_DREAPTA_30 else val_implicit
+
+    val_curent = draft[camp]
+    if camp in CAMPURI_DREAPTA_30:
+        val_curent = _limita_30(val_curent)
+        draft[camp] = val_curent
+
+    w_key = _widget_key(camp)
+    if w_key not in st.session_state:
+        st.session_state[w_key] = val_curent
+    return w_key, val_curent
 
 
 def _init_sau_reseteaza_el_draft(tehnician_def: str):
@@ -241,16 +275,24 @@ def render_reparatii_electronice():
         if draft.get("ultima_firma") != sel_firma:
             draft["ultima_firma"] = sel_firma
             if editing_id is None:
-                draft["verificator"] = _limita_30(
+                verif_nou = _limita_30(
                     firma_obj.get("nume_persoana") or firma_obj.get("persoana_contact") or "Client"
                 )
+                draft["verificator"] = verif_nou
+                st.session_state.pop(_widget_key("verificator"), None)
 
         masini_db = MasiniRepository.get_by_firma(firma_obj["id"])
         masini_nume = [m["denumire"] for m in masini_db]
 
-        apartenenta_masina = st.checkbox(
-            "Echipamentul / Piesa aparține unei mașini înregistrate?",
-            value=bool(draft.get("apartenenta_masina", False)),
+        k_ap, val_ap = _lega_camp("apartenenta_masina", False)
+        apartenenta_masina = bool(
+            st.checkbox(
+                "Echipamentul / Piesa aparține unei mașini înregistrate?",
+                value=bool(val_ap),
+                key=k_ap,
+                on_change=_sincronizeaza_camp,
+                args=("apartenenta_masina",),
+            )
         )
         draft["apartenenta_masina"] = apartenenta_masina
 
@@ -258,8 +300,16 @@ def render_reparatii_electronice():
         masina_obj_id = None
 
         if apartenenta_masina and masini_nume:
-            idx_m = masini_nume.index(draft["sel_masina"]) if draft.get("sel_masina") in masini_nume else 0
-            sel_masina = st.selectbox("Alege Mașina", options=masini_nume, index=idx_m)
+            k_mas, val_mas = _lega_camp("sel_masina", masini_nume[0])
+            idx_m = masini_nume.index(val_mas) if val_mas in masini_nume else 0
+            sel_masina = st.selectbox(
+                "Alege Mașina",
+                options=masini_nume,
+                index=idx_m,
+                key=k_mas,
+                on_change=_sincronizeaza_camp,
+                args=("sel_masina",),
+            )
             draft["sel_masina"] = sel_masina
             m_match = next((m for m in masini_db if m["denumire"] == sel_masina), None)
             if m_match:
@@ -273,7 +323,7 @@ def render_reparatii_electronice():
                 div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
                 [data-testid="stTextInput"],
                 div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stMarkdownContainer"] .el-col-dreapta-30)
-                [data-testid="stSelectboxF"] {
+                [data-testid="stSelectbox"] {
                     max-width: 22ch !important;
                 }
             </style>
@@ -281,37 +331,59 @@ def render_reparatii_electronice():
             unsafe_allow_html=True,
         )
 
+        k_piesa, val_piesa = _lega_camp("piesa_subansamblu", "")
+        k_defect, val_defect = _lega_camp("defect_reclamat", "")
+        k_stare, val_stare = _lega_camp("stare_finala", OPT_STARI_FINALE[0])
+        k_tehn, val_tehn = _lega_camp("tehnician", tehnician_def_el)
+        k_verif, val_verif = _lega_camp("verificator", "Client")
+
         c1, c2 = st.columns([2.35, 1.0])
         with c1:
             piesa_subansamblu = st.text_input(
                 "Piesă sau Subansamblu (ex: Placă de bază CNC, Invertor, Unitate comandă)",
-                value=str(draft.get("piesa_subansamblu", "")),
+                value=str(val_piesa),
+                key=k_piesa,
+                on_change=_sincronizeaza_camp,
+                args=("piesa_subansamblu",),
             )
             draft["piesa_subansamblu"] = piesa_subansamblu
 
             defect_reclamat = st.text_area(
                 "Defect Reclamat & Jurnal Intervenție / Etape (poți completa pe mai multe zile)",
-                value=str(draft.get("defect_reclamat", "")),
+                value=str(val_defect),
                 height=360,
+                key=k_defect,
+                on_change=_sincronizeaza_camp,
+                args=("defect_reclamat",),
             )
             draft["defect_reclamat"] = defect_reclamat
         with c2:
             st.markdown('<span class="el-col-dreapta-30" style="display:none;"></span>', unsafe_allow_html=True)
 
-            stare_draft = _limita_30(draft.get("stare_finala", OPT_STARI_FINALE[0]))
+            stare_draft = _limita_30(val_stare)
             if stare_draft and stare_draft not in OPT_STARI_FINALE:
                 OPT_STARI_FINALE.append(stare_draft)
             idx_st = OPT_STARI_FINALE.index(stare_draft) if stare_draft in OPT_STARI_FINALE else 0
             stare_finala = _limita_30(
-                st.selectbox("Stare Reparație (max 30 caractere)", options=OPT_STARI_FINALE, index=idx_st)
+                st.selectbox(
+                    "Stare Reparație (max 30 caractere)",
+                    options=OPT_STARI_FINALE,
+                    index=idx_st,
+                    key=k_stare,
+                    on_change=_sincronizeaza_camp,
+                    args=("stare_finala",),
+                )
             )
             draft["stare_finala"] = stare_finala
 
             tehnician = _limita_30(
                 st.text_input(
                     "Tehnician Electronică (max 30 caractere)",
-                    value=_limita_30(draft.get("tehnician", tehnician_def_el)),
+                    value=_limita_30(val_tehn),
                     max_chars=MAX_LEN_DREAPTA,
+                    key=k_tehn,
+                    on_change=_sincronizeaza_camp,
+                    args=("tehnician",),
                 )
             )
             draft["tehnician"] = tehnician
@@ -319,8 +391,11 @@ def render_reparatii_electronice():
             verificator = _limita_30(
                 st.text_input(
                     "Verificat de (max 30 caractere)",
-                    value=_limita_30(draft.get("verificator", "Client")),
+                    value=_limita_30(val_verif),
                     max_chars=MAX_LEN_DREAPTA,
+                    key=k_verif,
+                    on_change=_sincronizeaza_camp,
+                    args=("verificator",),
                 )
             )
             draft["verificator"] = verificator
@@ -407,7 +482,13 @@ def render_reparatii_electronice():
                 st.rerun()
 
         if salveaza_el:
-            if not piesa_subansamblu.strip():
+            piesa_cur = str(st.session_state.get(k_piesa, piesa_subansamblu) or "").strip()
+            defect_cur = str(st.session_state.get(k_defect, defect_reclamat) or "")
+            stare_finala_cur = _limita_30(st.session_state.get(k_stare, stare_finala))
+            tehnician_cur = _limita_30(st.session_state.get(k_tehn, tehnician))
+            verificator_cur = _limita_30(st.session_state.get(k_verif, verificator))
+
+            if not piesa_cur:
                 st.error("Completați denumirea piesei sau subansamblului.")
             else:
                 df_comp_cur = edited_comp_df.dropna(subset=[COL_COMP_DEN]).copy()
@@ -425,17 +506,13 @@ def render_reparatii_electronice():
                         COL_COMP_STARE: stare_c,
                     })
 
-                stare_finala_cur = _limita_30(stare_finala)
-                tehnician_cur = _limita_30(tehnician)
-                verificator_cur = _limita_30(verificator)
-
                 payload = {
                     "firma_id": firma_obj["id"],
                     "masina_id": masina_obj_id,
                     "firma_nume": sel_firma,
                     "masina_nume": sel_masina,
-                    "piesa_subansamblu": piesa_subansamblu.strip(),
-                    "defect_reclamat": defect_reclamat,
+                    "piesa_subansamblu": piesa_cur,
+                    "defect_reclamat": defect_cur,
                     "componente_json": componente_valide,
                     "stare_finala": stare_finala_cur,
                     "tehnician": tehnician_cur,
@@ -455,8 +532,8 @@ def render_reparatii_electronice():
                         try:
                             comp_txt = _formateaza_componente_index(componente_valide)
                             parti_doc = []
-                            if str(defect_reclamat or "").strip():
-                                parti_doc.append(f"Defect reclamat: {str(defect_reclamat).strip()}")
+                            if defect_cur.strip():
+                                parti_doc.append(f"Defect reclamat: {defect_cur.strip()}")
                             parti_doc.append(f"Stare finală: {stare_finala_cur}")
                             if comp_txt:
                                 parti_doc.append(f"Piese necesare: {comp_txt}")
@@ -465,8 +542,8 @@ def render_reparatii_electronice():
                                 "firma_id": firma_obj["id"],
                                 "masina_id": masina_obj_id,
                                 "categorie": "CNC",
-                                "tip_sistem": piesa_subansamblu.strip(),
-                                "titlu": f"{piesa_subansamblu.strip()} ({sel_masina}) — {stare_finala_cur}",
+                                "tip_sistem": piesa_cur,
+                                "titlu": f"{piesa_cur} ({sel_masina}) — {stare_finala_cur}",
                                 "gdrive_file_id": "",
                                 "gdrive_url": "",
                                 "tip_fisier": "doc",
@@ -485,8 +562,8 @@ def render_reparatii_electronice():
                         "id": rid,
                         "client": sel_firma,
                         "masina": sel_masina,
-                        "piesa_subansamblu": piesa_subansamblu.strip(),
-                        "defect_reclamat": defect_reclamat,
+                        "piesa_subansamblu": piesa_cur,
+                        "defect_reclamat": defect_cur,
                         "componente_json": componente_valide,
                         "stare_finala": stare_finala_cur,
                         "tehnician": tehnician_cur,
@@ -552,7 +629,8 @@ def render_reparatii_electronice():
         with st.expander(titlu_exp, expanded=False):
             st.write(f"**Mașină:** {f_row.get('masina_nume') or 'General / Fără mașină'}")
             st.write(f"**Tehnician:** {_limita_30(f_row.get('tehnician') or '-')} | **Verificat de:** {_limita_30(f_row.get('verificator') or '-')}")
-            st.write(f"**Defect / Note / Etape:**\n{f_row.get('defect_reclamat') or '-'}")
+            st.markdown("**Defect / Note / Etape:**")
+            st.text(f_row.get("defect_reclamat") or "-")
 
             comp_f = _parseaza_componente_json(f_row.get("componente_json"))
             if comp_f:
@@ -586,4 +664,3 @@ def render_reparatii_electronice():
                         mime="application/pdf",
                         key=f"dl_fisa_el_{fid}",
                     )
-
