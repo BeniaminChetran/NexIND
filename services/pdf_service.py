@@ -10,7 +10,151 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
-    Spacer,
+    Spacer,# ------------------------------------------
+# -------services/pdf_service.py------------
+# ------------------------------------------
+
+import json
+from fpdf import FPDF
+
+
+def _safe_txt(val) -> str:
+    s = "" if val is None else str(val)
+    return s.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _extrage_randuri_operatiuni(fisa_data: dict) -> list[dict]:
+    if isinstance(fisa_data.get("operatiuni"), list) and fisa_data["operatiuni"]:
+        return fisa_data["operatiuni"]
+    chk = fisa_data.get("checklist_json") or {}
+    if isinstance(chk, str):
+        try:
+            chk = json.loads(chk)
+        except Exception:
+            chk = {}
+    if isinstance(chk, dict):
+        fisa_spec = chk.get("fisa_specifica_utilaj")
+        if isinstance(fisa_spec, dict) and isinstance(fisa_spec.get("randuri"), list):
+            return fisa_spec["randuri"]
+    return []
+
+
+def genereaza_pdf_mentenanta(fisa_data: dict) -> bytes:
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+
+    frecventa = str(fisa_data.get("frecventa") or "Lunară").strip()
+    nr_fisa = str(fisa_data.get("nr_fisa") or fisa_data.get("id") or "-").strip()
+    titlu_doc = str(fisa_data.get("titlu_pdf_operatiuni") or "").strip()
+    if not titlu_doc:
+        titlu_doc = (
+            f"Operatiuni de intretinere {frecventa.lower()} la masina "
+            f"{fisa_data.get('masina_nume') or '-'} tip {fisa_data.get('tip_masina') or fisa_data.get('producator_model') or '-'} "
+            f"{str(fisa_data.get('data_interventie') or '')[:10]} {fisa_data.get('firma_nume') or '-'} "
+            f"- {frecventa} - {nr_fisa}"
+        )
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.multi_cell(0, 7, _safe_txt(titlu_doc))
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(95, 6, _safe_txt(f"Tip mentenanta realizata: {frecventa}"), border=1)
+    pdf.cell(95, 6, _safe_txt(f"Nr. fisa: {nr_fisa}"), border=1, ln=True)
+
+    pdf.set_font("Helvetica", size=9)
+    pdf.cell(95, 6, _safe_txt(f"Client: {fisa_data.get('firma_nume') or '-'}"), border=1)
+    pdf.cell(95, 6, _safe_txt(f"Data: {str(fisa_data.get('data_interventie') or '')[:10]}"), border=1, ln=True)
+
+    pdf.cell(95, 6, _safe_txt(f"Masina: {fisa_data.get('masina_nume') or '-'}"), border=1)
+    pdf.cell(95, 6, _safe_txt(f"Tip masina: {fisa_data.get('tip_masina') or fisa_data.get('producator_model') or '-'}"), border=1, ln=True)
+
+    pdf.cell(95, 6, _safe_txt(f"Stare initiala: {fisa_data.get('stare_initiala') or '-'}"), border=1)
+    pdf.cell(95, 6, _safe_txt(f"Stare finala: {fisa_data.get('stare_finala') or '-'}"), border=1, ln=True)
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 7, _safe_txt("Operatiuni mentenanta efectuate"), ln=True)
+
+    # Antet tabel (latime totala 190 mm)
+    col_w = [12, 68, 42, 22, 16, 30]
+    headers = ["Nr.", "Operatiune / Verificare", "Parametru", "Valoare", "UM", "Efectuat"]
+    pdf.set_font("Helvetica", "B", 8)
+    for w, h in zip(col_w, headers):
+        pdf.cell(w, 6, _safe_txt(h), border=1)
+    pdf.ln()
+
+    randuri = _extrage_randuri_operatiuni(fisa_data)
+    pdf.set_font("Helvetica", size=8)
+    if not randuri:
+        pdf.cell(sum(col_w), 7, _safe_txt("Nu exista operatiuni inregistrate."), border=1, ln=True)
+    else:
+        for idx, r in enumerate(randuri, start=1):
+            ord_v = str(r.get("Ordine") or idx)
+            op_v = str(r.get("Operațiune / Verificare") or r.get("operatiune") or "")
+            prm_v = str(r.get("Denumire parametru") or r.get("parametru") or "")
+            val_v = str(r.get("Valoare") or r.get("valoare") or "")
+            um_v = str(r.get("UM") or r.get("um") or "")
+            ef_raw = r.get("Efectuat", True)
+            ef_v = "DA" if (ef_raw is True or str(ef_raw).strip().lower() in ("true", "1", "da", "yes")) else "NU"
+
+            x_start = pdf.get_x()
+            y_start = pdf.get_y()
+            line_h = 5
+            nb_lines = max(
+                1,
+                len(_safe_txt(op_v)) // 36 + 1,
+                len(_safe_txt(prm_v)) // 22 + 1,
+            )
+            row_h = max(6, nb_lines * line_h)
+
+            if y_start + row_h > pdf.page_break_trigger:
+                pdf.add_page()
+                x_start = pdf.get_x()
+                y_start = pdf.get_y()
+
+            pdf.rect(x_start, y_start, col_w[0], row_h)
+            pdf.rect(x_start + col_w[0], y_start, col_w[1], row_h)
+            pdf.rect(x_start + sum(col_w[:2]), y_start, col_w[2], row_h)
+            pdf.rect(x_start + sum(col_w[:3]), y_start, col_w[3], row_h)
+            pdf.rect(x_start + sum(col_w[:4]), y_start, col_w[4], row_h)
+            pdf.rect(x_start + sum(col_w[:5]), y_start, col_w[5], row_h)
+
+            pdf.set_xy(x_start + 1, y_start + 1)
+            pdf.cell(col_w[0] - 2, line_h, _safe_txt(ord_v))
+
+            pdf.set_xy(x_start + col_w[0] + 1, y_start + 1)
+            pdf.multi_cell(col_w[1] - 2, line_h, _safe_txt(op_v))
+
+            pdf.set_xy(x_start + sum(col_w[:2]) + 1, y_start + 1)
+            pdf.multi_cell(col_w[2] - 2, line_h, _safe_txt(prm_v))
+
+            pdf.set_xy(x_start + sum(col_w[:3]) + 1, y_start + 1)
+            pdf.cell(col_w[3] - 2, line_h, _safe_txt(val_v))
+
+            pdf.set_xy(x_start + sum(col_w[:4]) + 1, y_start + 1)
+            pdf.cell(col_w[4] - 2, line_h, _safe_txt(um_v))
+
+            pdf.set_xy(x_start + sum(col_w[:5]) + 1, y_start + 1)
+            pdf.cell(col_w[5] - 2, line_h, _safe_txt(ef_v))
+
+            pdf.set_xy(x_start, y_start + row_h)
+
+    if str(fisa_data.get("recomandari_iiot") or "").strip():
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, _safe_txt("Recomandari / Observatii"), ln=True)
+        pdf.set_font("Helvetica", size=9)
+        pdf.multi_cell(0, 5, _safe_txt(fisa_data.get("recomandari_iiot")))
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", size=9)
+    pdf.cell(95, 7, _safe_txt(f"Tehnician: {fisa_data.get('tehnician') or '-'}"), border=1)
+    pdf.cell(95, 7, _safe_txt(f"Beneficiar: {fisa_data.get('verificator') or '-'}"), border=1, ln=True)
+
+    out = pdf.output(dest="S")
+    return out.encode("latin-1") if isinstance(out, str) else bytes(out)
     Table,
     TableStyle,
     HRFlowable,

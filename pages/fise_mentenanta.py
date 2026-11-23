@@ -11,7 +11,7 @@ from repositories.masini_repository import MasiniRepository
 
 FRECVENTE_MENTENANTA = ["Zilnică", "Săptămânală", "Lunară", "Trimestrială", "Anuală"]
 
-CATALOG_OPERATIUNI_PREDEFINITE = [
+CATALOG_OPERATIUNI_INITIAL = [
     {"sistem": "1.A Electric (LOTO)", "operatiune": "Verificarea și curățarea ștecherelor, prizelor industriale și conexiunilor principale de alimentare; aplicare spray de contact.", "parametru": "", "valoare": "", "um": "", "drive": ""},
     {"sistem": "1.A Electric (LOTO)", "operatiune": "Curățarea tablourilor electrice de praf/șpan, strângerea conexiunilor și a șuruburilor de forță/comandă, aplicare spray de contact.", "parametru": "", "valoare": "", "um": "", "drive": ""},
     {"sistem": "1.A Electric (LOTO)", "operatiune": "Decuplarea pe rând a conectorilor priză-ștecher / mufe industriale (Harting, M12), curățare și recuplare securizată.", "parametru": "", "valoare": "", "um": "", "drive": ""},
@@ -52,51 +52,35 @@ CATALOG_OPERATIUNI_PREDEFINITE = [
     {"sistem": "6. Auxiliare", "operatiune": "Instalații de afumare / exhaustare: verificare obturare conducte evacuare, curățare depuneri și vane de admisie.", "parametru": "", "valoare": "", "um": "", "drive": ""},
 ]
 
-FISE_GENERALE_IMPLICITE = {f: [] for f in FRECVENTE_MENTENANTA}
 
-
-def construieste_nume_fisa(
-    denumire_masina: str,
-    tip_masina: str,
-    frecventa: str,
-    este_generala: bool = False,
-) -> str:
-    frec = str(frecventa or "Lunară").strip()
-    if este_generala:
-        return f"Fișă Generală + {frec}"
+def construieste_nume_fisa_masina(denumire_masina: str, tip_masina: str, frecventa: str) -> str:
     parti = [
         str(denumire_masina or "").strip(),
         str(tip_masina or "").strip(),
-        frec,
+        str(frecventa or "Lunară").strip(),
     ]
-    parti_valide = [p for p in parti if p]
-    return " + ".join(parti_valide) if parti_valide else f"Fișă Mentenanță + {frec}"
+    valide = [p for p in parti if p]
+    return " - ".join(valide) if valide else f"Fișă Mentenanță - {str(frecventa or 'Lunară').strip()}"
 
 
-def _asigura_tabela_fise():
-    if st.session_state.get("_fise_mp_tabela_verificata"):
+def _asigura_tabele_fise_si_catalog():
+    if st.session_state.get("_fise_tip_db_ok"):
         return
     with db_cursor() as c:
         c.execute("""
-            CREATE TABLE IF NOT EXISTS fise_mentenanta_preventiva (
+            CREATE TABLE IF NOT EXISTS fise_mentenanta_tip_masina (
                 id SERIAL PRIMARY KEY,
-                este_generala BOOLEAN NOT NULL DEFAULT FALSE,
                 denumire_masina VARCHAR(255) NOT NULL DEFAULT '',
                 tip_masina VARCHAR(255) NOT NULL DEFAULT '',
-                frecventa VARCHAR(50) NOT NULL,
+                frecventa VARCHAR(50) NOT NULL DEFAULT 'Lunară',
                 nume_fisa VARCHAR(255) NOT NULL DEFAULT '',
                 pasi_json TEXT NOT NULL DEFAULT '[]',
                 actualizat_la TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         c.execute("""
-            ALTER TABLE fise_mentenanta_preventiva
-            ADD COLUMN IF NOT EXISTS nume_fisa VARCHAR(255) NOT NULL DEFAULT ''
-        """)
-        c.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_fisa_mentenanta_cheie
-            ON fise_mentenanta_preventiva (
-                este_generala,
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_fisa_tip_masina_frecventa
+            ON fise_mentenanta_tip_masina (
                 LOWER(TRIM(denumire_masina)),
                 LOWER(TRIM(tip_masina)),
                 LOWER(TRIM(frecventa))
@@ -116,9 +100,9 @@ def _asigura_tabela_fise():
         """)
         c.execute("SELECT COUNT(*) AS cnt FROM catalog_operatiuni_mentenanta")
         row_cnt = c.fetchone()
-        cnt_val = int(row_cnt["cnt"] if isinstance(row_cnt, dict) else row_cnt[0]) if row_cnt else 0
-        if cnt_val == 0:
-            for it in CATALOG_OPERATIUNI_PREDEFINITE:
+        cnt = int(row_cnt["cnt"] if isinstance(row_cnt, dict) else row_cnt[0]) if row_cnt else 0
+        if cnt == 0:
+            for it in CATALOG_OPERATIUNI_INITIAL:
                 c.execute("""
                     INSERT INTO catalog_operatiuni_mentenanta
                         (sistem, operatiune, parametru, valoare, um, drive)
@@ -131,20 +115,19 @@ def _asigura_tabela_fise():
                     it.get("um", ""),
                     it.get("drive", ""),
                 ))
-    st.session_state["_fise_mp_tabela_verificata"] = True
+    st.session_state["_fise_tip_db_ok"] = True
 
 
 @st.cache_data(ttl=120)
 def incarca_catalog_operatiuni_db() -> list[dict]:
-    _asigura_tabela_fise()
+    _asigura_tabele_fise_si_catalog()
     with db_cursor() as c:
         c.execute("""
             SELECT id, sistem, operatiune, parametru, valoare, um, drive
             FROM catalog_operatiuni_mentenanta
             ORDER BY id ASC
         """)
-        rows = [dict(r) for r in (c.fetchall() or [])]
-    return rows
+        return [dict(r) for r in (c.fetchall() or [])]
 
 
 def adauga_operatiune_in_catalog_db(
@@ -155,7 +138,7 @@ def adauga_operatiune_in_catalog_db(
     um: str = "",
     drive: str = "",
 ):
-    _asigura_tabela_fise()
+    _asigura_tabele_fise_si_catalog()
     op_clean = str(operatiune or "").strip()
     if not op_clean:
         return
@@ -176,10 +159,10 @@ def adauga_operatiune_in_catalog_db(
 
 
 @st.cache_data(ttl=180)
-def _incarca_catalog_masini_fara_firma() -> list[dict]:
+def _incarca_masini_catalog() -> list[dict]:
     masini = MasiniRepository.get_all() or []
     vazute = set()
-    rezultat = []
+    rez = []
     for m in masini:
         den = str(m.get("denumire") or "").strip()
         tip = str(m.get("tip_masina") or "").strip()
@@ -188,19 +171,19 @@ def _incarca_catalog_masini_fara_firma() -> list[dict]:
         cheie = (den.lower(), tip.lower())
         if cheie not in vazute:
             vazute.add(cheie)
-            rezultat.append({"denumire_masina": den, "tip_masina": tip})
-    rezultat.sort(key=lambda x: (x["denumire_masina"].lower(), x["tip_masina"].lower()))
-    return rezultat
+            rez.append({"denumire_masina": den, "tip_masina": tip})
+    rez.sort(key=lambda x: (x["denumire_masina"].lower(), x["tip_masina"].lower()))
+    return rez
 
 
 @st.cache_data(ttl=120)
-def _incarca_fise_din_db() -> list[dict]:
-    _asigura_tabela_fise()
+def _incarca_fise_tip_db() -> list[dict]:
+    _asigura_tabele_fise_si_catalog()
     with db_cursor() as c:
         c.execute("""
-            SELECT id, este_generala, denumire_masina, tip_masina, frecventa, nume_fisa, pasi_json, actualizat_la
-            FROM fise_mentenanta_preventiva
-            ORDER BY este_generala DESC, denumire_masina ASC, tip_masina ASC, frecventa ASC
+            SELECT id, denumire_masina, tip_masina, frecventa, nume_fisa, pasi_json, actualizat_la
+            FROM fise_mentenanta_tip_masina
+            ORDER BY denumire_masina ASC, tip_masina ASC, frecventa ASC
         """)
         rows = [dict(r) for r in (c.fetchall() or [])]
     for r in rows:
@@ -216,11 +199,10 @@ def _incarca_fise_din_db() -> list[dict]:
         else:
             r["pasi"] = []
         if not str(r.get("nume_fisa") or "").strip():
-            r["nume_fisa"] = construieste_nume_fisa(
+            r["nume_fisa"] = construieste_nume_fisa_masina(
                 r.get("denumire_masina") or "",
                 r.get("tip_masina") or "",
                 r.get("frecventa") or "",
-                este_generala=bool(r.get("este_generala")),
             )
     return rows
 
@@ -238,39 +220,13 @@ def _normalizare_pasi_df(pasi: list[dict]) -> pd.DataFrame:
     randuri = []
     for idx, p in enumerate(pasi, start=1):
         if isinstance(p, dict):
-            doc_link = (
-                p.get("Documentație")
-                or p.get("Documentație Drive")
-                or p.get("Documentatie Drive")
-                or p.get("documentatie_drive")
-                or p.get("drive_url")
-                or ""
-            )
-            param_val = (
-                p.get("Denumire parametru")
-                or p.get("Piese / Parametri Măsurați")
-                or p.get("Parametru")
-                or p.get("parametru")
-                or ""
-            )
-            val_obs = (
-                p.get("Valoare")
-                or p.get("Valori / Observații")
-                or p.get("valoare")
-                or ""
-            )
-            um_val = (
-                p.get("UM")
-                or p.get("um")
-                or ""
-            )
             randuri.append({
                 "Ordine": int(p.get("Ordine") or p.get("ordine") or idx),
                 "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or p.get("operatiune") or p.get("pas") or ""),
-                "Denumire parametru": str(param_val or ""),
-                "Valoare": str(val_obs or ""),
-                "UM": str(um_val or ""),
-                "Documentație": str(doc_link or "").strip(),
+                "Denumire parametru": str(p.get("Denumire parametru") or p.get("parametru") or ""),
+                "Valoare": str(p.get("Valoare") or p.get("valoare") or ""),
+                "UM": str(p.get("UM") or p.get("um") or ""),
+                "Documentație": str(p.get("Documentație") or p.get("Documentație Drive") or p.get("documentatie_drive") or ""),
             })
         else:
             randuri.append({
@@ -288,11 +244,11 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
     pasi = []
     for i, (_, row) in enumerate(df.iterrows(), start=1):
         op = str(row.get("Operațiune / Verificare") or "").strip()
-        prm = str(row.get("Denumire parametru") or row.get("Piese / Parametri Măsurați") or "").strip()
-        val = str(row.get("Valoare") or row.get("Valori / Observații") or "").strip()
+        prm = str(row.get("Denumire parametru") or "").strip()
+        val = str(row.get("Valoare") or "").strip()
         um = str(row.get("UM") or "").strip()
-        doc_link = str(row.get("Documentație") or row.get("Documentație Drive") or "").strip()
-        if not op and not prm and not val and not um and not doc_link:
+        doc = str(row.get("Documentație") or "").strip()
+        if not op and not prm and not val and not um and not doc:
             continue
         try:
             ord_val = int(row.get("Ordine") or i)
@@ -304,35 +260,31 @@ def _df_la_pasi(df: pd.DataFrame) -> list[dict]:
             "Denumire parametru": prm,
             "Valoare": val,
             "UM": um,
-            "Documentație": doc_link,
+            "Documentație": doc,
         })
     return pasi
 
 
-def _salveaza_fisa(
-    este_generala: bool,
+def _salveaza_fisa_tip_masina(
     denumire_masina: str,
     tip_masina: str,
     frecventa: str,
     pasi: list[dict],
     nume_fisa: str = "",
 ):
-    _asigura_tabela_fise()
-    den_clean = "" if este_generala else str(denumire_masina or "").strip()
-    tip_clean = "" if este_generala else str(tip_masina or "").strip()
+    _asigura_tabele_fise_si_catalog()
+    den_clean = str(denumire_masina or "").strip()
+    tip_clean = str(tip_masina or "").strip()
     frec_clean = str(frecventa or "Lunară").strip()
-    nume_clean = str(nume_fisa or "").strip() or construieste_nume_fisa(
-        den_clean, tip_clean, frec_clean, este_generala=este_generala
-    )
+    nume_clean = str(nume_fisa or "").strip() or construieste_nume_fisa_masina(den_clean, tip_clean, frec_clean)
     payload_json = json.dumps(pasi, ensure_ascii=False)
 
     with db_cursor() as c:
         c.execute("""
-            INSERT INTO fise_mentenanta_preventiva
-                (este_generala, denumire_masina, tip_masina, frecventa, nume_fisa, pasi_json, actualizat_la)
-            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            INSERT INTO fise_mentenanta_tip_masina
+                (denumire_masina, tip_masina, frecventa, nume_fisa, pasi_json, actualizat_la)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (
-                este_generala,
                 LOWER(TRIM(denumire_masina)),
                 LOWER(TRIM(tip_masina)),
                 LOWER(TRIM(frecventa))
@@ -343,31 +295,18 @@ def _salveaza_fisa(
                 nume_fisa = EXCLUDED.nume_fisa,
                 pasi_json = EXCLUDED.pasi_json,
                 actualizat_la = CURRENT_TIMESTAMP
-        """, (bool(este_generala), den_clean, tip_clean, frec_clean, nume_clean, payload_json))
+        """, (den_clean, tip_clean, frec_clean, nume_clean, payload_json))
 
-    _incarca_fise_din_db.clear()
+    _incarca_fise_tip_db.clear()
 
 
-def _gaseste_fisa(
-    fise: list[dict],
-    este_generala: bool,
-    denumire_masina: str = "",
-    tip_masina: str = "",
-    frecventa: str = "",
-):
-    frec_l = frecventa.strip().lower()
-    if este_generala:
-        for f in fise:
-            if bool(f.get("este_generala")) and str(f.get("frecventa") or "").strip().lower() == frec_l:
-                return f
-        return None
-
+def _gaseste_fisa_tip(fise: list[dict], denumire_masina: str, tip_masina: str, frecventa: str):
     den_l = denumire_masina.strip().lower()
     tip_l = tip_masina.strip().lower()
+    frec_l = frecventa.strip().lower()
     for f in fise:
         if (
-            not bool(f.get("este_generala"))
-            and str(f.get("denumire_masina") or "").strip().lower() == den_l
+            str(f.get("denumire_masina") or "").strip().lower() == den_l
             and str(f.get("tip_masina") or "").strip().lower() == tip_l
             and str(f.get("frecventa") or "").strip().lower() == frec_l
         ):
@@ -375,38 +314,27 @@ def _gaseste_fisa(
     return None
 
 
-def obtine_fisa_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: str) -> dict:
-    fise_db = _incarca_fise_din_db()
-    frec_clean = str(frecventa or "Lunară").strip()
+def obtine_fisa_tip_pentru_utilaj(denumire_masina: str, tip_masina: str, frecventa: str) -> dict:
+    fise_db = _incarca_fise_tip_db()
     den_clean = str(denumire_masina or "").strip()
     tip_clean = str(tip_masina or "").strip()
+    frec_clean = str(frecventa or "Lunară").strip()
 
-    fisa_prop = _gaseste_fisa(
-        fise_db,
-        este_generala=False,
-        denumire_masina=den_clean,
-        tip_masina=tip_clean,
-        frecventa=frec_clean,
-    )
-    if fisa_prop:
+    fisa = _gaseste_fisa_tip(fise_db, den_clean, tip_clean, frec_clean)
+    if fisa:
         return {
-            "sursa": "proprie",
-            "frecventa": frec_clean,
             "denumire_masina": den_clean,
             "tip_masina": tip_clean,
-            "nume_fisa": fisa_prop.get("nume_fisa") or construieste_nume_fisa(den_clean, tip_clean, frec_clean, False),
-            "pasi": fisa_prop.get("pasi") or [],
+            "frecventa": frec_clean,
+            "nume_fisa": fisa.get("nume_fisa") or construieste_nume_fisa_masina(den_clean, tip_clean, frec_clean),
+            "pasi": fisa.get("pasi") or [],
         }
-
-    fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_clean)
-    pasi_gen = (fisa_gen.get("pasi") if fisa_gen else None) or []
     return {
-        "sursa": "generala",
-        "frecventa": frec_clean,
         "denumire_masina": den_clean,
         "tip_masina": tip_clean,
-        "nume_fisa": (fisa_gen.get("nume_fisa") if fisa_gen else None) or construieste_nume_fisa(den_clean, tip_clean, frec_clean, False),
-        "pasi": pasi_gen,
+        "frecventa": frec_clean,
+        "nume_fisa": construieste_nume_fisa_masina(den_clean, tip_clean, frec_clean),
+        "pasi": [],
     }
 
 
@@ -421,7 +349,7 @@ def _editor_config_fise():
     }
 
 
-def _salveaza_fisier_documentatie_local(uploaded_file, prefix_key: str) -> str:
+def _salveaza_fisier_doc_local(uploaded_file, prefix_key: str) -> str:
     folder = Path("uploads/documentatie_mentenanta")
     folder.mkdir(parents=True, exist_ok=True)
     safe_name = Path(uploaded_file.name).name.replace(" ", "_")
@@ -437,11 +365,10 @@ def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
     st.markdown("#### 📎 Încarcă / Setează operațiune, denumire parametru, valoare, UM și documentație")
     opt_dict = {"-- Introdu manual / copy-paste --": None}
     for item in catalog_db:
-        lbl = f"[{item['sistem']}] {item['operatiune']}"
-        opt_dict[lbl] = item
+        opt_dict[f"[{item['sistem']}] {item['operatiune']}"] = item
 
     sel_op_label = st.selectbox(
-        "Alege operațiunea din DB (sau lasă manual / copy-paste)",
+        "Alege operațiunea din listă (sau introdu manual / copy-paste)",
         options=list(opt_dict.keys()),
         key=f"sel_op_cat_{prefix_key}",
     )
@@ -458,21 +385,21 @@ def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
         param_text = st.text_input(
             "Denumire parametru",
             value=(item_cat.get("parametru") or "" if item_cat else ""),
-            placeholder="ex: Tensiune / Presiune",
+            placeholder="ex: Tensiune / Piesă",
             key=f"inp_param_txt_{prefix_key}_{sel_op_label[:25]}",
         ).strip()
     with c3:
         val_text = st.text_input(
             "Valoare",
             value=(item_cat.get("valoare") or "" if item_cat else ""),
-            placeholder="ex: 24.0 / 6.2",
+            placeholder="ex: 24.0 / 1",
             key=f"inp_val_txt_{prefix_key}_{sel_op_label[:25]}",
         ).strip()
     with c4:
         um_text = st.text_input(
             "UM",
             value=(item_cat.get("um") or "" if item_cat else ""),
-            placeholder="ex: V / bar",
+            placeholder="ex: V / buc",
             key=f"inp_um_txt_{prefix_key}_{sel_op_label[:25]}",
         ).strip()
 
@@ -486,7 +413,7 @@ def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
         ).strip()
     with d2:
         fisier_doc = st.file_uploader(
-            "Sau încarcă documentație",
+            "Sau încarcă fișier documentație",
             type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
             key=f"up_doc_ops_{prefix_key}",
         )
@@ -503,7 +430,7 @@ def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
             return
         doc_final = link_drive_nou
         if fisier_doc is not None:
-            doc_final = _salveaza_fisier_documentatie_local(fisier_doc, f"{prefix_key}_op{len(curente)+1}")
+            doc_final = _salveaza_fisier_doc_local(fisier_doc, f"{prefix_key}_op{len(curente)+1}")
         if salveaza_in_db and item_cat is None:
             adauga_operatiune_in_catalog_db(
                 sistem="Personalizat",
@@ -553,32 +480,26 @@ def _render_controale_editare_operatiuni(state_key_pasi: str, prefix_key: str):
 
 
 def render_fise_mentenanta():
-    st.subheader("📋 Creare & Administrare Fișe de Mentenanță Preventivă")
+    st.subheader("📋 Fișe de Mentenanță Tip pe Mașină")
     is_unlocked = bool(st.session_state.get("is_unlocked", False))
 
     if not is_unlocked:
-        st.warning(
-            "🔒 **Sistemul este blocat.** Pentru a vedea și edita listele de operațiuni de mentenanță, "
-            "deblochează sistemul introducând parola (din **SistemAdmin → Deblocare**)."
-        )
+        st.warning("dacă vrei să editezi fișele de întreținere deblochează sistemul")
         return
 
-    st.caption("🔓 **Sistem deblocat:** operațiunile se preiau din baza de date, poți adăuga manual / copy-paste, atașa documentație, completa Denumire parametru, Valoare și UM și șterge una sau mai multe operațiuni deodată.")
+    fise_db = _incarca_fise_tip_db()
+    catalog_masini = _incarca_masini_catalog()
 
-    fise_db = _incarca_fise_din_db()
-    catalog_masini = _incarca_catalog_masini_fara_firma()
-
-    tab_proprie, tab_gen, tab_lista = st.tabs([
-        "🧩 Creare / Editare Fișă Mașină",
-        "📄 Fișă Generală (pe frecvență)",
-        "📚 Toate Fișele Salvate",
+    tab_edit, tab_lista = st.tabs([
+        "🧩 Fișă Tip Mașină (fără client)",
+        "📚 Fișe Tip Salvate în DB",
     ])
 
-    with tab_proprie:
-        optiuni_preset = ["-- Introdu manual --"] + [
+    with tab_edit:
+        opt_preset = ["-- Introdu manual --"] + [
             f"{x['denumire_masina']} | {x['tip_masina']}" for x in catalog_masini
         ]
-        sel_preset = st.selectbox("Precompletare din utilajele existente (fără firmă)", options=optiuni_preset, key="fmp_preset")
+        sel_preset = st.selectbox("Selectează mașină și tip mașină", options=opt_preset, key="fmp_preset")
 
         def_den = ""
         def_tip = ""
@@ -593,99 +514,56 @@ def render_fise_mentenanta():
         with c2:
             tip_masina = st.text_input("Tip mașină *", value=def_tip, key="fmp_tip_masina").strip()
         with c3:
-            frec_prop = st.selectbox("Tip întreținere / Frecvență", options=FRECVENTE_MENTENANTA, key="fmp_prop_frec")
+            frec_sel = st.selectbox("Tip mentenanță / Frecvență", options=FRECVENTE_MENTENANTA, key="fmp_frec")
 
-        fisa_prop = _gaseste_fisa(
-            fise_db,
-            este_generala=False,
-            denumire_masina=den_masina,
-            tip_masina=tip_masina,
-            frecventa=frec_prop,
-        )
-
-        nume_auto = construieste_nume_fisa(den_masina, tip_masina, frec_prop, este_generala=False)
-        nume_init = (fisa_prop.get("nume_fisa") if fisa_prop else "") or nume_auto
+        fisa_exs = _gaseste_fisa_tip(fise_db, den_masina, tip_masina, frec_sel)
+        nume_auto = construieste_nume_fisa_masina(den_masina, tip_masina, frec_sel)
         nume_fisa_input = st.text_input(
-            "Denumire fișă (Denumire mașină + Tip mașină + Frecvență)",
-            value=nume_init,
-            key=f"fmp_nume_fisa_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}",
+            "Denumire fișă tip",
+            value=(fisa_exs.get("nume_fisa") if fisa_exs else "") or nume_auto,
+            key=f"fmp_nume_{den_masina.lower()}_{tip_masina.lower()}_{frec_sel.lower()}",
         ).strip() or nume_auto
 
-        state_key_pasi = f"fmp_pasi_lucru_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}"
+        state_key_pasi = f"fmp_pasi_{den_masina.lower()}_{tip_masina.lower()}_{frec_sel.lower()}"
         if state_key_pasi not in st.session_state:
-            st.session_state[state_key_pasi] = list(fisa_prop["pasi"]) if fisa_prop else []
+            st.session_state[state_key_pasi] = list(fisa_exs["pasi"]) if fisa_exs else []
 
         _render_controale_editare_operatiuni(
             state_key_pasi=state_key_pasi,
-            prefix_key=f"prop_{den_masina.lower()}_{tip_masina.lower()}_{frec_prop.lower()}",
+            prefix_key=f"tip_{den_masina.lower()}_{tip_masina.lower()}_{frec_sel.lower()}",
         )
 
-        df_prop_ed = st.data_editor(
+        df_ed = st.data_editor(
             _normalizare_pasi_df(st.session_state[state_key_pasi]),
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config=_editor_config_fise(),
-            key=f"editor_fisa_prop_{state_key_pasi}",
+            key=f"editor_fisa_tip_{state_key_pasi}",
         )
 
-        if st.button("💾 Salvează Fișa de Mentenanță", type="primary", key="btn_salveaza_fisa_prop"):
+        if st.button("💾 Salvează Fișa Tip în DB", type="primary", key="btn_salveaza_fisa_tip"):
             if not den_masina and not tip_masina:
-                st.error("⚠️ Completează cel puțin **Denumirea mașinii** sau **Tipul mașinii**.")
+                st.error("⚠️ Completează Denumirea mașinii și/sau Tipul mașinii.")
             else:
-                pasi_prop_noi = _df_la_pasi(df_prop_ed)
-                st.session_state[state_key_pasi] = pasi_prop_noi
-                _salveaza_fisa(False, den_masina, tip_masina, frec_prop, pasi_prop_noi, nume_fisa=nume_fisa_input)
-                st.success(f"✅ Fișa **„{nume_fisa_input}”** a fost salvată.")
+                pasi_noi = _df_la_pasi(df_ed)
+                st.session_state[state_key_pasi] = pasi_noi
+                _salveaza_fisa_tip_masina(den_masina, tip_masina, frec_sel, pasi_noi, nume_fisa=nume_fisa_input)
+                st.success(f"✅ Fișa tip **„{nume_fisa_input}”** a fost salvată în baza de date.")
                 st.rerun()
-
-    with tab_gen:
-        frec_gen = st.selectbox("Frecvență fișă generală", options=FRECVENTE_MENTENANTA, key="fmp_gen_frec")
-        fisa_gen = _gaseste_fisa(fise_db, este_generala=True, frecventa=frec_gen)
-        pasi_gen_init = fisa_gen["pasi"] if fisa_gen else []
-
-        state_key_gen = f"fmp_pasi_gen_{frec_gen.lower()}"
-        if state_key_gen not in st.session_state:
-            st.session_state[state_key_gen] = list(pasi_gen_init)
-
-        _render_controale_editare_operatiuni(
-            state_key_pasi=state_key_gen,
-            prefix_key=f"gen_{frec_gen.lower()}",
-        )
-
-        df_gen_ed = st.data_editor(
-            _normalizare_pasi_df(st.session_state[state_key_gen]),
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config=_editor_config_fise(),
-            key=f"editor_fisa_gen_{frec_gen}",
-        )
-        if st.button("💾 Salvează Fișa Generală", type="primary", key="btn_salveaza_fisa_gen"):
-            pasi_noi = _df_la_pasi(df_gen_ed)
-            st.session_state[state_key_gen] = pasi_noi
-            _salveaza_fisa(True, "", "", frec_gen, pasi_noi, nume_fisa=construieste_nume_fisa("", "", frec_gen, True))
-            st.success(f"✅ Fișa generală ({frec_gen}) a fost salvată.")
-            st.rerun()
 
     with tab_lista:
         if not fise_db:
-            st.info("Nu există încă fișe salvate în baza de date.")
+            st.info("Nu există fișe tip salvate în baza de date.")
         else:
-            rezumat = [
+            rez = [
                 {
-                    "Denumire fișă": f.get("nume_fisa") or construieste_nume_fisa(
-                        f.get("denumire_masina") or "",
-                        f.get("tip_masina") or "",
-                        f.get("frecventa") or "",
-                        este_generala=bool(f.get("este_generala")),
-                    ),
-                    "Tip fișă": "Generală" if f.get("este_generala") else "Proprie",
-                    "Denumire mașină": "-" if f.get("este_generala") else (f.get("denumire_masina") or "-"),
-                    "Tip mașină": "-" if f.get("este_generala") else (f.get("tip_masina") or "-"),
+                    "Denumire fișă": f.get("nume_fisa"),
+                    "Denumire mașină": f.get("denumire_masina") or "-",
+                    "Tip mașină": f.get("tip_masina") or "-",
                     "Frecvență": f.get("frecventa"),
                     "Nr. operațiuni": len(f.get("pasi") or []),
                 }
                 for f in fise_db
             ]
-            st.dataframe(pd.DataFrame(rezumat), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(rez), hide_index=True, use_container_width=True)
