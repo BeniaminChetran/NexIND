@@ -54,12 +54,14 @@ def _asigura_tabele_fise_si_catalog():
                 parametru VARCHAR(255) NOT NULL DEFAULT '',
                 valoare VARCHAR(120) NOT NULL DEFAULT '',
                 um VARCHAR(50) NOT NULL DEFAULT '',
+                parametri_json TEXT NOT NULL DEFAULT '[]',
                 piese_json TEXT NOT NULL DEFAULT '[]',
                 consumabile_json TEXT NOT NULL DEFAULT '[]',
                 documentatii_json TEXT NOT NULL DEFAULT '[]',
                 creat_la TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS parametri_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS piese_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS consumabile_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS documentatii_json TEXT NOT NULL DEFAULT '[]'")
@@ -76,6 +78,84 @@ def _parse_json_list(val) -> list:
         except Exception:
             return []
     return []
+
+
+def construieste_lista_parametri(
+    parametri_init: list[dict] | None = None,
+    parametru_singur: str = "",
+    valoare_singura: str = "",
+    um_singura: str = "",
+) -> list[dict]:
+    lista = [dict(x) for x in _parse_json_list(parametri_init) if isinstance(x, dict)]
+    prm_s = str(parametru_singur or "").strip()
+    val_s = str(valoare_singura or "").strip()
+    um_s = str(um_singura or "").strip()
+    if not lista and any([prm_s, val_s, um_s]):
+        lista.append({
+            "parametru": prm_s,
+            "valoare": val_s,
+            "um": um_s,
+        })
+    return lista
+
+
+def formateaza_parametri_text(
+    parametri: list[dict] | None,
+    fallback_prm: str = "",
+    fallback_val: str = "",
+    fallback_um: str = "",
+) -> str:
+    linii = []
+    for prm in _parse_json_list(parametri):
+        if not isinstance(prm, dict):
+            continue
+        den = str(prm.get("parametru") or prm.get("denumire") or "").strip()
+        val = str(prm.get("valoare") or "").strip()
+        um = str(prm.get("um") or "").strip()
+        if not any([den, val, um]):
+            continue
+        val_um = f"{val} {um}".strip() if (val or um) else ""
+        if den and val_um:
+            linii.append(f"{den}: {val_um}")
+        elif den:
+            linii.append(den)
+        else:
+            linii.append(val_um)
+    if linii:
+        return "; ".join(linii)
+    f_prm = str(fallback_prm or "").strip()
+    f_val = str(fallback_val or "").strip()
+    f_um = str(fallback_um or "").strip()
+    val_um_f = f"{f_val} {f_um}".strip() if (f_val or f_um) else ""
+    if f_prm and val_um_f:
+        return f"{f_prm}: {val_um_f}"
+    return f_prm or val_um_f
+
+
+def rezuma_parametri_coloane(
+    parametri: list[dict] | None,
+    fallback_prm: str = "",
+    fallback_val: str = "",
+    fallback_um: str = "",
+) -> tuple[str, str, str]:
+    lista = [x for x in _parse_json_list(parametri) if isinstance(x, dict)]
+    if not lista:
+        return str(fallback_prm or "").strip(), str(fallback_val or "").strip(), str(fallback_um or "").strip()
+    if len(lista) == 1:
+        p0 = lista[0]
+        return (
+            str(p0.get("parametru") or p0.get("denumire") or "").strip(),
+            str(p0.get("valoare") or "").strip(),
+            str(p0.get("um") or "").strip(),
+        )
+    den_toate = [str(p.get("parametru") or p.get("denumire") or "").strip() for p in lista if str(p.get("parametru") or p.get("denumire") or "").strip()]
+    val_toate = [str(p.get("valoare") or "").strip() for p in lista if str(p.get("valoare") or "").strip()]
+    um_toate = []
+    for p in lista:
+        u = str(p.get("um") or "").strip()
+        if u and u not in um_toate:
+            um_toate.append(u)
+    return "; ".join(den_toate), "; ".join(val_toate), ", ".join(um_toate)
 
 
 def formateaza_piese_text(piese: list[dict]) -> str:
@@ -134,12 +214,18 @@ def incarca_catalog_operatiuni_db() -> list[dict]:
     with db_cursor() as c:
         c.execute("""
             SELECT id, sistem, operatiune, parametru, valoare, um,
-                   piese_json, consumabile_json, documentatii_json
+                   parametri_json, piese_json, consumabile_json, documentatii_json
             FROM catalog_operatiuni_mentenanta
             ORDER BY sistem ASC, id ASC
         """)
         rows = [dict(r) for r in (c.fetchall() or [])]
     for r in rows:
+        r["parametri"] = construieste_lista_parametri(
+            parametri_init=_parse_json_list(r.get("parametri_json")),
+            parametru_singur=r.get("parametru") or "",
+            valoare_singura=r.get("valoare") or "",
+            um_singura=r.get("um") or "",
+        )
         r["piese"] = _parse_json_list(r.get("piese_json"))
         r["consumabile"] = _parse_json_list(r.get("consumabile_json"))
         r["documentatii"] = _parse_json_list(r.get("documentatii_json"))
@@ -152,6 +238,7 @@ def adauga_operatiune_in_catalog_db(
     parametru: str = "",
     valoare: str = "",
     um: str = "",
+    parametri: list[dict] | None = None,
     piese: list[dict] | None = None,
     consumabile: list[dict] | None = None,
     documentatii: list[dict] | None = None,
@@ -160,18 +247,21 @@ def adauga_operatiune_in_catalog_db(
     op_clean = str(operatiune or "").strip()
     if not op_clean:
         return None
+    lista_prm = construieste_lista_parametri(parametri, parametru, valoare, um)
+    prm_col, val_col, um_col = rezuma_parametri_coloane(lista_prm, parametru, valoare, um)
     with db_cursor() as c:
         c.execute("""
             INSERT INTO catalog_operatiuni_mentenanta
-                (sistem, operatiune, parametru, valoare, um, piese_json, consumabile_json, documentatii_json)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (sistem, operatiune, parametru, valoare, um, parametri_json, piese_json, consumabile_json, documentatii_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             str(sistem or "General").strip() or "General",
             op_clean,
-            str(parametru or "").strip(),
-            str(valoare or "").strip(),
-            str(um or "").strip(),
+            prm_col,
+            val_col,
+            um_col,
+            json.dumps(lista_prm, ensure_ascii=False),
             json.dumps(piese or [], ensure_ascii=False),
             json.dumps(consumabile or [], ensure_ascii=False),
             json.dumps(documentatii or [], ensure_ascii=False),
@@ -189,11 +279,14 @@ def actualizeaza_operatiune_in_catalog_db(
     parametru: str = "",
     valoare: str = "",
     um: str = "",
+    parametri: list[dict] | None = None,
     piese: list[dict] | None = None,
     consumabile: list[dict] | None = None,
     documentatii: list[dict] | None = None,
 ):
     _asigura_tabele_fise_si_catalog()
+    lista_prm = construieste_lista_parametri(parametri, parametru, valoare, um)
+    prm_col, val_col, um_col = rezuma_parametri_coloane(lista_prm, parametru, valoare, um)
     with db_cursor() as c:
         c.execute("""
             UPDATE catalog_operatiuni_mentenanta
@@ -202,6 +295,7 @@ def actualizeaza_operatiune_in_catalog_db(
                 parametru = %s,
                 valoare = %s,
                 um = %s,
+                parametri_json = %s,
                 piese_json = %s,
                 consumabile_json = %s,
                 documentatii_json = %s
@@ -209,9 +303,10 @@ def actualizeaza_operatiune_in_catalog_db(
         """, (
             str(sistem or "General").strip() or "General",
             str(operatiune or "").strip(),
-            str(parametru or "").strip(),
-            str(valoare or "").strip(),
-            str(um or "").strip(),
+            prm_col,
+            val_col,
+            um_col,
+            json.dumps(lista_prm, ensure_ascii=False),
             json.dumps(piese or [], ensure_ascii=False),
             json.dumps(consumabile or [], ensure_ascii=False),
             json.dumps(documentatii or [], ensure_ascii=False),
@@ -238,26 +333,80 @@ def _salveaza_fisier_doc_local(uploaded_file, prefix_key: str) -> str:
 
 def render_builder_resurse_operatiune(
     prefix_key: str,
+    parametri_init: list[dict] | None = None,
     piese_init: list[dict] | None = None,
     consumabile_init: list[dict] | None = None,
     documentatii_init: list[dict] | None = None,
-) -> tuple[list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """
     Construiește interactiv pentru o operațiune:
+    - Parametri multipli (fiecare cu denumire parametru, valoare, UM)
     - Piese necesare (multiple, inclusiv mai multe de același fel, cu loc utilizare)
     - Materiale consumabile (multiple, ex: WD40 - 50ml, pini 0.75 - 20buc, cu locurile unde se utilizează)
     - Link-uri / fișiere de documentație multiple (pentru sub-operațiunile executate simultan)
     """
+    k_prm = f"res_prm_{prefix_key}"
     k_piese = f"res_piese_{prefix_key}"
     k_cons = f"res_cons_{prefix_key}"
     k_docs = f"res_docs_{prefix_key}"
 
+    if k_prm not in st.session_state:
+        st.session_state[k_prm] = list(_parse_json_list(parametri_init))
     if k_piese not in st.session_state:
         st.session_state[k_piese] = list(_parse_json_list(piese_init))
     if k_cons not in st.session_state:
         st.session_state[k_cons] = list(_parse_json_list(consumabile_init))
     if k_docs not in st.session_state:
         st.session_state[k_docs] = list(_parse_json_list(documentatii_init))
+
+    with st.expander("📐 Parametri măsurați / verificați (poți adăuga mai mulți)", expanded=bool(st.session_state[k_prm])):
+        cprm1, cprm2, cprm3 = st.columns([2.2, 1.2, 0.9])
+        with cprm1:
+            prm_den = st.text_input(
+                "Denumire parametru",
+                placeholder="ex: Tensiune alimentare / Presiune / Joc ax",
+                key=f"inp_prm_den_{prefix_key}",
+            ).strip()
+        with cprm2:
+            prm_val = st.text_input(
+                "Valoare",
+                placeholder="ex: 24.0 / 6.2 / 0.02",
+                key=f"inp_prm_val_{prefix_key}",
+            ).strip()
+        with cprm3:
+            prm_um = st.text_input(
+                "UM",
+                placeholder="ex: V / bar / mm",
+                key=f"inp_prm_um_{prefix_key}",
+            ).strip()
+
+        if st.button("➕ Adaugă parametru la operațiune", key=f"btn_add_prm_{prefix_key}"):
+            if not any([prm_den, prm_val, prm_um]):
+                st.warning("Introdu cel puțin o informație pentru parametru.")
+            else:
+                st.session_state[k_prm].append({
+                    "parametru": prm_den,
+                    "valoare": prm_val,
+                    "um": prm_um,
+                })
+                st.rerun()
+
+        if st.session_state[k_prm]:
+            for idx_pr, item_pr in enumerate(st.session_state[k_prm]):
+                col_prt, col_prd = st.columns([4.5, 0.7], vertical_alignment="center")
+                p_den = str(item_pr.get("parametru") or item_pr.get("denumire") or "").strip()
+                p_val = str(item_pr.get("valoare") or "").strip()
+                p_um = str(item_pr.get("um") or "").strip()
+                val_um = f"`{p_val} {p_um}`".strip() if (p_val or p_um) else ""
+                if p_den and val_um:
+                    col_prt.markdown(f"- **{p_den}**: {val_um}")
+                elif p_den:
+                    col_prt.markdown(f"- **{p_den}**")
+                else:
+                    col_prt.markdown(f"- {val_um}")
+                if col_prd.button("🗑️", key=f"del_prm_{prefix_key}_{idx_pr}"):
+                    st.session_state[k_prm].pop(idx_pr)
+                    st.rerun()
 
     piese_db = PieseRepository.get_all() or []
     opt_piese_catalog = ["-- Introdu piesă manual --"] + [
@@ -400,6 +549,7 @@ def render_builder_resurse_operatiune(
                     st.rerun()
 
     return (
+        list(st.session_state[k_prm]),
         list(st.session_state[k_piese]),
         list(st.session_state[k_cons]),
         list(st.session_state[k_docs]),
@@ -407,7 +557,7 @@ def render_builder_resurse_operatiune(
 
 
 def reseteaza_builder_resurse_operatiune(prefix_key: str):
-    for pfx in ("res_piese_", "res_cons_", "res_docs_"):
+    for pfx in ("res_prm_", "res_piese_", "res_cons_", "res_docs_"):
         st.session_state.pop(f"{pfx}{prefix_key}", None)
 
 
@@ -466,15 +616,27 @@ def _normalizare_pasi_df(pasi: list[dict]) -> pd.DataFrame:
     randuri = []
     for idx, p in enumerate(pasi, start=1):
         if isinstance(p, dict):
+            prm_list = construieste_lista_parametri(
+                parametri_init=p.get("parametri"),
+                parametru_singur=p.get("Denumire parametru") or p.get("parametru") or "",
+                valoare_singura=p.get("Valoare") or p.get("valoare") or "",
+                um_singura=p.get("UM") or p.get("um") or "",
+            )
+            prm_col, val_col, um_col = rezuma_parametri_coloane(
+                prm_list,
+                p.get("Denumire parametru") or p.get("parametru") or "",
+                p.get("Valoare") or p.get("valoare") or "",
+                p.get("UM") or p.get("um") or "",
+            )
             piese_txt = p.get("Piese necesare") or formateaza_piese_text(p.get("piese") or [])
             cons_txt = p.get("Materiale consumabile") or formateaza_consumabile_text(p.get("consumabile") or [])
             doc_txt = p.get("Documentație") or formateaza_documentatii_text(p.get("documentatii") or [])
             randuri.append({
                 "Ordine": int(p.get("Ordine") or p.get("ordine") or idx),
                 "Operațiune / Verificare": str(p.get("Operațiune / Verificare") or p.get("operatiune") or ""),
-                "Denumire parametru": str(p.get("Denumire parametru") or p.get("parametru") or ""),
-                "Valoare": str(p.get("Valoare") or p.get("valoare") or ""),
-                "UM": str(p.get("UM") or p.get("um") or ""),
+                "Denumire parametru": prm_col,
+                "Valoare": val_col,
+                "UM": um_col,
                 "Piese necesare": str(piese_txt or ""),
                 "Materiale consumabile": str(cons_txt or ""),
                 "Documentație": str(doc_txt or ""),
@@ -499,6 +661,7 @@ def _df_la_pasi(df: pd.DataFrame, pasi_exist: list[dict]) -> list[dict]:
         except Exception:
             ord_val = i
         vechi = pasi_exist[i - 1] if (i - 1) < len(pasi_exist) and isinstance(pasi_exist[i - 1], dict) else {}
+        prm_list = construieste_lista_parametri(vechi.get("parametri"), prm, val, um)
         pasi.append({
             "Ordine": ord_val,
             "Operațiune / Verificare": op,
@@ -508,6 +671,7 @@ def _df_la_pasi(df: pd.DataFrame, pasi_exist: list[dict]) -> list[dict]:
             "Piese necesare": piese_txt,
             "Materiale consumabile": cons_txt,
             "Documentație": doc_txt,
+            "parametri": prm_list,
             "piese": vechi.get("piese") or [],
             "consumabile": vechi.get("consumabile") or [],
             "documentatii": vechi.get("documentatii") or [],
@@ -599,7 +763,7 @@ def _render_sectiune_editare_catalog_db():
     p1, p2, p3 = st.columns([2, 1, 1])
     with p1:
         prm_val = st.text_input(
-            "Denumire parametru implicit (opțional)",
+            "Parametru rapid / implicit (opțional)",
             value=(item_sel.get("parametru") if item_sel else ""),
             key=f"cat_db_prm_{edit_id}",
         ).strip()
@@ -616,8 +780,9 @@ def _render_sectiune_editare_catalog_db():
             key=f"cat_db_um_{edit_id}",
         ).strip()
 
-    piese_list, cons_list, docs_list = render_builder_resurse_operatiune(
+    prm_list, piese_list, cons_list, docs_list = render_builder_resurse_operatiune(
         prefix_key=builder_key,
+        parametri_init=(item_sel.get("parametri") if item_sel else []),
         piese_init=(item_sel.get("piese") if item_sel else []),
         consumabile_init=(item_sel.get("consumabile") if item_sel else []),
         documentatii_init=(item_sel.get("documentatii") if item_sel else []),
@@ -629,6 +794,7 @@ def _render_sectiune_editare_catalog_db():
             if not op_val:
                 st.error("⚠️ Completează denumirea operațiunii.")
             else:
+                final_prm = construieste_lista_parametri(prm_list, prm_val, val_val, um_val)
                 if item_sel:
                     actualizeaza_operatiune_in_catalog_db(
                         op_id=item_sel["id"],
@@ -637,6 +803,7 @@ def _render_sectiune_editare_catalog_db():
                         parametru=prm_val,
                         valoare=val_val,
                         um=um_val,
+                        parametri=final_prm,
                         piese=piese_list,
                         consumabile=cons_list,
                         documentatii=docs_list,
@@ -649,6 +816,7 @@ def _render_sectiune_editare_catalog_db():
                         parametru=prm_val,
                         valoare=val_val,
                         um=um_val,
+                        parametri=final_prm,
                         piese=piese_list,
                         consumabile=cons_list,
                         documentatii=docs_list,
@@ -670,9 +838,12 @@ def _render_sectiune_editare_catalog_db():
                 "ID": x["id"],
                 "Sistem": x["sistem"],
                 "Operațiune": x["operatiune"],
-                "Parametru": x.get("parametru") or "",
-                "Valoare": x.get("valoare") or "",
-                "UM": x.get("um") or "",
+                "Parametri": formateaza_parametri_text(
+                    x.get("parametri"),
+                    x.get("parametru") or "",
+                    x.get("valoare") or "",
+                    x.get("um") or "",
+                ),
                 "Piese necesare": formateaza_piese_text(x.get("piese") or []),
                 "Materiale consumabile": formateaza_consumabile_text(x.get("consumabile") or []),
                 "Documentație": formateaza_documentatii_text(x.get("documentatii") or []),
@@ -684,11 +855,6 @@ def _render_sectiune_editare_catalog_db():
 
 def render_fise_mentenanta():
     st.subheader("📋 Catalog Operațiuni & Fișe Tip de Mentenanță (DB)")
-    is_unlocked = bool(st.session_state.get("is_unlocked", False))
-
-    if not is_unlocked:
-        st.warning("dacă vrei să editezi fișele de întreținere deblochează sistemul")
-        return
 
     tab_catalog, tab_fise_tip, tab_lista = st.tabs([
         "⚙️ Editare Catalog Operațiuni (DB)",
@@ -758,7 +924,7 @@ def render_fise_mentenanta():
             ).strip()
         with o2:
             prm_txt = st.text_input(
-                "Denumire parametru",
+                "Parametru rapid",
                 value=(it_cat.get("parametru") or "" if it_cat else ""),
                 key=f"fmp_prm_txt_{b_key}",
             ).strip()
@@ -775,8 +941,9 @@ def render_fise_mentenanta():
                 key=f"fmp_um_txt_{b_key}",
             ).strip()
 
-        piese_op, cons_op, docs_op = render_builder_resurse_operatiune(
+        prm_op, piese_op, cons_op, docs_op = render_builder_resurse_operatiune(
             prefix_key=b_key,
+            parametri_init=(it_cat.get("parametri") if it_cat else []),
             piese_init=(it_cat.get("piese") if it_cat else []),
             consumabile_init=(it_cat.get("consumabile") if it_cat else []),
             documentatii_init=(it_cat.get("documentatii") if it_cat else []),
@@ -787,6 +954,8 @@ def render_fise_mentenanta():
             if not op_txt:
                 st.warning("Introdu sau selectează o operațiune.")
             else:
+                final_prm = construieste_lista_parametri(prm_op, prm_txt, val_txt, um_txt)
+                prm_col, val_col, um_col = rezuma_parametri_coloane(final_prm, prm_txt, val_txt, um_txt)
                 if salveaza_cat and it_cat is None:
                     adauga_operatiune_in_catalog_db(
                         sistem="General",
@@ -794,6 +963,7 @@ def render_fise_mentenanta():
                         parametru=prm_txt,
                         valoare=val_txt,
                         um=um_txt,
+                        parametri=final_prm,
                         piese=piese_op,
                         consumabile=cons_op,
                         documentatii=docs_op,
@@ -801,12 +971,13 @@ def render_fise_mentenanta():
                 st.session_state[state_key_pasi].append({
                     "Ordine": len(st.session_state[state_key_pasi]) + 1,
                     "Operațiune / Verificare": op_txt,
-                    "Denumire parametru": prm_txt,
-                    "Valoare": val_txt,
-                    "UM": um_txt,
+                    "Denumire parametru": prm_col,
+                    "Valoare": val_col,
+                    "UM": um_col,
                     "Piese necesare": formateaza_piese_text(piese_op),
                     "Materiale consumabile": formateaza_consumabile_text(cons_op),
                     "Documentație": formateaza_documentatii_text(docs_op),
+                    "parametri": final_prm,
                     "piese": piese_op,
                     "consumabile": cons_op,
                     "documentatii": docs_op,
