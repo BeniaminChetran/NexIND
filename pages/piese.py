@@ -486,63 +486,24 @@ def render_piese():
         ))
         masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
 
-        # --------------------------------------------------------------
-        # CALCULATOR 1 (ENTER — ÎN AFARA FORMULARULUI DE PIESĂ NOUĂ)
-        # --------------------------------------------------------------
-        if acces_permis:
-            if "calc_enter_expr_salvata" not in st.session_state:
-                st.session_state["calc_enter_expr_salvata"] = ""
-            if "calc_enter_rezultat" not in st.session_state:
-                st.session_state["calc_enter_rezultat"] = None
-            if "calc_enter_eroare" not in st.session_state:
-                st.session_state["calc_enter_eroare"] = None
+        # Inițializare stare calculator rapid pentru piesă nouă
+        if "calc_nou_expr_salvata" not in st.session_state:
+            st.session_state["calc_nou_expr_salvata"] = ""
+        if "calc_nou_rezultat" not in st.session_state:
+            st.session_state["calc_nou_rezultat"] = None
+        if "calc_nou_eroare" not in st.session_state:
+            st.session_state["calc_nou_eroare"] = None
 
-            def _la_enter_calculator():
-                expr_txt = str(st.session_state.get("calc_enter_input") or "")
-                st.session_state["calc_enter_expr_salvata"] = expr_txt
-                if not expr_txt.strip():
-                    st.session_state["calc_enter_rezultat"] = None
-                    st.session_state["calc_enter_eroare"] = None
-                    return
-                rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
-                st.session_state["calc_enter_rezultat"] = rez if not err else None
-                st.session_state["calc_enter_eroare"] = err
-
-            def _copiaza_rezultat_enter():
-                rez = st.session_state.get("calc_enter_rezultat")
-                if rez is not None:
-                    st.session_state["pret_piesa_noua_form"] = f"{float(rez):.2f}"
-                    st.session_state["calc_enter_input"] = st.session_state.get("calc_enter_expr_salvata", "")
-
-            st.session_state["calc_enter_input"] = st.session_state.get("calc_enter_expr_salvata", "")
-
-            with st.expander("🧮 Calculator Rapid Preț (apasă Enter — nu salvează piesa)", expanded=False):
-                ce1, ce2, ce3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
-                with ce1:
-                    st.text_input(
-                        "Expresie calcul preț (apasă Enter)",
-                        key="calc_enter_input",
-                        placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                        on_change=_la_enter_calculator,
-                    )
-                with ce2:
-                    st.button(
-                        "📥 Copiază în preț",
-                        key="btn_copiaza_enter_pret",
-                        use_container_width=True,
-                        on_click=_copiaza_rezultat_enter,
-                        disabled=(st.session_state.get("calc_enter_rezultat") is None),
-                    )
-                with ce3:
-                    rez_e = st.session_state.get("calc_enter_rezultat")
-                    err_e = st.session_state.get("calc_enter_eroare")
-                    valuta_e = st.session_state.get("valuta_piesa_noua_form", "EUR")
-                    if err_e:
-                        st.error(f"⚠️ {err_e}")
-                    elif rez_e is not None:
-                        st.success(f"**Rezultat:** `{rez_e:.2f}` {valuta_e}")
-                    else:
-                        st.caption("Scrie expresia și apasă **Enter**.")
+        def _la_enter_calc_nou():
+            expr_txt = str(st.session_state.get("calc_nou_expr_input") or "")
+            st.session_state["calc_nou_expr_salvata"] = expr_txt
+            if not expr_txt.strip():
+                st.session_state["calc_nou_rezultat"] = None
+                st.session_state["calc_nou_eroare"] = None
+                return
+            rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
+            st.session_state["calc_nou_rezultat"] = rez if not err else None
+            st.session_state["calc_nou_eroare"] = err
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
@@ -562,58 +523,86 @@ def render_piese():
                     termen_livrare_nou = st.text_input("Termen livrare (ex: 1, 3-5 zile, Stoc)", value="1")
                     if acces_permis:
                         link_furnizor = st.text_input("Link Furnizor / Magazin (URL)")
-                        cp_nou1, cp_nou2 = st.columns([3, 1], vertical_alignment="bottom")
-                        with cp_nou1:
-                            pret_expr_nou = st.text_input(
-                                "Preț Achiziție — acceptă calcule (+, -, *, /)",
-                                value="",
-                                placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                                key="pret_piesa_noua_form",
-                            )
-                        with cp_nou2:
-                            valuta_noua = st.selectbox(
-                                "Monedă",
-                                options=["EUR", "RON"],
-                                index=0,
-                                key="valuta_piesa_noua_form",
-                            )
+                        valuta_noua = st.selectbox("Monedă", options=["EUR", "RON"], index=0)
                     else:
                         st.info("🔒 Prețul de achiziție și furnizorul sunt protejate de parolă.")
                         link_furnizor = ""
-                        pret_expr_nou = ""
                         valuta_noua = "RON"
 
                 st.caption(
                     f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
                 )
 
-                if st.form_submit_button("💾 Salvează Piesa", type="primary"):
-                    if not denumire.strip():
-                        st.error("Te rugăm să completezi denumirea piesei.")
-                    else:
-                        pret_calculat, err_pret = calculeaza_pret_din_expresie(pret_expr_nou, 0.0)
-                        if err_pret:
-                            st.error(f"⚠️ {err_pret}")
+                submit_piesa_noua = st.form_submit_button("💾 Salvează Piesa", type="primary")
+
+            if acces_permis:
+                st.session_state["calc_nou_expr_input"] = st.session_state.get("calc_nou_expr_salvata", "")
+                rez_n_curent = st.session_state.get("calc_nou_rezultat")
+                default_calc_exp = (
+                    f"Deschis — Rezultat curent: {rez_n_curent:.2f}"
+                    if rez_n_curent is not None
+                    else "Deschis — Calculează prețul de achiziție"
+                )
+                with st.expander(f"🧮 Calculator Rapid Preț Achiziție ({default_calc_exp})", expanded=False):
+                    cc1, cc2 = st.columns([2.8, 1.4], vertical_alignment="center")
+                    with cc1:
+                        st.text_input(
+                            "Expresie calcul preț achiziție (Enter pentru a calcula)",
+                            key="calc_nou_expr_input",
+                            placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                            on_change=_la_enter_calc_nou,
+                        )
+                    with cc2:
+                        rez_n = st.session_state.get("calc_nou_rezultat")
+                        err_n = st.session_state.get("calc_nou_eroare")
+                        if err_n:
+                            st.error(f"⚠️ {err_n}")
+                        elif rez_n is not None:
+                            st.success(f"**Preț calculat:** `{rez_n:.2f}`")
                         else:
-                            PieseRepository.insert({
-                                "denumire": denumire.strip(),
-                                "cod_producator": cod_producator.strip(),
-                                "cod_comercial": cod_comercial.strip(),
-                                "subansamblu": subansamblu.strip(),
-                                "parametri": parametri.strip(),
-                                "termen_livrare": termen_livrare_nou.strip() or "1",
-                                "link_furnizor": link_furnizor.strip(),
-                                "pret_achizitie": pret_calculat,
-                                "valuta_achizitie": valuta_noua,
-                                "masina_montaj": masina_tinta_noua,
-                                "stare_comandata": stare_cmd_noua,
-                            })
-                            _obtine_corpus_utilizare_istoric.clear()
-                            st.success(
-                                f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
-                                f"[Stare: **{stare_cmd_noua}** | Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou}]!"
-                            )
-                            st.rerun()
+                            st.caption("La salvare se folosește valoarea calculată aici (implicit `0.00`).")
+
+            if submit_piesa_noua:
+                if not denumire.strip():
+                    st.error("Te rugăm să completezi denumirea piesei.")
+                else:
+                    if not acces_permis:
+                        pret_calculat, err_pret = 0.0, None
+                    else:
+                        rez_salvat = st.session_state.get("calc_nou_rezultat")
+                        expr_salvata = str(st.session_state.get("calc_nou_expr_salvata") or "").strip()
+                        if rez_salvat is not None:
+                            pret_calculat, err_pret = round(float(rez_salvat), 2), None
+                        elif expr_salvata:
+                            pret_calculat, err_pret = calculeaza_pret_din_expresie(expr_salvata, 0.0)
+                        else:
+                            pret_calculat, err_pret = 0.0, None
+
+                    if err_pret:
+                        st.error(f"⚠️ {err_pret}")
+                    else:
+                        PieseRepository.insert({
+                            "denumire": denumire.strip(),
+                            "cod_producator": cod_producator.strip(),
+                            "cod_comercial": cod_comercial.strip(),
+                            "subansamblu": subansamblu.strip(),
+                            "parametri": parametri.strip(),
+                            "termen_livrare": termen_livrare_nou.strip() or "1",
+                            "link_furnizor": link_furnizor.strip(),
+                            "pret_achizitie": pret_calculat,
+                            "valuta_achizitie": valuta_noua,
+                            "masina_montaj": masina_tinta_noua,
+                            "stare_comandata": stare_cmd_noua,
+                        })
+                        st.session_state["calc_nou_expr_salvata"] = ""
+                        st.session_state["calc_nou_rezultat"] = None
+                        st.session_state["calc_nou_eroare"] = None
+                        _obtine_corpus_utilizare_istoric.clear()
+                        st.success(
+                            f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
+                            f"[Stare: **{stare_cmd_noua}** | Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou}]!"
+                        )
+                        st.rerun()
 
         # Bloc import & comasare piese din rapoartele electronice (o singură dată per mașină)
         with st.expander("📥 Importă & Comasează Piese din Rapoartele Electronice (o singură dată pe mașina selectată)", expanded=False):
@@ -920,78 +909,6 @@ def render_piese():
             with st.expander(expander_title, expanded=(len(piese_filtrate) == 1)):
                 if acces_permis and p.get("link_furnizor"):
                     st.markdown(f"🔗 **Link Furnizor:** [{p['link_furnizor']}]({p['link_furnizor']})")
-
-                # ------------------------------------------------------
-                # CALCULATOR 2 (ENTER — ÎN AFARA FORMULARULUI DE EDITARE)
-                # ------------------------------------------------------
-                if acces_permis:
-                    k_expr_salvat = f"calc_mod_expr_salvat_{pid}"
-                    k_expr_input = f"calc_mod_expr_input_{pid}"
-                    k_rez_mod = f"calc_mod_rez_{pid}"
-                    k_err_mod = f"calc_mod_err_{pid}"
-
-                    if k_expr_salvat not in st.session_state:
-                        st.session_state[k_expr_salvat] = ""
-                    if k_rez_mod not in st.session_state:
-                        st.session_state[k_rez_mod] = None
-                    if k_err_mod not in st.session_state:
-                        st.session_state[k_err_mod] = None
-
-                    def _la_enter_calc_mod(item_id=pid, val_def=pret_val):
-                        k_in = f"calc_mod_expr_input_{item_id}"
-                        k_sv = f"calc_mod_expr_salvat_{item_id}"
-                        k_rz = f"calc_mod_rez_{item_id}"
-                        k_er = f"calc_mod_err_{item_id}"
-                        expr_txt = str(st.session_state.get(k_in) or "")
-                        st.session_state[k_sv] = expr_txt
-                        if not expr_txt.strip():
-                            st.session_state[k_rz] = None
-                            st.session_state[k_er] = None
-                            return
-                        rez, err = calculeaza_pret_din_expresie(expr_txt, val_def)
-                        st.session_state[k_rz] = rez if not err else None
-                        st.session_state[k_er] = err
-
-                    def _copiaza_calc_mod(item_id=pid):
-                        k_rz = f"calc_mod_rez_{item_id}"
-                        k_sv = f"calc_mod_expr_salvat_{item_id}"
-                        k_in = f"calc_mod_expr_input_{item_id}"
-                        k_pret_form = f"pret_{item_id}"
-                        rez = st.session_state.get(k_rz)
-                        if rez is not None:
-                            st.session_state[k_pret_form] = f"{float(rez):.2f}"
-                            st.session_state[k_in] = st.session_state.get(k_sv, "")
-
-                    st.session_state[k_expr_input] = st.session_state.get(k_expr_salvat, "")
-
-                    cm1, cm2, cm3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
-                    with cm1:
-                        st.text_input(
-                            "Expresie calcul preț (apasă Enter)",
-                            key=k_expr_input,
-                            placeholder=f"Actual: {pret_val:.2f} {valuta_val} | ex: 120 + 35",
-                            on_change=_la_enter_calc_mod,
-                            args=(pid, pret_val),
-                        )
-                    with cm2:
-                        st.button(
-                            "📥 Copiază",
-                            key=f"btn_copiaza_calc_mod_{pid}",
-                            use_container_width=True,
-                            on_click=_copiaza_calc_mod,
-                            args=(pid,),
-                            disabled=(st.session_state.get(k_rez_mod) is None),
-                        )
-                    with cm3:
-                        rez_m = st.session_state.get(k_rez_mod)
-                        err_m = st.session_state.get(k_err_mod)
-                        val_m = st.session_state.get(f"val_{pid}", valuta_val)
-                        if err_m:
-                            st.error(f"⚠️ {err_m}")
-                        elif rez_m is not None:
-                            st.success(f"**Rezultat:** `{rez_m:.2f}` {val_m}")
-                        else:
-                            st.caption("Scrie expresia și apasă **Enter**.")
 
                 with st.form(f"form_mod_piesa_{pid}"):
                     cp1, cp2 = st.columns(2)
