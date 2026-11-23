@@ -511,7 +511,7 @@ def render_piese():
                         "Expresie calcul preț (Enter pentru rezultat)",
                         key="calc_rapid_pret_expr",
                         placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                        on_click=_evalueaza_calculator_rapid,
+                        on_return=_evalueaza_calculator_rapid,
                     )
                 with ccalc2:
                     valuta_calc_preview = st.session_state.get("valuta_piesa_noua_form", "EUR")
