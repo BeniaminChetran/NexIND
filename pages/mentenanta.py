@@ -4,7 +4,6 @@
 
 import json
 import re
-from pathlib import Path
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
@@ -18,7 +17,12 @@ from pages.fise_mentenanta import (
     FRECVENTE_MENTENANTA,
     adauga_operatiune_in_catalog_db,
     construieste_nume_fisa_masina,
+    formateaza_consumabile_text,
+    formateaza_documentatii_text,
+    formateaza_piese_text,
     incarca_catalog_operatiuni_db,
+    render_builder_resurse_operatiune,
+    reseteaza_builder_resurse_operatiune,
 )
 
 
@@ -271,49 +275,40 @@ def construieste_nume_fisier_pdf(titlu_pdf: str) -> str:
     return f"{baza}.pdf"
 
 
-def _normalizare_link_drive(val: str) -> str | None:
-    s = str(val or "").strip()
-    if not s or s.lower() == "none":
-        return None
-    if s.startswith(("http://", "https://")):
-        return s
-    return f"https://{s}"
-
-
-def _salveaza_doc_local_ment(uploaded_file, prefix_key: str) -> str:
-    folder = Path("uploads/documentatie_mentenanta")
-    folder.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(uploaded_file.name).name.replace(" ", "_")
-    dest = folder / f"{prefix_key}_{safe_name}"
-    dest.write_bytes(uploaded_file.getvalue())
-    return str(dest)
-
-
-def _normalizare_randuri_operatiuni(rows_in: list[dict]) -> list[dict]:
+def _normalizare_randuri_operatiuni(rows_in: list[dict], rows_exist: list[dict] | None = None) -> list[dict]:
     rez = []
+    exist_list = rows_exist or []
     for idx, r in enumerate(rows_in or [], start=1):
         if not isinstance(r, dict):
             continue
-        op_txt = str(r.get("Operațiune / Verificare") or r.get("operatiune") or r.get("pas") or "").strip()
+        op_txt = str(r.get("Operațiune / Verificare") or r.get("operatiune") or "").strip()
         prm_txt = str(r.get("Denumire parametru") or r.get("parametru") or "").strip()
         val_txt = str(r.get("Valoare") or r.get("valoare") or "").strip()
         um_txt = str(r.get("UM") or r.get("um") or "").strip()
-        doc_txt = str(r.get("Documentație") or r.get("Documentație Drive") or r.get("documentatie_drive") or "").strip()
-        if not op_txt and not prm_txt and not val_txt and not um_txt and not doc_txt:
+        piese_txt = str(r.get("Piese necesare") or formateaza_piese_text(r.get("piese") or [])).strip()
+        cons_txt = str(r.get("Materiale consumabile") or formateaza_consumabile_text(r.get("consumabile") or [])).strip()
+        doc_txt = str(r.get("Documentație") or formateaza_documentatii_text(r.get("documentatii") or [])).strip()
+        if not any([op_txt, prm_txt, val_txt, um_txt, piese_txt, cons_txt, doc_txt]):
             continue
         ef_raw = r.get("Efectuat", True)
         if isinstance(ef_raw, str):
             ef_val = ef_raw.strip().lower() not in ("false", "0", "nu", "no")
         else:
             ef_val = bool(ef_raw)
+        vechi = exist_list[idx - 1] if (idx - 1) < len(exist_list) and isinstance(exist_list[idx - 1], dict) else {}
         rez.append({
             "Ordine": int(r.get("Ordine") or r.get("ordine") or idx),
             "Operațiune / Verificare": op_txt,
             "Denumire parametru": prm_txt,
             "Valoare": val_txt,
             "UM": um_txt,
+            "Piese necesare": piese_txt,
+            "Materiale consumabile": cons_txt,
             "Documentație": doc_txt,
             "Efectuat": ef_val,
+            "piese": r.get("piese") if isinstance(r.get("piese"), list) else (vechi.get("piese") or []),
+            "consumabile": r.get("consumabile") if isinstance(r.get("consumabile"), list) else (vechi.get("consumabile") or []),
+            "documentatii": r.get("documentatii") if isinstance(r.get("documentatii"), list) else (vechi.get("documentatii") or []),
         })
     return rez
 
@@ -386,27 +381,36 @@ def _incarca_fisa_din_istoric_pentru_editare(fisa: dict, firme_dict: dict):
 
 
 def _render_tabel_operatiuni_identic(rows: list[dict], key_prefix: str, editable: bool):
-    df_init = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
+    cols_viz = [
         "Ordine",
         "Operațiune / Verificare",
         "Denumire parametru",
         "Valoare",
         "UM",
+        "Piese necesare",
+        "Materiale consumabile",
         "Documentație",
         "Efectuat",
-    ])
+    ]
+    if rows:
+        df_init = pd.DataFrame([{c: r.get(c, "") for c in cols_viz} for r in rows])
+    else:
+        df_init = pd.DataFrame(columns=cols_viz)
+
     return st.data_editor(
         df_init,
         hide_index=True,
         num_rows="dynamic" if editable else "fixed",
         use_container_width=True,
-        disabled=[] if editable else ["Ordine", "Operațiune / Verificare", "Denumire parametru", "Valoare", "UM", "Documentație", "Efectuat"],
+        disabled=[] if editable else cols_viz,
         column_config={
             "Ordine": st.column_config.NumberColumn("Ordine", width="small", step=1),
             "Operațiune / Verificare": st.column_config.TextColumn("Operațiune / Verificare", width="large"),
             "Denumire parametru": st.column_config.TextColumn("Denumire parametru", width="medium"),
             "Valoare": st.column_config.TextColumn("Valoare", width="small"),
             "UM": st.column_config.TextColumn("UM", width="small"),
+            "Piese necesare": st.column_config.TextColumn("Piese necesare", width="medium"),
+            "Materiale consumabile": st.column_config.TextColumn("Materiale consumabile", width="medium"),
             "Documentație": st.column_config.TextColumn("Documentație", width="medium"),
             "Efectuat": st.column_config.CheckboxColumn("Efectuat", width="small"),
         },
@@ -460,75 +464,65 @@ def _render_sectiune_operatiuni(
     catalog_db = incarca_catalog_operatiuni_db()
 
     if is_unlocked:
-        st.markdown("#### 📎 Încarcă / Setează operațiune, denumire parametru, valoare, UM și documentație")
+        st.markdown("#### 📎 Încarcă / Setează operațiune, parametri, piese necesare, consumabile și documentații")
         opt_cat = {"-- Introdu manual / copy-paste --": None}
         for it in catalog_db:
             opt_cat[f"[{it['sistem']}] {it['operatiune']}"] = it
 
         sel_cat_label = st.selectbox(
-            "Alege operațiunea (sau introdu manual / copy-paste)",
+            "Alege operațiunea din Catalogul DB (sau introdu manual / copy-paste)",
             options=list(opt_cat.keys()),
             key=f"ment_sel_cat_{masina_obj['id']}",
         )
         item_cat = opt_cat.get(sel_cat_label)
+        b_key = f"ment_res_m{masina_obj['id']}_{item_cat['id'] if item_cat else 'man'}"
 
         c_op, c_prm, c_val, c_um = st.columns([2.2, 1.2, 0.9, 0.7])
         with c_op:
             op_noua = st.text_input(
                 "Operațiune / Verificare (manual sau copy-paste)",
                 value=(item_cat["operatiune"] if item_cat else ""),
-                key=f"ment_inp_op_{masina_obj['id']}_{sel_cat_label[:25]}",
+                key=f"ment_inp_op_{b_key}",
             ).strip()
         with c_prm:
             prm_nou = st.text_input(
                 "Denumire parametru",
                 value=(item_cat.get("parametru") or "" if item_cat else ""),
-                placeholder="ex: Tensiune / Piesă",
-                key=f"ment_inp_prm_{masina_obj['id']}_{sel_cat_label[:25]}",
+                placeholder="ex: Tensiune / Joc",
+                key=f"ment_inp_prm_{b_key}",
             ).strip()
         with c_val:
             val_noua = st.text_input(
                 "Valoare",
                 value=(item_cat.get("valoare") or "" if item_cat else ""),
-                placeholder="ex: 24.0 / 1",
-                key=f"ment_inp_val_{masina_obj['id']}_{sel_cat_label[:25]}",
+                placeholder="ex: 24.0 / 0.02",
+                key=f"ment_inp_val_{b_key}",
             ).strip()
         with c_um:
             um_noua = st.text_input(
                 "UM",
                 value=(item_cat.get("um") or "" if item_cat else ""),
-                placeholder="ex: V / buc",
-                key=f"ment_inp_um_{masina_obj['id']}_{sel_cat_label[:25]}",
+                placeholder="ex: V / mm",
+                key=f"ment_inp_um_{b_key}",
             ).strip()
 
-        c_lnk, c_fil, c_db = st.columns([1.8, 1.5, 1.2])
-        with c_lnk:
-            lnk_nou = st.text_input(
-                "Link documentație (opțional)",
-                value=(item_cat.get("drive", "") if item_cat else ""),
-                placeholder="https://drive.google.com/...",
-                key=f"ment_inp_lnk_{masina_obj['id']}",
-            ).strip()
-        with c_fil:
-            fil_nou = st.file_uploader(
-                "Sau încarcă documentație",
-                type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
-                key=f"ment_up_doc_{masina_obj['id']}",
-            )
-        with c_db:
-            salveaza_db = st.checkbox(
-                "Salvează și în DB",
-                value=(item_cat is None),
-                key=f"ment_chk_db_{masina_obj['id']}",
-            )
+        piese_op, cons_op, docs_op = render_builder_resurse_operatiune(
+            prefix_key=b_key,
+            piese_init=(item_cat.get("piese") if item_cat else []),
+            consumabile_init=(item_cat.get("consumabile") if item_cat else []),
+            documentatii_init=(item_cat.get("documentatii") if item_cat else []),
+        )
 
-        if st.button("➕ Adaugă operațiunea în tabel", key=f"ment_btn_add_op_{masina_obj['id']}"):
+        salveaza_db = st.checkbox(
+            "Salvează această operațiune și în Catalogul DB",
+            value=(item_cat is None),
+            key=f"ment_chk_db_{b_key}",
+        )
+
+        if st.button("➕ Adaugă operațiunea în tabel", key=f"ment_btn_add_op_{b_key}"):
             if not op_noua:
                 st.warning("Selectează sau introdu o operațiune.")
             else:
-                doc_final = lnk_nou
-                if fil_nou is not None:
-                    doc_final = _salveaza_doc_local_ment(fil_nou, f"m{masina_obj['id']}_op{len(rows_curente)+1}")
                 if salveaza_db and item_cat is None:
                     adauga_operatiune_in_catalog_db(
                         sistem="Personalizat",
@@ -536,7 +530,9 @@ def _render_sectiune_operatiuni(
                         parametru=prm_nou,
                         valoare=val_noua,
                         um=um_noua,
-                        drive=doc_final,
+                        piese=piese_op,
+                        consumabile=cons_op,
+                        documentatii=docs_op,
                     )
                 rows_curente.append({
                     "Ordine": len(rows_curente) + 1,
@@ -544,10 +540,16 @@ def _render_sectiune_operatiuni(
                     "Denumire parametru": prm_nou,
                     "Valoare": val_noua,
                     "UM": um_noua,
-                    "Documentație": doc_final,
+                    "Piese necesare": formateaza_piese_text(piese_op),
+                    "Materiale consumabile": formateaza_consumabile_text(cons_op),
+                    "Documentație": formateaza_documentatii_text(docs_op),
                     "Efectuat": True,
+                    "piese": piese_op,
+                    "consumabile": cons_op,
+                    "documentatii": docs_op,
                 })
                 st.session_state[rows_key] = rows_curente
+                reseteaza_builder_resurse_operatiune(b_key)
                 st.toast("✅ Operațiunea a fost adăugată.")
                 st.rerun()
 
@@ -586,23 +588,28 @@ def _render_sectiune_operatiuni(
     )
 
     if is_unlocked and df_ed is not None:
-        st.session_state[rows_key] = _normalizare_randuri_operatiuni(df_ed.fillna("").to_dict(orient="records"))
-
-    doc_links = []
-    for r in (st.session_state[rows_key] or []):
-        lnk = _normalizare_link_drive(r.get("Documentație") or "")
-        if lnk:
-            doc_links.append((f"{r.get('Ordine', '')}. {str(r.get('Operațiune / Verificare') or '')[:65]}", lnk))
-
-    if doc_links:
-        opt_doc = {lbl: url for lbl, url in doc_links}
-        cd1, cd2 = st.columns([3.5, 1.5], vertical_alignment="center")
-        sel_doc = cd1.selectbox(
-            "Documentație atașată operațiunii",
-            options=list(opt_doc.keys()),
-            key=f"ment_sel_doc_{masina_obj['id']}",
+        st.session_state[rows_key] = _normalizare_randuri_operatiuni(
+            df_ed.fillna("").to_dict(orient="records"),
+            rows_exist=rows_curente,
         )
-        cd2.link_button("📂 Deschide Documentația", opt_doc[sel_doc], use_container_width=True)
+
+    # Link-uri directe către toate documentațiile atașate operațiunilor din tabel
+    toate_linkurile = []
+    for r in (st.session_state[rows_key] or []):
+        ord_r = r.get("Ordine", "")
+        docs_r = r.get("documentatii") or []
+        if docs_r:
+            for d_it in docs_r:
+                u = str(d_it.get("url") or "").strip()
+                t = str(d_it.get("titlu") or "Link").strip()
+                if u.startswith(("http://", "https://")):
+                    toate_linkurile.append((f"Op.{ord_r} — {t}", u))
+
+    if toate_linkurile:
+        opt_l = {lbl: url for lbl, url in toate_linkurile}
+        cd1, cd2 = st.columns([3.5, 1.5], vertical_alignment="center")
+        sel_l = cd1.selectbox("Deschide link documentație", options=list(opt_l.keys()), key=f"ment_sel_doc_{masina_obj['id']}")
+        cd2.link_button("📂 Deschide Documentația", opt_l[sel_l], use_container_width=True)
 
     return df_ed, nume_fisa, frec_sel, titlu_pdf
 
@@ -717,7 +724,7 @@ def render_mentenanta():
     interval_din_db = int(masina_obj.get("interval_intretinere_zile") or 0)
     durata_implicita_zile = interval_din_db if interval_din_db > 0 else INTERVALE_ZILE.get(tip_int_masina, 30)
 
-    # Sub selecția firmei și mașinii, rămâne închisă până o deschide utilizatorul
+    # Sub controalele de selecție firmă și mașină; rămâne închisă până o deschide utilizatorul
     with st.expander("📋 Date Identificare Echipament & Stare Tehnică", expanded=False):
         d1, d2, d3, d4 = st.columns(4)
         draft["punct_lucru"] = d1.text_input("Punct de Lucru / Oraș", value=str(draft.get("punct_lucru", "")))
@@ -790,7 +797,8 @@ def render_mentenanta():
             ops_final = _normalizare_randuri_operatiuni(
                 (df_ops_utilaj.fillna("").to_dict(orient="records"))
                 if df_ops_utilaj is not None and not df_ops_utilaj.empty
-                else (st.session_state.get(rows_key) or [])
+                else (st.session_state.get(rows_key) or []),
+                rows_exist=st.session_state.get(rows_key) or [],
             )
 
             fisa_payload = {

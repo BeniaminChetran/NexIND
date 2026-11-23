@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from PIL import Image
 
 
+
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -69,6 +70,7 @@ from pages.simulator_preturi import render_simulator_preturi
 from pages.setari import render_setari
 from pages.documentatie_gdrive import render_documentatie_gdrive
 from pages.asistent_defecte import render_page as render_asistent_defecte
+from pages.fise_mentenanta import render_fise_mentenanta
 
 
 def seteaza_iconita_android(cale_png: str):
@@ -210,6 +212,7 @@ MENIU_STRUCTURA = {
         "📦 Piese": render_piese,
         "🦾 Mașini": render_masini,
         "🏢 Firme": render_firme,
+        "📋 Catalog & Fișe Tip Mentenanță": render_fise_mentenanta,
     },
     "🔐 SistemAdmin": {
         "🔑 Deblocare": render_deblocare,

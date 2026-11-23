@@ -775,16 +775,39 @@ def _extrage_operatiuni_mentenanta(data: dict) -> list[dict]:
     return []
 
 
+def _format_lista_resurse_pdf(val_text: str, lista_obj: list | None, camp_nume: str, camp_loc: str = "loc_utilizare") -> str:
+    txt_curat = str(val_text or "").strip()
+    if txt_curat:
+        return txt_curat.replace("\n", "<br/>")
+    if isinstance(lista_obj, list) and lista_obj:
+        parti = []
+        for it in lista_obj:
+            if not isinstance(it, dict):
+                continue
+            den = str(it.get(camp_nume) or "").strip()
+            if not den:
+                continue
+            cant = str(it.get("cantitate") or "").strip()
+            um = str(it.get("um") or "").strip()
+            loc = str(it.get(camp_loc) or "").strip()
+            item_s = f"{den} - {cant} {um}".strip() if cant else den
+            if loc:
+                item_s += f" ({loc})"
+            parti.append(item_s)
+        return "; ".join(parti)
+    return "-"
+
+
 # ------------------------------------------------------------------------------
 # 4. FIȘĂ DE MENTENANȚĂ PREVENTIVĂ & AUDIT TEHNIC
 # ------------------------------------------------------------------------------
 def genereaza_pdf_mentenanta(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=28, leftMargin=28, topMargin=58, bottomMargin=32)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=58, bottomMargin=32)
     elements = []
     s_normal, s_bold, s_small, s_sec_title = creeaza_stiluri()
-    s_tbl = ParagraphStyle('SMentTbl', parent=s_normal, fontSize=8.3, leading=11)
-    s_tbl_bold = ParagraphStyle('SMentTblBold', parent=s_bold, fontSize=8.3, leading=11)
+    s_tbl = ParagraphStyle('SMentTbl', parent=s_normal, fontSize=7.6, leading=10)
+    s_tbl_bold = ParagraphStyle('SMentTblBold', parent=s_bold, fontSize=7.6, leading=10)
     s_tbl_center = ParagraphStyle('SMentTblCenter', parent=s_tbl, alignment=TA_CENTER)
     setari = get_date_firma_mea()
 
@@ -839,7 +862,7 @@ def genereaza_pdf_mentenanta(data):
             Paragraph(f"<b>Tip Mentenanță:</b> <b>{frecventa}</b>", s_tbl)
         ]
     ]
-    t_id = Table(id_rows, colWidths=[270, 269])
+    t_id = Table(id_rows, colWidths=[273.5, 273.5])
     t_id.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
@@ -854,13 +877,18 @@ def genereaza_pdf_mentenanta(data):
     elements.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#94A3B8"), spaceAfter=3))
 
     if ops_efectuate:
+        # Lățime totală utilă pe A4 cu margini 24pt stânga/dreapta: 547pt
+        # Ord. (24) + Operațiune (118) + Parametru (68) + Valoare (40) + UM (28) + Piese necesare (112) + Consumabile (127) + Efectuat (30) = 547pt
+        col_widths_ops = [24, 118, 68, 40, 28, 112, 127, 30]
         ops_rows = [[
             Paragraph("<b>Ord.</b>", s_tbl_bold),
             Paragraph("<b>Operațiune / Verificare</b>", s_tbl_bold),
-            Paragraph("<b>Denumire parametru</b>", s_tbl_bold),
+            Paragraph("<b>Parametru</b>", s_tbl_bold),
             Paragraph("<b>Valoare</b>", s_tbl_bold),
             Paragraph("<b>UM</b>", s_tbl_bold),
-            Paragraph("<b>Efectuat</b>", s_tbl_center),
+            Paragraph("<b>Piese necesare</b>", s_tbl_bold),
+            Paragraph("<b>Materiale consumabile</b>", s_tbl_bold),
+            Paragraph("<b>Ef.</b>", s_tbl_center),
         ]]
         for idx_op, op_item in enumerate(ops_efectuate, start=1):
             if not isinstance(op_item, dict):
@@ -870,6 +898,16 @@ def genereaza_pdf_mentenanta(data):
             prm_v = str(op_item.get("Denumire parametru") or op_item.get("parametru") or "")
             val_v = str(op_item.get("Valoare") or op_item.get("valoare") or "")
             um_v = str(op_item.get("UM") or op_item.get("um") or "")
+            piese_v = _format_lista_resurse_pdf(
+                op_item.get("Piese necesare") or "",
+                op_item.get("piese"),
+                "piesa",
+            )
+            cons_v = _format_lista_resurse_pdf(
+                op_item.get("Materiale consumabile") or "",
+                op_item.get("consumabile"),
+                "material",
+            )
             ef_raw = op_item.get("Efectuat", True)
             ef_v = "DA" if (ef_raw is True or str(ef_raw).strip().lower() in ("true", "1", "da", "yes")) else "NU"
 
@@ -879,15 +917,17 @@ def genereaza_pdf_mentenanta(data):
                 Paragraph(prm_v, s_tbl),
                 Paragraph(val_v, s_tbl),
                 Paragraph(um_v, s_tbl),
+                Paragraph(piese_v, s_tbl),
+                Paragraph(cons_v, s_tbl),
                 Paragraph(ef_v, s_tbl_center),
             ])
 
-        t_ops = Table(ops_rows, colWidths=[32, 235, 118, 64, 42, 48], repeatRows=1)
+        t_ops = Table(ops_rows, colWidths=col_widths_ops, repeatRows=1)
         t_ops.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.45, colors.HexColor("#CBD5E1")),
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 3.5),
+            ('PADDING', (0, 0), (-1, -1), 3),
         ]))
         elements.append(t_ops)
         elements.append(Spacer(1, 6))
@@ -944,7 +984,7 @@ def genereaza_pdf_mentenanta(data):
                 Paragraph(str(r.get("Observații / Valori Măsurate", "") or ""), s_tbl)
             ])
 
-        t_sec = Table(tbl_rows, colWidths=[285, 114, 140], repeatRows=1)
+        t_sec = Table(tbl_rows, colWidths=[288, 115, 144], repeatRows=1)
         t_sec.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.45, colors.HexColor("#CBD5E1")),
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
@@ -988,7 +1028,7 @@ def genereaza_pdf_mentenanta(data):
             Paragraph("Semnătură: ___________________________", ParagraphStyle('C6', parent=s_tbl, alignment=TA_CENTER))
         ]
     ]
-    t_semn = Table(semnaturi_data, colWidths=[269, 270])
+    t_semn = Table(semnaturi_data, colWidths=[273.5, 273.5])
     t_semn.setStyle(TableStyle([
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('LINEBEFORE', (1, 0), (1, -1), 0.5, colors.HexColor("#CBD5E1")),
