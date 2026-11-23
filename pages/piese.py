@@ -488,67 +488,59 @@ def render_piese():
         
         
         if acces_permis:
-            if "calc_rapid_expr_text" not in st.session_state:
-                st.session_state["calc_rapid_expr_text"] = ""
-            if "calc_rapid_rez_v3" not in st.session_state:
-                st.session_state["calc_rapid_rez_v3"] = None
-            if "calc_rapid_err_v3" not in st.session_state:
-                st.session_state["calc_rapid_err_v3"] = None
+            if "calc_enter_expr_salvata" not in st.session_state:
+                st.session_state["calc_enter_expr_salvata"] = ""
+            if "calc_enter_rezultat" not in st.session_state:
+                st.session_state["calc_enter_rezultat"] = None
+            if "calc_enter_eroare" not in st.session_state:
+                st.session_state["calc_enter_eroare"] = None
 
-            def _ruleaza_calcul_buton():
-                expr_txt = str(st.session_state.get("calc_rapid_expr_input") or "")
-                st.session_state["calc_rapid_expr_text"] = expr_txt
+            def _la_enter_calculator():
+                expr_txt = str(st.session_state.get("calc_enter_input") or "")
+                st.session_state["calc_enter_expr_salvata"] = expr_txt
                 if not expr_txt.strip():
-                    st.session_state["calc_rapid_rez_v3"] = None
-                    st.session_state["calc_rapid_err_v3"] = None
+                    st.session_state["calc_enter_rezultat"] = None
+                    st.session_state["calc_enter_eroare"] = None
                     return
                 rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
-                st.session_state["calc_rapid_rez_v3"] = rez if not err else None
-                st.session_state["calc_rapid_err_v3"] = err
+                st.session_state["calc_enter_rezultat"] = rez if not err else None
+                st.session_state["calc_enter_eroare"] = err
 
-            def _copiaza_rezultat_in_form_fara_sterge_expresie():
-                rez = st.session_state.get("calc_rapid_rez_v3")
+            def _copiaza_rezultat_enter():
+                rez = st.session_state.get("calc_enter_rezultat")
                 if rez is not None:
                     st.session_state["pret_piesa_noua_form"] = f"{float(rez):.2f}"
-                    # Păstrăm expresia vizibilă și în input după rerun
-                    st.session_state["calc_rapid_expr_input"] = st.session_state.get("calc_rapid_expr_text", "")
+                    st.session_state["calc_enter_input"] = st.session_state.get("calc_enter_expr_salvata", "")
 
-            # Asigurăm păstrarea expresiei afișate la fiecare rerun
-            st.session_state["calc_rapid_expr_input"] = st.session_state.get("calc_rapid_expr_text", "")
+            st.session_state["calc_enter_input"] = st.session_state.get("calc_enter_expr_salvata", "")
 
-            with st.expander("🧮 Calculator Rapid Preț (folosește butonul Calculează; Enter este blocat)", expanded=False):
-                c1, c2, c3, c4 = st.columns([2.2, 1.0, 1.1, 1.5], vertical_alignment="bottom")
-                with c1:
+            with st.expander("🧮 Calculator Rapid Preț (apasă Enter — nu salvează piesa)", expanded=True):
+                ce1, ce2, ce3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
+                with ce1:
                     st.text_input(
-                        "Expresie de calculat (+, -, *, /)",
-                        key="calc_rapid_expr_input",
+                        "Expresie calcul preț (apasă Enter)",
+                        key="calc_enter_input",
                         placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                        on_change=_la_enter_calculator,
                     )
-                with c2:
+                with ce2:
                     st.button(
-                        "🧮 Calculează",
-                        key="btn_calc_rapid_v3",
+                        "📥 Copiază în preț",
+                        key="btn_copiaza_enter_pret",
                         use_container_width=True,
-                        on_click=_ruleaza_calcul_buton,
+                        on_click=_copiaza_rezultat_enter,
+                        disabled=(st.session_state.get("calc_enter_rezultat") is None),
                     )
-                with c3:
-                    st.button(
-                        "📥 Copiază",
-                        key="btn_copiaza_calc_v3",
-                        use_container_width=True,
-                        on_click=_copiaza_rezultat_in_form_fara_sterge_expresie,
-                        disabled=(st.session_state.get("calc_rapid_rez_v3") is None),
-                    )
-                with c4:
-                    rez_v3 = st.session_state.get("calc_rapid_rez_v3")
-                    err_v3 = st.session_state.get("calc_rapid_err_v3")
-                    valuta_prev = st.session_state.get("valuta_piesa_noua_form", "EUR")
-                    if err_v3:
-                        st.error(f"⚠️ {err_v3}")
-                    elif rez_v3 is not None:
-                        st.success(f"**Rezultat:** `{rez_v3:.2f}` {valuta_prev}")
+                with ce3:
+                    rez_e = st.session_state.get("calc_enter_rezultat")
+                    err_e = st.session_state.get("calc_enter_eroare")
+                    valuta_e = st.session_state.get("valuta_piesa_noua_form", "EUR")
+                    if err_e:
+                        st.error(f"⚠️ {err_e}")
+                    elif rez_e is not None:
+                        st.success(f"**Rezultat:** `{rez_e:.2f}` {valuta_e}")
                     else:
-                        st.caption("Scrie expresia și apasă **Calculează**.")
+                        st.caption("Scrie expresia și apasă **Enter**.")
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
             if acces_permis:
@@ -1442,7 +1434,6 @@ def _activeaza_stergere_pret_la_focus():
         <script>
         (function() {
             const doc = window.parent.document;
-
             function attachFocusClear() {
                 const inputs = doc.querySelectorAll('input[aria-label*="Preț Achiziție"]');
                 inputs.forEach(inp => {
@@ -1459,23 +1450,6 @@ def _activeaza_stergere_pret_la_focus():
                     }
                 });
             }
-
-            if (!doc.body.dataset.blockEnterBound) {
-                doc.body.dataset.blockEnterBound = "true";
-                doc.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' || e.keyCode === 13) {
-                        const target = e.target;
-                        if (!target) return;
-                        const tag = (target.tagName || '').toLowerCase();
-                        // Blocăm Enter pe input-uri și textarea-uri ca să nu declanșeze din reflex submit/acțiuni
-                        if (tag === 'input' || tag === 'textarea') {
-                            e.preventDefault();
-                            e.stopPropagation();
-                        }
-                    }
-                }, true);
-            }
-
             attachFocusClear();
             const observer = new MutationObserver(attachFocusClear);
             observer.observe(doc.body, { childList: true, subtree: true });
