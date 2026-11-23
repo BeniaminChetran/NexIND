@@ -966,6 +966,76 @@ def render_piese():
                 if acces_permis and p.get("link_furnizor"):
                     st.markdown(f"🔗 **Link Furnizor:** [{p['link_furnizor']}]({p['link_furnizor']})")
 
+                if acces_permis:
+                    k_expr_salvat = f"calc_mod_expr_salvat_{pid}"
+                    k_expr_input = f"calc_mod_expr_input_{pid}"
+                    k_rez_mod = f"calc_mod_rez_{pid}"
+                    k_err_mod = f"calc_mod_err_{pid}"
+
+                    if k_expr_salvat not in st.session_state:
+                        st.session_state[k_expr_salvat] = ""
+                    if k_rez_mod not in st.session_state:
+                        st.session_state[k_rez_mod] = None
+                    if k_err_mod not in st.session_state:
+                        st.session_state[k_err_mod] = None
+
+                    def _la_enter_calc_mod(item_id=pid, val_def=pret_val):
+                        k_in = f"calc_mod_expr_input_{item_id}"
+                        k_sv = f"calc_mod_expr_salvat_{item_id}"
+                        k_rz = f"calc_mod_rez_{item_id}"
+                        k_er = f"calc_mod_err_{item_id}"
+                        expr_txt = str(st.session_state.get(k_in) or "")
+                        st.session_state[k_sv] = expr_txt
+                        if not expr_txt.strip():
+                            st.session_state[k_rz] = None
+                            st.session_state[k_er] = None
+                            return
+                        rez, err = calculeaza_pret_din_expresie(expr_txt, val_def)
+                        st.session_state[k_rz] = rez if not err else None
+                        st.session_state[k_er] = err
+
+                    def _copiaza_calc_mod(item_id=pid):
+                        k_rz = f"calc_mod_rez_{item_id}"
+                        k_sv = f"calc_mod_expr_salvat_{item_id}"
+                        k_in = f"calc_mod_expr_input_{item_id}"
+                        k_pret_form = f"pret_{item_id}"
+                        rez = st.session_state.get(k_rz)
+                        if rez is not None:
+                            st.session_state[k_pret_form] = f"{float(rez):.2f}"
+                            st.session_state[k_in] = st.session_state.get(k_sv, "")
+
+                    st.session_state[k_expr_input] = st.session_state.get(k_expr_salvat, "")
+
+                    st.caption("🧮 **Calculator Rapid Preț piesă (apasă Enter — nu salvează formularul):**")
+                    cm1, cm2, cm3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
+                    with cm1:
+                        st.text_input(
+                            "Expresie calcul preț (apasă Enter)",
+                            key=k_expr_input,
+                            placeholder=f"Actual: {pret_val:.2f} {valuta_val} | ex: 120 + 35",
+                            on_change=_la_enter_calc_mod,
+                            args=(pid, pret_val),
+                        )
+                    with cm2:
+                        st.button(
+                            "📥 Copiază",
+                            key=f"btn_copiaza_calc_mod_{pid}",
+                            use_container_width=True,
+                            on_click=_copiaza_calc_mod,
+                            args=(pid,),
+                            disabled=(st.session_state.get(k_rez_mod) is None),
+                        )
+                    with cm3:
+                        rez_m = st.session_state.get(k_rez_mod)
+                        err_m = st.session_state.get(k_err_mod)
+                        val_m = st.session_state.get(f"val_{pid}", valuta_val)
+                        if err_m:
+                            st.error(f"⚠️ {err_m}")
+                        elif rez_m is not None:
+                            st.success(f"**Rezultat:** `{rez_m:.2f}` {val_m}")
+                        else:
+                            st.caption("Scrie expresia și apasă **Enter**.")
+
                 with st.form(f"form_mod_piesa_{pid}"):
                     cp1, cp2 = st.columns(2)
                     with cp1:
