@@ -485,6 +485,70 @@ def render_piese():
             ]
         ))
         masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
+        
+        
+        if acces_permis:
+            if "calc_rapid_expr_text" not in st.session_state:
+                st.session_state["calc_rapid_expr_text"] = ""
+            if "calc_rapid_rez_v3" not in st.session_state:
+                st.session_state["calc_rapid_rez_v3"] = None
+            if "calc_rapid_err_v3" not in st.session_state:
+                st.session_state["calc_rapid_err_v3"] = None
+
+            def _ruleaza_calcul_buton():
+                expr_txt = str(st.session_state.get("calc_rapid_expr_input") or "")
+                st.session_state["calc_rapid_expr_text"] = expr_txt
+                if not expr_txt.strip():
+                    st.session_state["calc_rapid_rez_v3"] = None
+                    st.session_state["calc_rapid_err_v3"] = None
+                    return
+                rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
+                st.session_state["calc_rapid_rez_v3"] = rez if not err else None
+                st.session_state["calc_rapid_err_v3"] = err
+
+            def _copiaza_rezultat_in_form_fara_sterge_expresie():
+                rez = st.session_state.get("calc_rapid_rez_v3")
+                if rez is not None:
+                    st.session_state["pret_piesa_noua_form"] = f"{float(rez):.2f}"
+                    # Păstrăm expresia vizibilă și în input după rerun
+                    st.session_state["calc_rapid_expr_input"] = st.session_state.get("calc_rapid_expr_text", "")
+
+            # Asigurăm păstrarea expresiei afișate la fiecare rerun
+            st.session_state["calc_rapid_expr_input"] = st.session_state.get("calc_rapid_expr_text", "")
+
+            with st.expander("🧮 Calculator Rapid Preț (folosește butonul Calculează; Enter este blocat)", expanded=False):
+                c1, c2, c3, c4 = st.columns([2.2, 1.0, 1.1, 1.5], vertical_alignment="bottom")
+                with c1:
+                    st.text_input(
+                        "Expresie de calculat (+, -, *, /)",
+                        key="calc_rapid_expr_input",
+                        placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                    )
+                with c2:
+                    st.button(
+                        "🧮 Calculează",
+                        key="btn_calc_rapid_v3",
+                        use_container_width=True,
+                        on_click=_ruleaza_calcul_buton,
+                    )
+                with c3:
+                    st.button(
+                        "📥 Copiază",
+                        key="btn_copiaza_calc_v3",
+                        use_container_width=True,
+                        on_click=_copiaza_rezultat_in_form_fara_sterge_expresie,
+                        disabled=(st.session_state.get("calc_rapid_rez_v3") is None),
+                    )
+                with c4:
+                    rez_v3 = st.session_state.get("calc_rapid_rez_v3")
+                    err_v3 = st.session_state.get("calc_rapid_err_v3")
+                    valuta_prev = st.session_state.get("valuta_piesa_noua_form", "EUR")
+                    if err_v3:
+                        st.error(f"⚠️ {err_v3}")
+                    elif rez_v3 is not None:
+                        st.success(f"**Rezultat:** `{rez_v3:.2f}` {valuta_prev}")
+                    else:
+                        st.caption("Scrie expresia și apasă **Calculează**.")
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
             if acces_permis:
@@ -1371,3 +1435,53 @@ def render_piese():
 
     with tab_audit_curatenie:
         _fragment_audit_curatenie()
+        
+def _activeaza_stergere_pret_la_focus():
+    components.html(
+        """
+        <script>
+        (function() {
+            const doc = window.parent.document;
+
+            function attachFocusClear() {
+                const inputs = doc.querySelectorAll('input[aria-label*="Preț Achiziție"]');
+                inputs.forEach(inp => {
+                    if (!inp.dataset.focusClearBound) {
+                        inp.dataset.focusClearBound = "true";
+                        inp.addEventListener('focus', function() {
+                            if (this.value && this.value.trim() !== "") {
+                                this.dataset.prevVal = this.value;
+                                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                                nativeSetter.call(this, "");
+                                this.dispatchEvent(new Event('input', { bubbles: true }));
+                            }
+                        });
+                    }
+                });
+            }
+
+            if (!doc.body.dataset.blockEnterBound) {
+                doc.body.dataset.blockEnterBound = "true";
+                doc.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.keyCode === 13) {
+                        const target = e.target;
+                        if (!target) return;
+                        const tag = (target.tagName || '').toLowerCase();
+                        // Blocăm Enter pe input-uri și textarea-uri ca să nu declanșeze din reflex submit/acțiuni
+                        if (tag === 'input' || tag === 'textarea') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                    }
+                }, true);
+            }
+
+            attachFocusClear();
+            const observer = new MutationObserver(attachFocusClear);
+            observer.observe(doc.body, { childList: true, subtree: true });
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
