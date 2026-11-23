@@ -494,7 +494,11 @@ def render_piese():
         if "calc_nou_eroare" not in st.session_state:
             st.session_state["calc_nou_eroare"] = None
 
+        if "calc_nou_deschis" not in st.session_state:
+            st.session_state["calc_nou_deschis"] = False
+
         def _la_enter_calc_nou():
+            st.session_state["calc_nou_deschis"] = True
             expr_txt = str(st.session_state.get("calc_nou_expr_input") or "")
             st.session_state["calc_nou_expr_salvata"] = expr_txt
             if not expr_txt.strip():
@@ -529,21 +533,14 @@ def render_piese():
                         link_furnizor = ""
                         valuta_noua = "RON"
 
-                st.caption(
-                    f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
-                )
-
-                submit_piesa_noua = st.form_submit_button("💾 Salvează Piesa", type="primary")
-
-            if acces_permis:
                 st.session_state["calc_nou_expr_input"] = st.session_state.get("calc_nou_expr_salvata", "")
                 rez_n_curent = st.session_state.get("calc_nou_rezultat")
-                default_calc_exp = (
-                    f"Deschis — Rezultat curent: {rez_n_curent:.2f}"
-                    if rez_n_curent is not None
-                    else "Deschis — Calculează prețul de achiziție"
-                )
-                with st.expander(f"🧮 Calculator Rapid Preț Achiziție ({default_calc_exp})", expanded=False):
+                exp_deschis_calc = bool(st.session_state.get("calc_nou_deschis", False)) or (rez_n_curent is not None)
+                titlu_calc = "Pret Piesa / calcul pret piesa"
+                if rez_n_curent is not None:
+                    titlu_calc = f"Pret Piesa / calcul pret piesa — {rez_n_curent:.2f}"
+
+                with st.expander(titlu_calc, expanded=exp_deschis_calc):
                     cc1, cc2 = st.columns([2.8, 1.4], vertical_alignment="center")
                     with cc1:
                         st.text_input(
@@ -558,9 +555,18 @@ def render_piese():
                         if err_n:
                             st.error(f"⚠️ {err_n}")
                         elif rez_n is not None:
-                            st.success(f"**Preț calculat:** `{rez_n:.2f}`")
+                            st.markdown(
+                                f'<div style="font-size:1.35rem;font-weight:700;color:#1b5e20;padding:4px 0;">'
+                                f'Preț calculat: {rez_n:.2f}</div>',
+                                unsafe_allow_html=True,
+                            )
                         else:
                             st.caption("La salvare se folosește valoarea calculată aici (implicit `0.00`).")
+
+                    st.caption(
+                        f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
+                    )
+                    submit_piesa_noua = st.form_submit_button("💾 Salvează Piesa", type="primary")
 
             if submit_piesa_noua:
                 if not denumire.strip():
@@ -597,10 +603,15 @@ def render_piese():
                         st.session_state["calc_nou_expr_salvata"] = ""
                         st.session_state["calc_nou_rezultat"] = None
                         st.session_state["calc_nou_eroare"] = None
+                        st.session_state["calc_nou_deschis"] = False
                         _obtine_corpus_utilizare_istoric.clear()
-                        st.success(
-                            f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
-                            f"[Stare: **{stare_cmd_noua}** | Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou}]!"
+                        st.markdown(
+                            f'<div style="font-size:1.2rem;font-weight:600;background:#e8f5e9;color:#1b5e20;'
+                            f'padding:12px 16px;border-radius:8px;border-left:5px solid #2e7d32;margin:8px 0;">'
+                            f'✅ Piesa '{denumire}' a fost salvată pe <strong>{masina_tinta_noua}</strong> '
+                            f'[Stare: <strong>{stare_cmd_noua}</strong> | Preț: <strong>{pret_calculat:.2f} {valuta_noua}</strong> | Termen: {termen_livrare_nou}]!'
+                            f'</div>',
+                            unsafe_allow_html=True,
                         )
                         st.rerun()
 
