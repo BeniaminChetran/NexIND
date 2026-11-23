@@ -511,7 +511,7 @@ def render_piese():
                         "Expresie calcul preț (Enter pentru rezultat)",
                         key="calc_rapid_pret_expr",
                         placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                        on_click=_evalueaza_calculator_rapid,
+                        on_change=_evalueaza_calculator_rapid,
                     )
                 with ccalc2:
                     valuta_calc_preview = st.session_state.get("valuta_piesa_noua_form", "EUR")
@@ -533,6 +533,76 @@ def render_piese():
                         st.caption("Rezultatul apare aici la **Enter**.")
 
                 st.markdown("---")
+
+            with st.form("form_adauga_piesa_unic", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    denumire = st.text_input("Denumire Piesă *")
+                    cod_producator = st.text_input("Cod Producător")
+                    cod_comercial = st.text_input("Cod Comercial")
+                    subansamblu = st.text_input("Subansamblu")
+                    stare_cmd_noua = st.selectbox(
+                        "Stare comandă",
+                        options=OPTIUNI_STARE_COMANDA,
+                        index=0,
+                    )
+                with col2:
+                    parametri = st.text_area("Parametri Piesă (dimensiuni, tensiune, putere etc.)", height=100)
+                    termen_livrare_nou = st.text_input("Termen livrare (ex: 1, 3-5 zile, Stoc)", value="1")
+                    if acces_permis:
+                        link_furnizor = st.text_input("Link Furnizor / Magazin (URL)")
+                        cp_nou1, cp_nou2 = st.columns([3, 1], vertical_alignment="bottom")
+                        with cp_nou1:
+                            pret_expr_nou = st.text_input(
+                                "Preț Achiziție — acceptă calcule (+, -, *, /)",
+                                value="",
+                                placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                                key="pret_piesa_noua_form",
+                            )
+                        with cp_nou2:
+                            valuta_noua = st.selectbox(
+                                "Monedă",
+                                options=["EUR", "RON"],
+                                index=0,
+                                key="valuta_piesa_noua_form",
+                            )
+                    else:
+                        st.info("🔒 Prețul de achiziție și furnizorul sunt protejate de parolă.")
+                        link_furnizor = ""
+                        pret_expr_nou = ""
+                        valuta_noua = "RON"
+
+                st.caption(
+                    f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
+                )
+
+                if st.form_submit_button("💾 Salvează Piesa", type="primary"):
+                    if not denumire.strip():
+                        st.error("Te rugăm să completezi denumirea piesei.")
+                    else:
+                        pret_calculat, err_pret = calculeaza_pret_din_expresie(pret_expr_nou, 0.0)
+                        if err_pret:
+                            st.error(f"⚠️ {err_pret}")
+                        else:
+                            PieseRepository.insert({
+                                "denumire": denumire.strip(),
+                                "cod_producator": cod_producator.strip(),
+                                "cod_comercial": cod_comercial.strip(),
+                                "subansamblu": subansamblu.strip(),
+                                "parametri": parametri.strip(),
+                                "termen_livrare": termen_livrare_nou.strip() or "1",
+                                "link_furnizor": link_furnizor.strip(),
+                                "pret_achizitie": pret_calculat,
+                                "valuta_achizitie": valuta_noua,
+                                "masina_montaj": masina_tinta_noua,
+                                "stare_comandata": stare_cmd_noua,
+                            })
+                            _obtine_corpus_utilizare_istoric.clear()
+                            st.success(
+                                f"✅ Piesa '{denumire}' a fost salvată pe **{masina_tinta_noua}** "
+                                f"[Stare: **{stare_cmd_noua}** | Preț: **{pret_calculat:.2f} {valuta_noua}** | Termen: {termen_livrare_nou}]!"
+                            )
+                            st.rerun()
 
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
