@@ -485,8 +485,10 @@ def render_piese():
             ]
         ))
         masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
-        
-        
+
+        # --------------------------------------------------------------
+        # CALCULATOR 1 (ENTER — ÎN AFARA FORMULARULUI DE PIESĂ NOUĂ)
+        # --------------------------------------------------------------
         if acces_permis:
             if "calc_enter_expr_salvata" not in st.session_state:
                 st.session_state["calc_enter_expr_salvata"] = ""
@@ -514,7 +516,7 @@ def render_piese():
 
             st.session_state["calc_enter_input"] = st.session_state.get("calc_enter_expr_salvata", "")
 
-            with st.expander("🧮 Calculator Rapid Preț (apasă Enter — nu salvează piesa)", expanded=True):
+            with st.expander("🧮 Calculator Rapid Preț (apasă Enter — nu salvează piesa)", expanded=False):
                 ce1, ce2, ce3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
                 with ce1:
                     st.text_input(
@@ -543,53 +545,6 @@ def render_piese():
                         st.caption("Scrie expresia și apasă **Enter**.")
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
-            if acces_permis:
-                st.markdown("###### 🧮 Calculator Rapid Preț (apasă **Enter** — nu salvează piesa)")
-
-                def _evalueaza_calculator_rapid():
-                    expr_txt = st.session_state.get("calc_rapid_pret_expr", "")
-                    if not str(expr_txt or "").strip():
-                        st.session_state["calc_rapid_rezultat"] = None
-                        st.session_state["calc_rapid_eroare"] = None
-                        return
-                    rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
-                    st.session_state["calc_rapid_rezultat"] = rez if not err else None
-                    st.session_state["calc_rapid_eroare"] = err
-
-                def _aplica_rezultat_in_formular():
-                    rez = st.session_state.get("calc_rapid_rezultat")
-                    if rez is not None:
-                        st.session_state["pret_piesa_noua_form"] = f"{float(rez):.2f}"
-
-                ccalc1, ccalc2, ccalc3 = st.columns([2.4, 1.0, 1.6], vertical_alignment="bottom")
-                with ccalc1:
-                    st.text_input(
-                        "Expresie calcul preț (Enter pentru rezultat)",
-                        key="calc_rapid_pret_expr",
-                        placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                        on_change=_evalueaza_calculator_rapid,
-                    )
-                with ccalc2:
-                    valuta_calc_preview = st.session_state.get("valuta_piesa_noua_form", "EUR")
-                    st.button(
-                        "📥 Copiază în preț",
-                        key="btn_copiaza_calc_pret",
-                        use_container_width=True,
-                        on_click=_aplica_rezultat_in_formular,
-                        disabled=(st.session_state.get("calc_rapid_rezultat") is None),
-                    )
-                with ccalc3:
-                    rez_c = st.session_state.get("calc_rapid_rezultat")
-                    err_c = st.session_state.get("calc_rapid_eroare")
-                    if err_c:
-                        st.error(f"⚠️ {err_c}")
-                    elif rez_c is not None:
-                        st.success(f"**Rezultat:** `{rez_c:.2f}` {valuta_calc_preview}")
-                    else:
-                        st.caption("Rezultatul apare aici la **Enter**.")
-
-                st.markdown("---")
-
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -966,8 +921,12 @@ def render_piese():
                 if acces_permis and p.get("link_furnizor"):
                     st.markdown(f"🔗 **Link Furnizor:** [{p['link_furnizor']}]({p['link_furnizor']})")
 
+                # ------------------------------------------------------
+                # CALCULATOR 2 (ENTER — ÎN AFARA FORMULARULUI DE EDITARE)
+                # ------------------------------------------------------
                 if acces_permis:
                     k_expr_salvat = f"calc_mod_expr_salvat_{pid}"
+                    k_expr_input = f"calc_mod_expr_input_{pid}"
                     k_rez_mod = f"calc_mod_rez_{pid}"
                     k_err_mod = f"calc_mod_err_{pid}"
 
@@ -978,53 +937,61 @@ def render_piese():
                     if k_err_mod not in st.session_state:
                         st.session_state[k_err_mod] = None
 
-                    with st.form(f"form_calc_mod_{pid}", clear_on_submit=False):
-                        cm1, cm2, cm3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
-                        with cm1:
-                            expr_mod_val = st.text_input(
-                                "Calculator rapid preț piesă (Enter calculează doar aici)",
-                                value=st.session_state.get(k_expr_salvat, ""),
-                                placeholder=f"Actual: {pret_val:.2f} {valuta_val} | ex: 120 + 35",
-                                key=f"calc_mod_expr_input_{pid}",
-                            )
-                        with cm2:
-                            calc_mod_submitted = st.form_submit_button(
-                                "🧮 Calculează",
-                                use_container_width=True,
-                            )
-                        with cm3:
-                            if calc_mod_submitted:
-                                st.session_state[k_expr_salvat] = str(expr_mod_val or "")
-                                if not str(expr_mod_val or "").strip():
-                                    st.session_state[k_rez_mod] = None
-                                    st.session_state[k_err_mod] = None
-                                else:
-                                    rez_c, err_c = calculeaza_pret_din_expresie(expr_mod_val, pret_val)
-                                    st.session_state[k_rez_mod] = rez_c if not err_c else None
-                                    st.session_state[k_err_mod] = err_c
+                    def _la_enter_calc_mod(item_id=pid, val_def=pret_val):
+                        k_in = f"calc_mod_expr_input_{item_id}"
+                        k_sv = f"calc_mod_expr_salvat_{item_id}"
+                        k_rz = f"calc_mod_rez_{item_id}"
+                        k_er = f"calc_mod_err_{item_id}"
+                        expr_txt = str(st.session_state.get(k_in) or "")
+                        st.session_state[k_sv] = expr_txt
+                        if not expr_txt.strip():
+                            st.session_state[k_rz] = None
+                            st.session_state[k_er] = None
+                            return
+                        rez, err = calculeaza_pret_din_expresie(expr_txt, val_def)
+                        st.session_state[k_rz] = rez if not err else None
+                        st.session_state[k_er] = err
 
-                            rez_m = st.session_state.get(k_rez_mod)
-                            err_m = st.session_state.get(k_err_mod)
-                            val_m = st.session_state.get(f"val_{pid}", valuta_val)
-                            if err_m:
-                                st.error(f"⚠️ {err_m}")
-                            elif rez_m is not None:
-                                st.success(f"**Rezultat:** `{rez_m:.2f}` {val_m}")
-                            else:
-                                st.caption("Scrie expresia și apasă **Enter**.")
+                    def _copiaza_calc_mod(item_id=pid):
+                        k_rz = f"calc_mod_rez_{item_id}"
+                        k_sv = f"calc_mod_expr_salvat_{item_id}"
+                        k_in = f"calc_mod_expr_input_{item_id}"
+                        k_pret_form = f"pret_{item_id}"
+                        rez = st.session_state.get(k_rz)
+                        if rez is not None:
+                            st.session_state[k_pret_form] = f"{float(rez):.2f}"
+                            st.session_state[k_in] = st.session_state.get(k_sv, "")
 
-                    if st.session_state.get(k_rez_mod) is not None:
-                        def _copiaza_calc_mod(item_id=pid):
-                            rz = st.session_state.get(f"calc_mod_rez_{item_id}")
-                            if rz is not None:
-                                st.session_state[f"pret_{item_id}"] = f"{float(rz):.2f}"
+                    st.session_state[k_expr_input] = st.session_state.get(k_expr_salvat, "")
 
+                    cm1, cm2, cm3 = st.columns([2.5, 1.1, 1.5], vertical_alignment="bottom")
+                    with cm1:
+                        st.text_input(
+                            "Expresie calcul preț (apasă Enter)",
+                            key=k_expr_input,
+                            placeholder=f"Actual: {pret_val:.2f} {valuta_val} | ex: 120 + 35",
+                            on_change=_la_enter_calc_mod,
+                            args=(pid, pret_val),
+                        )
+                    with cm2:
                         st.button(
-                            "📥 Copiază rezultatul în câmpul Preț Achiziție",
+                            "📥 Copiază",
                             key=f"btn_copiaza_calc_mod_{pid}",
+                            use_container_width=True,
                             on_click=_copiaza_calc_mod,
                             args=(pid,),
+                            disabled=(st.session_state.get(k_rez_mod) is None),
                         )
+                    with cm3:
+                        rez_m = st.session_state.get(k_rez_mod)
+                        err_m = st.session_state.get(k_err_mod)
+                        val_m = st.session_state.get(f"val_{pid}", valuta_val)
+                        if err_m:
+                            st.error(f"⚠️ {err_m}")
+                        elif rez_m is not None:
+                            st.success(f"**Rezultat:** `{rez_m:.2f}` {val_m}")
+                        else:
+                            st.caption("Scrie expresia și apasă **Enter**.")
 
                 with st.form(f"form_mod_piesa_{pid}"):
                     cp1, cp2 = st.columns(2)
@@ -1487,35 +1454,3 @@ def render_piese():
 
     with tab_audit_curatenie:
         _fragment_audit_curatenie()
-        
-def _activeaza_stergere_pret_la_focus():
-    components.html(
-        """
-        <script>
-        (function() {
-            const doc = window.parent.document;
-            function attachFocusClear() {
-                const inputs = doc.querySelectorAll('input[aria-label*="Preț Achiziție"]');
-                inputs.forEach(inp => {
-                    if (!inp.dataset.focusClearBound) {
-                        inp.dataset.focusClearBound = "true";
-                        inp.addEventListener('focus', function() {
-                            if (this.value && this.value.trim() !== "") {
-                                this.dataset.prevVal = this.value;
-                                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                                nativeSetter.call(this, "");
-                                this.dispatchEvent(new Event('input', { bubbles: true }));
-                            }
-                        });
-                    }
-                });
-            }
-            attachFocusClear();
-            const observer = new MutationObserver(attachFocusClear);
-            observer.observe(doc.body, { childList: true, subtree: true });
-        })();
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
