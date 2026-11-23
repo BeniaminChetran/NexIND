@@ -60,6 +60,8 @@ def _asigura_tabela_recurente_db():
                 creat_la TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("ALTER TABLE catalog_operatiuni_mentenanta ENABLE ROW LEVEL SECURITY;")
+c.execute("ALTER TABLE fise_mentenanta_tip_masina ENABLE ROW LEVEL SECURITY;")
     st.session_state["_client_op_ment_rec_ok"] = True
 
 

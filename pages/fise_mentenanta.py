@@ -65,6 +65,8 @@ def _asigura_tabele_fise_si_catalog():
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS piese_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS consumabile_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS documentatii_json TEXT NOT NULL DEFAULT '[]'")
+        c.execute("ALTER TABLE catalog_operatiuni_mentenanta ENABLE ROW LEVEL SECURITY;")
+        c.execute("ALTER TABLE fise_mentenanta_tip_masina ENABLE ROW LEVEL SECURITY;")
     st.session_state["_fise_tip_db_ok"] = True
 
 
