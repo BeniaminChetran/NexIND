@@ -487,6 +487,53 @@ def render_piese():
         masina_tinta_noua = sel_m if sel_m != "Toate mașinile / General" else "General"
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
+            if acces_permis:
+                st.markdown("###### 🧮 Calculator Rapid Preț (apasă **Enter** — nu salvează piesa)")
+
+                def _evalueaza_calculator_rapid():
+                    expr_txt = st.session_state.get("calc_rapid_pret_expr", "")
+                    if not str(expr_txt or "").strip():
+                        st.session_state["calc_rapid_rezultat"] = None
+                        st.session_state["calc_rapid_eroare"] = None
+                        return
+                    rez, err = calculeaza_pret_din_expresie(expr_txt, 0.0)
+                    st.session_state["calc_rapid_rezultat"] = rez if not err else None
+                    st.session_state["calc_rapid_eroare"] = err
+
+                def _aplica_rezultat_in_formular():
+                    rez = st.session_state.get("calc_rapid_rezultat")
+                    if rez is not None:
+                        st.session_state["pret_piesa_noua_form"] = f"{float(rez):.2f}"
+
+                ccalc1, ccalc2, ccalc3 = st.columns([2.4, 1.0, 1.6], vertical_alignment="bottom")
+                with ccalc1:
+                    st.text_input(
+                        "Expresie calcul preț (Enter pentru rezultat)",
+                        key="calc_rapid_pret_expr",
+                        placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                        on_change=_evalueaza_calculator_rapid,
+                    )
+                with ccalc2:
+                    valuta_calc_preview = st.session_state.get("valuta_piesa_noua_form", "EUR")
+                    st.button(
+                        "📥 Copiază în preț",
+                        key="btn_copiaza_calc_pret",
+                        use_container_width=True,
+                        on_click=_aplica_rezultat_in_formular,
+                        disabled=(st.session_state.get("calc_rapid_rezultat") is None),
+                    )
+                with ccalc3:
+                    rez_c = st.session_state.get("calc_rapid_rezultat")
+                    err_c = st.session_state.get("calc_rapid_eroare")
+                    if err_c:
+                        st.error(f"⚠️ {err_c}")
+                    elif rez_c is not None:
+                        st.success(f"**Rezultat:** `{rez_c:.2f}` {valuta_calc_preview}")
+                    else:
+                        st.caption("Rezultatul apare aici la **Enter**.")
+
+                st.markdown("---")
+
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -510,9 +557,15 @@ def render_piese():
                                 "Preț Achiziție — acceptă calcule (+, -, *, /)",
                                 value="",
                                 placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                                key="pret_piesa_noua_form",
                             )
                         with cp_nou2:
-                            valuta_noua = st.selectbox("Monedă", options=["EUR", "RON"], index=0)
+                            valuta_noua = st.selectbox(
+                                "Monedă",
+                                options=["EUR", "RON"],
+                                index=0,
+                                key="valuta_piesa_noua_form",
+                            )
                     else:
                         st.info("🔒 Prețul de achiziție și furnizorul sunt protejate de parolă.")
                         link_furnizor = ""
