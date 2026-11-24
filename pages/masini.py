@@ -217,7 +217,10 @@ def render_masini():
                     if not fara_int_edit:
                         data_urm_edit = st.date_input(
                             "Data următoarei întrețineri",
-                            value=_parse_date_sigur(m.get("data_intretinere"), date.today() + timedelta(days=int(interval_edit) or 90)),
+                            value=_parse_date_sigur(
+                                m.get("data_intretinere"),
+                                date.today() + timedelta(days=int(interval_edit) or 90),
+                            ),
                         )
                     else:
                         data_urm_edit = None
@@ -230,27 +233,3 @@ def render_masini():
                 if salveaza_btn:
                     if not den_edit.strip():
                         st.error("⚠️ Denumirea mașinii nu poate fi goală.")
-                    else:
-                        payload_edit = {
-                            "firma_id": firma_id,
-                            "denumire": den_edit.strip(),
-                            "tip_masina": tip_edit.strip(),
-                            "serie": serie_edit.strip(),
-                            "tip_intretinere": frec_edit,
-                            "fara_intretinere": bool(fara_int_edit),
-                            "interval_intretinere_zile": 0 if fara_int_edit else int(interval_edit),
-                            "data_intretinere": None if fara_int_edit else data_urm_edit,
-                            "ultima_intretinere": ultima_edit if ultima_are_valoare else None,
-                            "sisteme_active": m.get("sisteme_active") or ALL_SISTEME_DEFAULT,
-                        }
-                        _actualizeaza_masina_db(mid, payload_edit)
-                        st.success(f"✅ Modificările pentru **{den_edit.strip()}** au fost salvate.")
-                        st.rerun()
-
-                if sterge_btn:
-                    _sterge_masina_db(mid)
-                    st.warning(f"🗑️ Mașina **{m.get('denumire')}** a fost ștearsă.")
-                    st.rerun()
-                    
-    # ... după ce ai firma_id și masina_obj (dicționarul mașinii active):
-    render_sectiune_cmms_masina(firma_id=firma_id, masina_obj=masina_obj)                
