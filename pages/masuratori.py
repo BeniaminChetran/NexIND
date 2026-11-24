@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import db_cursor
 from repositories.firme_repository import FirmeRepository
@@ -43,6 +44,42 @@ _PALETA_CULORI_PARAMETRI = [
     "#EA80FC",  # lavandă
     "#FFE57F",  # galben deschis
 ]
+
+_VALOARE_LABEL = "Valoare Măsurată (cu semn +/-)"
+
+
+def _focalizeaza_valoare_masurata(trigger_id: str) -> None:
+    """Setează focusul în browser pe câmpul Valoare Măsurată la schimbarea parametrului."""
+    if not trigger_id:
+        return
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const token = {trigger_id!r};
+            const targetLabel = {_VALOARE_LABEL!r};
+            function tryFocus(attempt) {{
+                const doc = window.parent ? window.parent.document : document;
+                const inputs = Array.from(doc.querySelectorAll('input'));
+                const match = inputs.find((el) => el.getAttribute('aria-label') === targetLabel);
+                if (match && typeof match.focus === 'function') {{
+                    match.focus();
+                    if (typeof match.select === 'function') {{
+                        match.select();
+                    }}
+                    return;
+                }}
+                if (attempt < 8) {{
+                    setTimeout(() => tryFocus(attempt + 1), 60);
+                }}
+            }}
+            setTimeout(() => tryFocus(0), 50);
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def _invalideaza_cache_masuratori() -> None:
@@ -155,6 +192,38 @@ def _colecteaza_parametri(
     return prioritari + alti
 
 
+def _gaseste_unitate_parametru(
+    masuratori_db: list[dict],
+    parametru_nume: str | None,
+    subansamblu_nume: str | None = None,
+) -> str | None:
+    """Returnează unitatea de măsură cunoscută pentru parametrul selectat."""
+    param_low = str(parametru_nume or "").strip().lower()
+    if not param_low:
+        return None
+    sub_low = str(subansamblu_nume or "").strip().lower()
+
+    # 1. Caută prioritar pe același subansamblu
+    if sub_low:
+        for m_row in masuratori_db:
+            if (
+                str(m_row.get("parametru") or "").strip().lower() == param_low
+                and str(m_row.get("subansamblu") or "").strip().lower() == sub_low
+            ):
+                unit = str(m_row.get("unitate_masura") or "").strip()
+                if unit:
+                    return unit
+
+    # 2. Altfel caută pe orice înregistrare a parametrului pe mașină
+    for m_row in masuratori_db:
+        if str(m_row.get("parametru") or "").strip().lower() == param_low:
+            unit = str(m_row.get("unitate_masura") or "").strip()
+            if unit:
+                return unit
+
+    return None
+
+
 def _persista_subansamblu_pe_masina(
     m_id: int,
     masina_obj_val: dict,
@@ -239,6 +308,9 @@ def render_masuratori():
         param_dropdown_key = f"mas_param_dd_{m_id}"
         last_param_dd_key = f"_mas_last_param_dd_{m_id}"
         param_edit_key = f"mas_param_edit_{m_id}"
+        unit_select_key = f"mas_unit_sel_{m_id}"
+        unit_custom_key = f"mas_unit_custom_{m_id}"
+        focus_token_key = f"_mas_focus_val_{m_id}"
 
         masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
         sesiuni_derulare = _construieste_masuratori_in_derulare(masuratori_db)
@@ -275,6 +347,7 @@ def render_masuratori():
             if sub_din_derulare in opt_sub:
                 st.session_state[sub_state_key] = sub_din_derulare
                 st.session_state.pop(sub_widget_key, None)
+            st.session_state[focus_token_key] = f"derulare_{sel_derulare}_{datetime.now().timestamp()}"
 
         if st.session_state.get(sub_state_key) not in opt_sub:
             st.session_state[sub_state_key] = opt_sub[0]
@@ -317,7 +390,7 @@ def render_masuratori():
 
         sub_activ_implicit = subansamblu_nou or subansamblu_ales
 
-        # 3. Dropdown parametru existent (scrie direct în editbox-ul din formular când îl alegi)
+        # 3. Dropdown parametru existent (scrie direct în editbox și setează unitatea de măsură)
         parametri_existenti = _colecteaza_parametri(
             masuratori_db=masuratori_db,
             subansamblu_filtru=sub_activ_implicit,
@@ -330,16 +403,28 @@ def render_masuratori():
             key=param_dropdown_key,
         )
 
-        # Actualizăm editbox-ul DOAR când se schimbă selecția în dropdown, înainte ca st.text_input să fie creat
+        st.session_state.setdefault(param_edit_key, "")
+        st.session_state.setdefault(unit_select_key, _UNITATI_MASURA[0])
+
         if parametru_dd != st.session_state.get(last_param_dd_key):
             st.session_state[last_param_dd_key] = parametru_dd
             if not parametru_dd.startswith("—"):
                 st.session_state[param_edit_key] = parametru_dd
-
-        st.session_state.setdefault(param_edit_key, "")
+                unit_cunoscuta = _gaseste_unitate_parametru(
+                    masuratori_db=masuratori_db,
+                    parametru_nume=parametru_dd,
+                    subansamblu_nume=sub_activ_implicit,
+                )
+                if unit_cunoscuta:
+                    if unit_cunoscuta in _UNITATI_MASURA:
+                        st.session_state[unit_select_key] = unit_cunoscuta
+                    else:
+                        st.session_state[unit_select_key] = "Altul"
+                        st.session_state[unit_custom_key] = unit_cunoscuta
+                st.session_state[focus_token_key] = f"param_{parametru_dd}_{datetime.now().timestamp()}"
 
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
-            f_col1, f_col2 = st.columns(2)
+            f_col1, f_col2 = st.columns([1.15, 1.0])
 
             with f_col1:
                 subansamblu_input = st.text_input(
@@ -351,22 +436,32 @@ def render_masuratori():
                     "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)",
                     key=param_edit_key,
                 )
-
-            with f_col2:
-                valoare_input = st.number_input(
-                    "Valoare Măsurată (cu semn +/-)",
-                    format="%.3f",
-                    step=0.001,
-                    help="Acceptă valori pozitive sau negative (ex: +23.450 sau -0.125)",
+                unitate_input = st.selectbox(
+                    "Unitate de Măsură",
+                    options=_UNITATI_MASURA,
+                    key=unit_select_key,
                 )
-
-                unitate_input = st.selectbox("Unitate de Măsură", options=_UNITATI_MASURA)
                 if unitate_input == "Altul":
-                    unitate_custom = st.text_input("Specifică unitatea de măsură")
+                    unitate_custom = st.text_input(
+                        "Specifică unitatea de măsură",
+                        key=unit_custom_key,
+                    )
                     if unitate_custom:
                         unitate_input = unitate_custom
 
-            btn_salveaza = st.form_submit_button("💾 Salvează Măsurătoarea", type="primary")
+            with f_col2:
+                st.markdown("##### 🎯 Valoare & Salvare Rapidă")
+                valoare_input = st.number_input(
+                    _VALOARE_LABEL,
+                    format="%.3f",
+                    step=0.001,
+                    help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
+                )
+                btn_salveaza = st.form_submit_button(
+                    "💾 Salvează Măsurătoarea",
+                    type="primary",
+                    use_container_width=True,
+                )
 
             if btn_salveaza:
                 if not subansamblu_input.strip():
@@ -405,6 +500,10 @@ def render_masuratori():
                         f"Măsurătoarea pentru '{param_curat}' ({valoare_input:+.3f} {unitate_input}) "
                         f"pe subansamblul '{sub_curat}' a fost salvată!"
                     )
+
+        focus_token = st.session_state.pop(focus_token_key, None)
+        if focus_token:
+            _focalizeaza_valoare_masurata(focus_token)
 
         st.markdown("---")
         st.markdown(f"### 📈 Grafic Evoluție Parametri Măsurați — **{m_nume}**")
