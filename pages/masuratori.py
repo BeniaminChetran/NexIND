@@ -49,7 +49,7 @@ _VALOARE_LABEL = "Valoare Măsurată (cu semn +/-)"
 
 
 def _focalizeaza_valoare_masurata(trigger_id: str) -> None:
-    """Setează focusul în browser pe câmpul Valoare Măsurată la schimbarea parametrului."""
+    """Setează focusul în browser pe câmpul Valoare Măsurată după selectarea parametrului."""
     if not trigger_id:
         return
     components.html(
@@ -203,7 +203,6 @@ def _gaseste_unitate_parametru(
         return None
     sub_low = str(subansamblu_nume or "").strip().lower()
 
-    # 1. Caută prioritar pe același subansamblu
     if sub_low:
         for m_row in masuratori_db:
             if (
@@ -214,7 +213,6 @@ def _gaseste_unitate_parametru(
                 if unit:
                     return unit
 
-    # 2. Altfel caută pe orice înregistrare a parametrului pe mașină
     for m_row in masuratori_db:
         if str(m_row.get("parametru") or "").strip().lower() == param_low:
             unit = str(m_row.get("unitate_masura") or "").strip()
@@ -347,14 +345,13 @@ def render_masuratori():
             if sub_din_derulare in opt_sub:
                 st.session_state[sub_state_key] = sub_din_derulare
                 st.session_state.pop(sub_widget_key, None)
-            st.session_state[focus_token_key] = f"derulare_{sel_derulare}_{datetime.now().timestamp()}"
 
         if st.session_state.get(sub_state_key) not in opt_sub:
             st.session_state[sub_state_key] = opt_sub[0]
 
         idx_sub = opt_sub.index(st.session_state[sub_state_key])
 
-        # 2. Selectare sau creare subansamblu nou de măsurat
+        # 2. Subansamblu (selectare existentă sau creare nouă)
         c_sub1, c_sub2, c_sub3 = st.columns([2.2, 2.0, 1.1], vertical_alignment="bottom")
         with c_sub1:
             subansamblu_ales = st.selectbox(
@@ -390,7 +387,7 @@ def render_masuratori():
 
         sub_activ_implicit = subansamblu_nou or subansamblu_ales
 
-        # 3. Dropdown parametru existent (scrie direct în editbox și setează unitatea de măsură)
+        # 3. Selectare parametru existent (completează automat editbox-ul + unitatea de măsură și focusează valoarea)
         parametri_existenti = _colecteaza_parametri(
             masuratori_db=masuratori_db,
             subansamblu_filtru=sub_activ_implicit,
@@ -398,7 +395,7 @@ def render_masuratori():
         opt_parametri = ["— Alege parametru existent —"] + parametri_existenti
 
         parametru_dd = st.selectbox(
-            "Parametru existent (opțional — sau scrie direct mai jos)",
+            "Parametru existent (opțional — sau scrie direct în câmpul de parametru)",
             options=opt_parametri,
             key=param_dropdown_key,
         )
@@ -423,8 +420,9 @@ def render_masuratori():
                         st.session_state[unit_custom_key] = unit_cunoscuta
                 st.session_state[focus_token_key] = f"param_{parametru_dd}_{datetime.now().timestamp()}"
 
+        # 4. Formularul reorganizat: stânga = subansamblu + parametru; dreapta = reintroducere valoare + unitate + salvare
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
-            f_col1, f_col2 = st.columns([1.15, 1.0])
+            f_col1, f_col2 = st.columns([1.05, 1.15])
 
             with f_col1:
                 subansamblu_input = st.text_input(
@@ -436,11 +434,24 @@ def render_masuratori():
                     "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)",
                     key=param_edit_key,
                 )
-                unitate_input = st.selectbox(
-                    "Unitate de Măsură",
-                    options=_UNITATI_MASURA,
-                    key=unit_select_key,
-                )
+
+            with f_col2:
+                st.markdown("##### 🎯 Reintroducere Valoare & Salvare")
+                v_col1, v_col2 = st.columns([1.5, 1.0])
+                with v_col1:
+                    valoare_input = st.number_input(
+                        _VALOARE_LABEL,
+                        format="%.3f",
+                        step=0.001,
+                        help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
+                    )
+                with v_col2:
+                    unitate_input = st.selectbox(
+                        "Unitate de Măsură",
+                        options=_UNITATI_MASURA,
+                        key=unit_select_key,
+                    )
+
                 if unitate_input == "Altul":
                     unitate_custom = st.text_input(
                         "Specifică unitatea de măsură",
@@ -449,14 +460,6 @@ def render_masuratori():
                     if unitate_custom:
                         unitate_input = unitate_custom
 
-            with f_col2:
-                st.markdown("##### 🎯 Valoare & Salvare Rapidă")
-                valoare_input = st.number_input(
-                    _VALOARE_LABEL,
-                    format="%.3f",
-                    step=0.001,
-                    help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
-                )
                 btn_salveaza = st.form_submit_button(
                     "💾 Salvează Măsurătoarea",
                     type="primary",
