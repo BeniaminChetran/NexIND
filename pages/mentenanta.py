@@ -2,17 +2,13 @@
 # -------pages/mentenanta.py----------------
 # ------------------------------------------
 
+from datetime import date, timedelta
 import json
 import re
-import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+import streamlit as st
+
 from config import db_cursor
-from repositories.firme_repository import FirmeRepository
-from repositories.masini_repository import MasiniRepository
-from repositories.mentenanta_repository import INTERVALE_ZILE
-from repositories.setari_repository import SetariRepository
-from services.pdf_service import genereaza_pdf_mentenanta
 from pages.fise_mentenanta import (
     FRECVENTE_MENTENANTA,
     adauga_operatiune_in_catalog_db,
@@ -24,13 +20,43 @@ from pages.fise_mentenanta import (
     render_builder_resurse_operatiune,
     reseteaza_builder_resurse_operatiune,
 )
+from repositories.firme_repository import FirmeRepository
+from repositories.masini_repository import MasiniRepository
+from repositories.mentenanta_repository import INTERVALE_ZILE
+from repositories.setari_repository import SetariRepository
+from services.pdf_service import genereaza_pdf_mentenanta
+
+_FRECVENTE_TITLU_MAP = {
+    "zilnică": "zilnice",
+    "zilnica": "zilnice",
+    "săptămânală": "saptamanale",
+    "saptamanala": "saptamanale",
+    "lunară": "lunare",
+    "lunara": "lunare",
+    "trimestrială": "trimestriale",
+    "trimestriala": "trimestriale",
+    "anuală": "anuale",
+    "anuala": "anuale",
+}
+
+_COLS_VIZ_OPERATIUNI = [
+    "Ordine",
+    "Operațiune / Verificare",
+    "Denumire parametru",
+    "Valoare",
+    "UM",
+    "Piese necesare",
+    "Materiale consumabile",
+    "Documentație",
+    "Efectuat",
+]
 
 
-def _asigura_tabela_recurente_db():
-    if st.session_state.get("_client_op_ment_rec_ok"):
-        return
+@st.cache_resource
+def _asigura_tabela_recurente_db() -> bool:
     with db_cursor() as c:
-        c.execute("""
+        c.execute(
+            """
             CREATE TABLE IF NOT EXISTS client_operatiuni_mentenanta_recurente (
                 id SERIAL PRIMARY KEY,
                 nr_fisa VARCHAR(64) NOT NULL,
@@ -59,10 +85,20 @@ def _asigura_tabela_recurente_db():
                 urmatoarea_revizie DATE,
                 creat_la TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+            """
+        )
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ENABLE ROW LEVEL SECURITY;")
         c.execute("ALTER TABLE fise_mentenanta_tip_masina ENABLE ROW LEVEL SECURITY;")
-    st.session_state["_client_op_ment_rec_ok"] = True
+    return True
+
+
+def _invalideaza_cache_fise_recurente() -> None:
+    clear_fn = getattr(_incarca_fise_recurente_db_cached, "clear", None)
+    if callable(clear_fn):
+        try:
+            clear_fn()
+        except Exception:
+            pass
 
 
 def _genereaza_nr_fisa_unic() -> str:
@@ -74,179 +110,9 @@ def _genereaza_nr_fisa_unic() -> str:
     return f"FM-{urm:04d}"
 
 
-def _insereaza_fisa_recurenta_db(payload: dict) -> tuple[int, str]:
-    _asigura_tabela_recurente_db()
-    nr_fisa = _genereaza_nr_fisa_unic()
-    titlu_pdf = construieste_titlu_operatiuni_pdf(
-        frecventa=payload.get("frecventa") or "Lunară",
-        masina=payload.get("masina_nume") or "",
-        tip_masina=payload.get("tip_masina") or "",
-        data_str=str(payload.get("data_interventie") or ""),
-        firma=payload.get("firma_nume") or "",
-        nr_fisa=nr_fisa,
-    )
-    ops_json = json.dumps(payload.get("operatiuni") or [], ensure_ascii=False)
-    with db_cursor() as c:
-        c.execute("""
-            INSERT INTO client_operatiuni_mentenanta_recurente (
-                nr_fisa, firma_id, masina_id, firma_nume, masina_nume, tip_masina,
-                frecventa, titlu_pdf, punct_lucru, producator_model, serie_fabricatie,
-                nr_inventar, ore_functionare, ore_cumulate, nivel_grila,
-                stare_initiala, stare_finala, operatiuni_json, recomandari_iiot,
-                tehnician, verificator, functie_verificator, data_interventie, urmatoarea_revizie
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
-            )
-            RETURNING id
-        """, (
-            nr_fisa,
-            payload.get("firma_id"),
-            payload.get("masina_id"),
-            payload.get("firma_nume", ""),
-            payload.get("masina_nume", ""),
-            payload.get("tip_masina", ""),
-            payload.get("frecventa", "Lunară"),
-            titlu_pdf,
-            payload.get("punct_lucru", ""),
-            payload.get("producator_model", ""),
-            payload.get("serie_fabricatie", ""),
-            payload.get("nr_inventar", ""),
-            payload.get("ore_functionare", ""),
-            payload.get("ore_cumulate", ""),
-            payload.get("nivel_grila", ""),
-            payload.get("stare_initiala", ""),
-            payload.get("stare_finala", ""),
-            ops_json,
-            payload.get("recomandari_iiot", ""),
-            payload.get("tehnician", ""),
-            payload.get("verificator", ""),
-            payload.get("functie_verificator", ""),
-            payload.get("data_interventie"),
-            payload.get("urmatoarea_revizie"),
-        ))
-        ret = c.fetchone()
-        row_id = int(ret["id"] if isinstance(ret, dict) else ret[0]) if ret else 0
-    return row_id, nr_fisa
-
-
-def _actualizeaza_fisa_recurenta_db(rec_id: int, nr_fisa: str, payload: dict) -> str:
-    _asigura_tabela_recurente_db()
-    nr_fisa_clean = str(nr_fisa or "").strip() or _genereaza_nr_fisa_unic()
-    titlu_pdf = construieste_titlu_operatiuni_pdf(
-        frecventa=payload.get("frecventa") or "Lunară",
-        masina=payload.get("masina_nume") or "",
-        tip_masina=payload.get("tip_masina") or "",
-        data_str=str(payload.get("data_interventie") or ""),
-        firma=payload.get("firma_nume") or "",
-        nr_fisa=nr_fisa_clean,
-    )
-    ops_json = json.dumps(payload.get("operatiuni") or [], ensure_ascii=False)
-    with db_cursor() as c:
-        c.execute("""
-            UPDATE client_operatiuni_mentenanta_recurente
-            SET firma_id = %s,
-                masina_id = %s,
-                firma_nume = %s,
-                masina_nume = %s,
-                tip_masina = %s,
-                frecventa = %s,
-                titlu_pdf = %s,
-                punct_lucru = %s,
-                producator_model = %s,
-                serie_fabricatie = %s,
-                nr_inventar = %s,
-                ore_functionare = %s,
-                ore_cumulate = %s,
-                nivel_grila = %s,
-                stare_initiala = %s,
-                stare_finala = %s,
-                operatiuni_json = %s,
-                recomandari_iiot = %s,
-                tehnician = %s,
-                verificator = %s,
-                functie_verificator = %s,
-                data_interventie = %s,
-                urmatoarea_revizie = %s
-            WHERE id = %s
-        """, (
-            payload.get("firma_id"),
-            payload.get("masina_id"),
-            payload.get("firma_nume", ""),
-            payload.get("masina_nume", ""),
-            payload.get("tip_masina", ""),
-            payload.get("frecventa", "Lunară"),
-            titlu_pdf,
-            payload.get("punct_lucru", ""),
-            payload.get("producator_model", ""),
-            payload.get("serie_fabricatie", ""),
-            payload.get("nr_inventar", ""),
-            payload.get("ore_functionare", ""),
-            payload.get("ore_cumulate", ""),
-            payload.get("nivel_grila", ""),
-            payload.get("stare_initiala", ""),
-            payload.get("stare_finala", ""),
-            ops_json,
-            payload.get("recomandari_iiot", ""),
-            payload.get("tehnician", ""),
-            payload.get("verificator", ""),
-            payload.get("functie_verificator", ""),
-            payload.get("data_interventie"),
-            payload.get("urmatoarea_revizie"),
-            int(rec_id),
-        ))
-    return nr_fisa_clean
-
-
-def _incarca_fise_recurente_db() -> list[dict]:
-    _asigura_tabela_recurente_db()
-    with db_cursor() as c:
-        c.execute("""
-            SELECT *
-            FROM client_operatiuni_mentenanta_recurente
-            ORDER BY id DESC
-            LIMIT 50
-        """)
-        rows = [dict(r) for r in (c.fetchall() or [])]
-    for r in rows:
-        raw = r.get("operatiuni_json")
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                r["operatiuni"] = parsed if isinstance(parsed, list) else []
-            except Exception:
-                r["operatiuni"] = []
-        elif isinstance(raw, list):
-            r["operatiuni"] = raw
-        else:
-            r["operatiuni"] = []
-    return rows
-
-
-def _sterge_fisa_recurenta_db(rec_id: int):
-    _asigura_tabela_recurente_db()
-    with db_cursor() as c:
-        c.execute("DELETE FROM client_operatiuni_mentenanta_recurente WHERE id = %s", (int(rec_id),))
-
-
 def _frecventa_in_titlu(frecventa: str) -> str:
     f = str(frecventa or "lunare").strip().lower()
-    mapa = {
-        "zilnică": "zilnice",
-        "zilnica": "zilnice",
-        "săptămânală": "saptamanale",
-        "saptamanala": "saptamanale",
-        "lunară": "lunare",
-        "lunara": "lunare",
-        "trimestrială": "trimestriale",
-        "trimestriala": "trimestriale",
-        "anuală": "anuale",
-        "anuala": "anuale",
-    }
-    return mapa.get(f, f or "lunare")
+    return _FRECVENTE_TITLU_MAP.get(f, f or "lunare")
 
 
 def construieste_titlu_operatiuni_pdf(
@@ -277,6 +143,181 @@ def construieste_nume_fisier_pdf(titlu_pdf: str) -> str:
     return f"{baza}.pdf"
 
 
+def _insereaza_fisa_recurenta_db(payload: dict) -> tuple[int, str]:
+    _asigura_tabela_recurente_db()
+    nr_fisa = _genereaza_nr_fisa_unic()
+    titlu_pdf = construieste_titlu_operatiuni_pdf(
+        frecventa=payload.get("frecventa") or "Lunară",
+        masina=payload.get("masina_nume") or "",
+        tip_masina=payload.get("tip_masina") or "",
+        data_str=str(payload.get("data_interventie") or ""),
+        firma=payload.get("firma_nume") or "",
+        nr_fisa=nr_fisa,
+    )
+    ops_json = json.dumps(payload.get("operatiuni") or [], ensure_ascii=False)
+    with db_cursor() as c:
+        c.execute(
+            """
+            INSERT INTO client_operatiuni_mentenanta_recurente (
+                nr_fisa, firma_id, masina_id, firma_nume, masina_nume, tip_masina,
+                frecventa, titlu_pdf, punct_lucru, producator_model, serie_fabricatie,
+                nr_inventar, ore_functionare, ore_cumulate, nivel_grila,
+                stare_initiala, stare_finala, operatiuni_json, recomandari_iiot,
+                tehnician, verificator, functie_verificator, data_interventie, urmatoarea_revizie
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
+            RETURNING id
+            """,
+            (
+                nr_fisa,
+                payload.get("firma_id"),
+                payload.get("masina_id"),
+                payload.get("firma_nume", ""),
+                payload.get("masina_nume", ""),
+                payload.get("tip_masina", ""),
+                payload.get("frecventa", "Lunară"),
+                titlu_pdf,
+                payload.get("punct_lucru", ""),
+                payload.get("producator_model", ""),
+                payload.get("serie_fabricatie", ""),
+                payload.get("nr_inventar", ""),
+                payload.get("ore_functionare", ""),
+                payload.get("ore_cumulate", ""),
+                payload.get("nivel_grila", ""),
+                payload.get("stare_initiala", ""),
+                payload.get("stare_finala", ""),
+                ops_json,
+                payload.get("recomandari_iiot", ""),
+                payload.get("tehnician", ""),
+                payload.get("verificator", ""),
+                payload.get("functie_verificator", ""),
+                payload.get("data_interventie"),
+                payload.get("urmatoarea_revizie"),
+            ),
+        )
+        ret = c.fetchone()
+        row_id = int(ret["id"] if isinstance(ret, dict) else ret[0]) if ret else 0
+    _invalideaza_cache_fise_recurente()
+    return row_id, nr_fisa
+
+
+def _actualizeaza_fisa_recurenta_db(rec_id: int, nr_fisa: str, payload: dict) -> str:
+    _asigura_tabela_recurente_db()
+    nr_fisa_clean = str(nr_fisa or "").strip() or _genereaza_nr_fisa_unic()
+    titlu_pdf = construieste_titlu_operatiuni_pdf(
+        frecventa=payload.get("frecventa") or "Lunară",
+        masina=payload.get("masina_nume") or "",
+        tip_masina=payload.get("tip_masina") or "",
+        data_str=str(payload.get("data_interventie") or ""),
+        firma=payload.get("firma_nume") or "",
+        nr_fisa=nr_fisa_clean,
+    )
+    ops_json = json.dumps(payload.get("operatiuni") or [], ensure_ascii=False)
+    with db_cursor() as c:
+        c.execute(
+            """
+            UPDATE client_operatiuni_mentenanta_recurente
+            SET firma_id = %s,
+                masina_id = %s,
+                firma_nume = %s,
+                masina_nume = %s,
+                tip_masina = %s,
+                frecventa = %s,
+                titlu_pdf = %s,
+                punct_lucru = %s,
+                producator_model = %s,
+                serie_fabricatie = %s,
+                nr_inventar = %s,
+                ore_functionare = %s,
+                ore_cumulate = %s,
+                nivel_grila = %s,
+                stare_initiala = %s,
+                stare_finala = %s,
+                operatiuni_json = %s,
+                recomandari_iiot = %s,
+                tehnician = %s,
+                verificator = %s,
+                functie_verificator = %s,
+                data_interventie = %s,
+                urmatoarea_revizie = %s
+            WHERE id = %s
+            """,
+            (
+                payload.get("firma_id"),
+                payload.get("masina_id"),
+                payload.get("firma_nume", ""),
+                payload.get("masina_nume", ""),
+                payload.get("tip_masina", ""),
+                payload.get("frecventa", "Lunară"),
+                titlu_pdf,
+                payload.get("punct_lucru", ""),
+                payload.get("producator_model", ""),
+                payload.get("serie_fabricatie", ""),
+                payload.get("nr_inventar", ""),
+                payload.get("ore_functionare", ""),
+                payload.get("ore_cumulate", ""),
+                payload.get("nivel_grila", ""),
+                payload.get("stare_initiala", ""),
+                payload.get("stare_finala", ""),
+                ops_json,
+                payload.get("recomandari_iiot", ""),
+                payload.get("tehnician", ""),
+                payload.get("verificator", ""),
+                payload.get("functie_verificator", ""),
+                payload.get("data_interventie"),
+                payload.get("urmatoarea_revizie"),
+                int(rec_id),
+            ),
+        )
+    _invalideaza_cache_fise_recurente()
+    return nr_fisa_clean
+
+
+@st.cache_data(ttl=120)
+def _incarca_fise_recurente_db_cached() -> list[dict]:
+    _asigura_tabela_recurente_db()
+    with db_cursor() as c:
+        c.execute(
+            """
+            SELECT *
+            FROM client_operatiuni_mentenanta_recurente
+            ORDER BY id DESC
+            LIMIT 50
+            """
+        )
+        rows = [dict(r) for r in (c.fetchall() or [])]
+
+    for r in rows:
+        raw = r.get("operatiuni_json")
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                r["operatiuni"] = parsed if isinstance(parsed, list) else []
+            except Exception:
+                r["operatiuni"] = []
+        elif isinstance(raw, list):
+            r["operatiuni"] = raw
+        else:
+            r["operatiuni"] = []
+    return rows
+
+
+def _incarca_fise_recurente_db() -> list[dict]:
+    return [dict(r) for r in _incarca_fise_recurente_db_cached()]
+
+
+def _sterge_fisa_recurenta_db(rec_id: int) -> None:
+    _asigura_tabela_recurente_db()
+    with db_cursor() as c:
+        c.execute("DELETE FROM client_operatiuni_mentenanta_recurente WHERE id = %s", (int(rec_id),))
+    _invalideaza_cache_fise_recurente()
+
+
 def _normalizare_randuri_operatiuni(rows_in: list[dict], rows_exist: list[dict] | None = None) -> list[dict]:
     rez = []
     exist_list = rows_exist or []
@@ -298,24 +339,31 @@ def _normalizare_randuri_operatiuni(rows_in: list[dict], rows_exist: list[dict] 
         else:
             ef_val = bool(ef_raw)
         vechi = exist_list[idx - 1] if (idx - 1) < len(exist_list) and isinstance(exist_list[idx - 1], dict) else {}
-        rez.append({
-            "Ordine": int(r.get("Ordine") or r.get("ordine") or idx),
-            "Operațiune / Verificare": op_txt,
-            "Denumire parametru": prm_txt,
-            "Valoare": val_txt,
-            "UM": um_txt,
-            "Piese necesare": piese_txt,
-            "Materiale consumabile": cons_txt,
-            "Documentație": doc_txt,
-            "Efectuat": ef_val,
-            "piese": r.get("piese") if isinstance(r.get("piese"), list) else (vechi.get("piese") or []),
-            "consumabile": r.get("consumabile") if isinstance(r.get("consumabile"), list) else (vechi.get("consumabile") or []),
-            "documentatii": r.get("documentatii") if isinstance(r.get("documentatii"), list) else (vechi.get("documentatii") or []),
-        })
+        rez.append(
+            {
+                "Ordine": int(r.get("Ordine") or r.get("ordine") or idx),
+                "Operațiune / Verificare": op_txt,
+                "Denumire parametru": prm_txt,
+                "Valoare": val_txt,
+                "UM": um_txt,
+                "Piese necesare": piese_txt,
+                "Materiale consumabile": cons_txt,
+                "Documentație": doc_txt,
+                "Efectuat": ef_val,
+                "piese": r.get("piese") if isinstance(r.get("piese"), list) else (vechi.get("piese") or []),
+                "consumabile": r.get("consumabile") if isinstance(r.get("consumabile"), list) else (vechi.get("consumabile") or []),
+                "documentatii": r.get("documentatii") if isinstance(r.get("documentatii"), list) else (vechi.get("documentatii") or []),
+            }
+        )
     return rez
 
 
-def _init_sau_reseteaza_ment_draft(tehnician_def: str):
+def _curata_chei_operatiuni_sesiune() -> None:
+    for k in [k for k in list(st.session_state.keys()) if k.startswith("ment_ops_rows_")]:
+        del st.session_state[k]
+
+
+def _init_sau_reseteaza_ment_draft(tehnician_def: str) -> None:
     st.session_state["ment_draft"] = {
         "sel_firma": "-- Alege firma --",
         "sel_masina": "-- Alege mașina --",
@@ -342,7 +390,7 @@ def _init_sau_reseteaza_ment_draft(tehnician_def: str):
     st.session_state["ment_counter"] = st.session_state.get("ment_counter", 0) + 1
 
 
-def _incarca_fisa_din_istoric_pentru_editare(fisa: dict, firme_dict: dict):
+def _incarca_fisa_din_istoric_pentru_editare(fisa: dict, firme_dict: dict) -> None:
     rows_salvate = _normalizare_randuri_operatiuni(fisa.get("operatiuni") or [])
     firma_nume = str(fisa.get("firma_nume") or "-- Alege firma --")
     if firma_nume not in firme_dict:
@@ -383,28 +431,18 @@ def _incarca_fisa_din_istoric_pentru_editare(fisa: dict, firme_dict: dict):
 
 
 def _render_tabel_operatiuni_identic(rows: list[dict], key_prefix: str, editable: bool):
-    cols_viz = [
-        "Ordine",
-        "Operațiune / Verificare",
-        "Denumire parametru",
-        "Valoare",
-        "UM",
-        "Piese necesare",
-        "Materiale consumabile",
-        "Documentație",
-        "Efectuat",
-    ]
-    if rows:
-        df_init = pd.DataFrame([{c: r.get(c, "") for c in cols_viz} for r in rows])
-    else:
-        df_init = pd.DataFrame(columns=cols_viz)
+    df_init = (
+        pd.DataFrame([{c: r.get(c, "") for c in _COLS_VIZ_OPERATIUNI} for r in rows])
+        if rows
+        else pd.DataFrame(columns=_COLS_VIZ_OPERATIUNI)
+    )
 
     return st.data_editor(
         df_init,
         hide_index=True,
         num_rows="dynamic" if editable else "fixed",
         use_container_width=True,
-        disabled=[] if editable else cols_viz,
+        disabled=[] if editable else _COLS_VIZ_OPERATIUNI,
         column_config={
             "Ordine": st.column_config.NumberColumn("Ordine", width="small", step=1),
             "Operațiune / Verificare": st.column_config.TextColumn("Operațiune / Verificare", width="large"),
@@ -428,6 +466,7 @@ def _render_sectiune_operatiuni(
     frecventa_init: str,
     nr_fisa_curent: str,
 ):
+    mid = masina_obj["id"]
     den_masina = str(masina_obj.get("denumire") or "").strip()
     tip_masina = str(masina_obj.get("tip_masina") or "").strip()
 
@@ -439,7 +478,7 @@ def _render_sectiune_operatiuni(
         "Tip mentenanță realizată / Frecvență",
         options=FRECVENTE_MENTENANTA,
         index=FRECVENTE_MENTENANTA.index(frec_curr),
-        key=f"ment_frec_fisa_{masina_obj['id']}",
+        key=f"ment_frec_fisa_{mid}",
     )
     st.session_state["ment_frec_selectata"] = frec_sel
 
@@ -455,17 +494,18 @@ def _render_sectiune_operatiuni(
     st.caption(f"Fișă: **{nume_fisa}** | Titlu PDF: **{titlu_pdf}**")
 
     draft = st.session_state["ment_draft"]
-    rows_key = f"ment_ops_rows_{masina_obj['id']}"
+    rows_key = f"ment_ops_rows_{mid}"
     if rows_key not in st.session_state:
-        if draft.get("edit_rec_id") is not None:
-            st.session_state[rows_key] = _normalizare_randuri_operatiuni(draft.get("operatiuni_rows") or [])
-        else:
-            st.session_state[rows_key] = []
+        st.session_state[rows_key] = (
+            _normalizare_randuri_operatiuni(draft.get("operatiuni_rows") or [])
+            if draft.get("edit_rec_id") is not None
+            else []
+        )
 
     rows_curente = list(st.session_state[rows_key] or [])
-    catalog_db = incarca_catalog_operatiuni_db()
 
     if is_unlocked:
+        catalog_db = incarca_catalog_operatiuni_db()
         st.markdown("#### 📎 Încarcă / Setează operațiune, parametri, piese necesare, consumabile și documentații")
         opt_cat = {"-- Introdu manual / copy-paste --": None}
         for it in catalog_db:
@@ -474,10 +514,10 @@ def _render_sectiune_operatiuni(
         sel_cat_label = st.selectbox(
             "Alege operațiunea din Catalogul DB (sau introdu manual / copy-paste)",
             options=list(opt_cat.keys()),
-            key=f"ment_sel_cat_{masina_obj['id']}",
+            key=f"ment_sel_cat_{mid}",
         )
         item_cat = opt_cat.get(sel_cat_label)
-        b_key = f"ment_res_m{masina_obj['id']}_{item_cat['id'] if item_cat else 'man'}"
+        b_key = f"ment_res_m{mid}_{item_cat['id'] if item_cat else 'man'}"
 
         c_op, c_prm, c_val, c_um = st.columns([2.2, 1.2, 0.9, 0.7])
         with c_op:
@@ -494,21 +534,21 @@ def _render_sectiune_operatiuni(
                 key=f"ment_inp_prm_{b_key}",
             ).strip()
         with c_val:
-            val_noua = st.text_input(
+            val_nou = st.text_input(
                 "Valoare",
                 value=(item_cat.get("valoare") or "" if item_cat else ""),
                 placeholder="ex: 24.0 / 0.02",
                 key=f"ment_inp_val_{b_key}",
             ).strip()
         with c_um:
-            um_noua = st.text_input(
+            um_nou = st.text_input(
                 "UM",
                 value=(item_cat.get("um") or "" if item_cat else ""),
                 placeholder="ex: V / mm",
                 key=f"ment_inp_um_{b_key}",
             ).strip()
 
-        piese_op, cons_op, docs_op = render_builder_resurse_operatiune(
+        piese_op, cons_op, docs_op, _extra_op = render_builder_resurse_operatiune(
             prefix_key=b_key,
             piese_init=(item_cat.get("piese") if item_cat else []),
             consumabile_init=(item_cat.get("consumabile") if item_cat else []),
@@ -530,26 +570,28 @@ def _render_sectiune_operatiuni(
                         sistem="Personalizat",
                         operatiune=op_noua,
                         parametru=prm_nou,
-                        valoare=val_noua,
-                        um=um_noua,
+                        valoare=val_nou,
+                        um=um_nou,
                         piese=piese_op,
                         consumabile=cons_op,
                         documentatii=docs_op,
                     )
-                rows_curente.append({
-                    "Ordine": len(rows_curente) + 1,
-                    "Operațiune / Verificare": op_noua,
-                    "Denumire parametru": prm_nou,
-                    "Valoare": val_noua,
-                    "UM": um_noua,
-                    "Piese necesare": formateaza_piese_text(piese_op),
-                    "Materiale consumabile": formateaza_consumabile_text(cons_op),
-                    "Documentație": formateaza_documentatii_text(docs_op),
-                    "Efectuat": True,
-                    "piese": piese_op,
-                    "consumabile": cons_op,
-                    "documentatii": docs_op,
-                })
+                rows_curente.append(
+                    {
+                        "Ordine": len(rows_curente) + 1,
+                        "Operațiune / Verificare": op_noua,
+                        "Denumire parametru": prm_nou,
+                        "Valoare": val_nou,
+                        "UM": um_nou,
+                        "Piese necesare": formateaza_piese_text(piese_op),
+                        "Materiale consumabile": formateaza_consumabile_text(cons_op),
+                        "Documentație": formateaza_documentatii_text(docs_op),
+                        "Efectuat": True,
+                        "piese": piese_op,
+                        "consumabile": cons_op,
+                        "documentatii": docs_op,
+                    }
+                )
                 st.session_state[rows_key] = rows_curente
                 reseteaza_builder_resurse_operatiune(b_key)
                 st.toast("✅ Operațiunea a fost adăugată.")
@@ -564,19 +606,18 @@ def _render_sectiune_operatiuni(
             de_sters = st.multiselect(
                 "Selectează operațiunile de șters",
                 options=list(opt_del.keys()),
-                key=f"ment_ms_del_ops_{masina_obj['id']}",
+                key=f"ment_ms_del_ops_{mid}",
             )
-            if st.button("🗑️ Șterge operațiunile selectate", key=f"ment_btn_del_ops_{masina_obj['id']}"):
+            if st.button("🗑️ Șterge operațiunile selectate", key=f"ment_btn_del_ops_{mid}"):
                 if not de_sters:
                     st.warning("Selectează cel puțin o operațiune.")
                 else:
                     indici_sters = {opt_del[k] for k in de_sters}
                     ramase = []
-                    for idx_r, r_item in enumerate(rows_curente):
-                        if idx_r not in indici_sters:
-                            copie = dict(r_item)
-                            copie["Ordine"] = len(ramase) + 1
-                            ramase.append(copie)
+                    for r_item in [item for idx_r, item in enumerate(rows_curente) if idx_r not in indici_sters]:
+                        copie = dict(r_item)
+                        copie["Ordine"] = len(ramase) + 1
+                        ramase.append(copie)
                     st.session_state[rows_key] = ramase
                     st.toast(f"🗑️ Au fost șterse {len(indici_sters)} operațiuni.")
                     st.rerun()
@@ -585,7 +626,7 @@ def _render_sectiune_operatiuni(
 
     df_ed = _render_tabel_operatiuni_identic(
         rows=rows_curente,
-        key_prefix=f"ment_ed_ops_table_{masina_obj['id']}_{st.session_state.get('ment_counter', 0)}",
+        key_prefix=f"ment_ed_ops_table_{mid}_{st.session_state.get('ment_counter', 0)}",
         editable=is_unlocked,
     )
 
@@ -595,25 +636,38 @@ def _render_sectiune_operatiuni(
             rows_exist=rows_curente,
         )
 
-    # Link-uri directe către toate documentațiile atașate operațiunilor din tabel
     toate_linkurile = []
     for r in (st.session_state[rows_key] or []):
         ord_r = r.get("Ordine", "")
-        docs_r = r.get("documentatii") or []
-        if docs_r:
-            for d_it in docs_r:
-                u = str(d_it.get("url") or "").strip()
-                t = str(d_it.get("titlu") or "Link").strip()
-                if u.startswith(("http://", "https://")):
-                    toate_linkurile.append((f"Op.{ord_r} — {t}", u))
+        for d_it in (r.get("documentatii") or []):
+            u = str(d_it.get("url") or "").strip()
+            t = str(d_it.get("titlu") or "Link").strip()
+            if u.startswith(("http://", "https://")):
+                toate_linkurile.append((f"Op.{ord_r} — {t}", u))
 
     if toate_linkurile:
         opt_l = {lbl: url for lbl, url in toate_linkurile}
         cd1, cd2 = st.columns([3.5, 1.5], vertical_alignment="center")
-        sel_l = cd1.selectbox("Deschide link documentație", options=list(opt_l.keys()), key=f"ment_sel_doc_{masina_obj['id']}")
+        sel_l = cd1.selectbox("Deschide link documentație", options=list(opt_l.keys()), key=f"ment_sel_doc_{mid}")
         cd2.link_button("📂 Deschide Documentația", opt_l[sel_l], use_container_width=True)
 
     return df_ed, nume_fisa, frec_sel, titlu_pdf
+
+
+def _construieste_payload_pdf_fisa(fisa: dict, ops_hist: list[dict], titlu_pdf_hist: str, frec_hist: str, tip_hist: str, nr_fisa: str) -> dict:
+    payload = dict(fisa)
+    payload["operatiuni"] = ops_hist
+    payload["titlu_pdf_operatiuni"] = titlu_pdf_hist
+    payload["checklist_json"] = {
+        "fisa_specifica_utilaj": {
+            "titlu": construieste_nume_fisa_masina(fisa.get("masina_nume") or "", tip_hist, frec_hist),
+            "titlu_pdf": titlu_pdf_hist,
+            "frecventa": frec_hist,
+            "nr_fisa": nr_fisa,
+            "randuri": ops_hist,
+        }
+    }
+    return payload
 
 
 def render_mentenanta():
@@ -623,19 +677,15 @@ def render_mentenanta():
     setari = SetariRepository.get_setari()
     tehnician_def = setari.get("tehnician_implicit") or "Tehnician Nexus"
 
+    st.session_state.setdefault("ment_salvat", False)
+    st.session_state.setdefault("ment_pdf_bytes", None)
+    st.session_state.setdefault("ment_pdf_name", None)
+    st.session_state.setdefault("ment_nr_fisa_salvat", None)
     if "ment_draft" not in st.session_state:
         _init_sau_reseteaza_ment_draft(tehnician_def)
-    if "ment_salvat" not in st.session_state:
-        st.session_state["ment_salvat"] = False
-    if "ment_pdf_bytes" not in st.session_state:
-        st.session_state["ment_pdf_bytes"] = None
-    if "ment_pdf_name" not in st.session_state:
-        st.session_state["ment_pdf_name"] = None
-    if "ment_nr_fisa_salvat" not in st.session_state:
-        st.session_state["ment_nr_fisa_salvat"] = None
 
     draft = st.session_state["ment_draft"]
-    firme_db = FirmeRepository.get_all()
+    firme_db = FirmeRepository.get_all() or []
     if not firme_db:
         st.warning("⚠️ Adăugați mai întâi cel puțin o firmă în modulul 'Firme'.")
         return
@@ -654,7 +704,7 @@ def render_mentenanta():
                     file_name=nume_pdf,
                     mime="application/pdf",
                     type="primary",
-                    use_container_width=True
+                    use_container_width=True,
                 )
         with c_dl2:
             if st.button("🔄 Resetează formularul", use_container_width=True):
@@ -662,8 +712,7 @@ def render_mentenanta():
                 st.session_state["ment_pdf_bytes"] = None
                 st.session_state["ment_pdf_name"] = None
                 st.session_state["ment_nr_fisa_salvat"] = None
-                for k in [k for k in list(st.session_state.keys()) if k.startswith("ment_ops_rows_")]:
-                    del st.session_state[k]
+                _curata_chei_operatiuni_sesiune()
                 _init_sau_reseteaza_ment_draft(tehnician_def)
                 st.rerun()
         return
@@ -680,7 +729,7 @@ def render_mentenanta():
 
     if sel_firma == "-- Alege firma --":
         st.info("ℹ️ Selectează clientul și utilajul pentru a continua.")
-        _render_istoric_mentenanta(firme_dict)
+        _render_istoric_mentenanta()
         return
 
     firma_obj = firme_dict[sel_firma]
@@ -691,7 +740,7 @@ def render_mentenanta():
         draft["sel_masina"] = "-- Alege mașina --"
         draft["ultima_masina"] = "-- Alege mașina --"
 
-    masini_db = MasiniRepository.get_by_firma(firma_obj["id"])
+    masini_db = MasiniRepository.get_by_firma(firma_obj["id"]) or []
     masini_dict = {m["denumire"]: m for m in masini_db}
     opt_masini = ["-- Alege mașina --"] + list(masini_dict.keys())
     idx_m = opt_masini.index(draft["sel_masina"]) if draft.get("sel_masina") in opt_masini else 0
@@ -706,7 +755,7 @@ def render_mentenanta():
 
     if sel_masina == "-- Alege mașina --":
         st.info("ℹ️ Alege utilajul din lista clientului pentru a continua.")
-        _render_istoric_mentenanta(firme_dict)
+        _render_istoric_mentenanta()
         return
 
     masina_obj = masini_dict[sel_masina]
@@ -717,16 +766,16 @@ def render_mentenanta():
         draft["ultima_masina"] = sel_masina
         draft["producator_model"] = str(masina_obj.get("tip_masina") or "")
         draft["serie_fabricatie"] = str(masina_obj.get("serie") or "")
-        if total_int_m >= prag_int_m:
-            draft["nivel_grila"] = "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
-        else:
-            draft["nivel_grila"] = "Nivel A – Multimarcă (<20h)"
+        draft["nivel_grila"] = (
+            "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
+            if total_int_m >= prag_int_m
+            else "Nivel A – Multimarcă (<20h)"
+        )
 
     tip_int_masina = masina_obj.get("tip_intretinere") or "Lunară"
     interval_din_db = int(masina_obj.get("interval_intretinere_zile") or 0)
     durata_implicita_zile = interval_din_db if interval_din_db > 0 else INTERVALE_ZILE.get(tip_int_masina, 30)
 
-    # Sub controalele de selecție firmă și mașină; rămâne închisă până o deschide utilizatorul
     with st.expander("📋 Date Identificare Echipament & Stare Tehnică", expanded=False):
         d1, d2, d3, d4 = st.columns(4)
         draft["punct_lucru"] = d1.text_input("Punct de Lucru / Oraș", value=str(draft.get("punct_lucru", "")))
@@ -739,7 +788,7 @@ def render_mentenanta():
         draft["ore_cumulate"] = e2.text_input("Ore Cumulate (din 20h)", value=str(draft.get("ore_cumulate", "")), placeholder="ex: 6 / 20")
         opt_grila = [
             "Nivel A – Multimarcă (<20h)",
-            "Nivel B – CNC Biglia / Matec / >20h / Inginerie"
+            "Nivel B – CNC Biglia / Matec / >20h / Inginerie",
         ]
         idx_gr = opt_grila.index(draft["nivel_grila"]) if draft.get("nivel_grila") in opt_grila else 0
         draft["nivel_grila"] = e3.selectbox("Nivel Grilă Aplicabilă", options=opt_grila, index=idx_gr)
@@ -749,7 +798,7 @@ def render_mentenanta():
             "Funcțional",
             "Nefuncțional",
             "Degradare moderată",
-            "Stare avansată de degradare"
+            "Stare avansată de degradare",
         ]
         idx_si = opt_stare_ini.index(draft["stare_initiala"]) if draft.get("stare_initiala") in opt_stare_ini else 0
         draft["stare_initiala"] = s1.selectbox("Stare Inițială Utilaj", options=opt_stare_ini, index=idx_si)
@@ -757,7 +806,7 @@ def render_mentenanta():
         opt_stare_fin = [
             "Funcțional (parametri nominali)",
             "Funcțional cu restricții (necesită piese)",
-            "Oprit siguranță"
+            "Oprit siguranță",
         ]
         idx_sf = opt_stare_fin.index(draft["stare_finala"]) if draft.get("stare_finala") in opt_stare_fin else 0
         draft["stare_finala"] = s2.selectbox("Stare Finală Utilaj", options=opt_stare_fin, index=idx_sf)
@@ -765,13 +814,13 @@ def render_mentenanta():
         urmatoarea_rev_default = data_interv + timedelta(days=durata_implicita_zile)
         urmatoarea_revizie = s3.date_input(
             f"Următoarea Revizie ({tip_int_masina})",
-            value=urmatoarea_rev_default
+            value=urmatoarea_rev_default,
         )
 
     nr_fisa_curent = draft.get("edit_nr_fisa") or _genereaza_nr_fisa_unic()
 
     with st.expander(f"🛠️ Operațiuni Mentenanță — {sel_masina} ({masina_obj.get('tip_masina') or '-'})", expanded=True):
-        df_ops_utilaj, nume_fisa_activa, frec_fisa_activa, titlu_pdf_activ = _render_sectiune_operatiuni(
+        df_ops_utilaj, nume_fisa_activa, frec_fisa_activa, _ = _render_sectiune_operatiuni(
             masina_obj=masina_obj,
             firma_nume=sel_firma,
             data_interv=data_interv,
@@ -785,7 +834,7 @@ def render_mentenanta():
     draft["recomandari_iiot"] = st.text_area(
         "Constatări suplimentare & Recomandări de modernizare (Retrofit PLC / Senzoristică IIoT / Mentenanță Predictivă)",
         value=str(draft.get("recomandari_iiot", "")),
-        height=95
+        height=95,
     )
 
     r1, r2, r3 = st.columns(3)
@@ -862,9 +911,7 @@ def render_mentenanta():
             pdf_bytes = genereaza_pdf_mentenanta(fisa_payload)
             nume_pdf_cur = construieste_nume_fisier_pdf(titlu_pdf_final)
 
-            for k in [k for k in list(st.session_state.keys()) if k.startswith("ment_ops_rows_")]:
-                del st.session_state[k]
-
+            _curata_chei_operatiuni_sesiune()
             st.session_state["ment_nr_fisa_salvat"] = nr_fisa_salvat
             st.session_state["ment_pdf_bytes"] = pdf_bytes
             st.session_state["ment_pdf_name"] = nume_pdf_cur
@@ -874,16 +921,22 @@ def render_mentenanta():
         except Exception as exc:
             st.error(f"⚠️ Eroare la salvarea fișei / generarea PDF: {exc}")
 
-    _render_istoric_mentenanta(firme_dict)
+    _render_istoric_mentenanta()
 
 
-def _render_istoric_mentenanta(firme_dict: dict):
+def _render_istoric_mentenanta():
     st.markdown("---")
     st.subheader("📂 Istoric Fișe de Mentenanță Preventivă")
     fise_salvate = _incarca_fise_recurente_db()
     if not fise_salvate:
         st.info("Nu există încă fișe de mentenanță recurente salvate.")
         return
+
+    firme_dict = {
+        str(f.get("nume_firma") or ""): f
+        for f in (FirmeRepository.get_all() or [])
+        if str(f.get("nume_firma") or "").strip()
+    }
 
     for fisa in fise_salvate:
         rec_id = fisa["id"]
@@ -907,37 +960,29 @@ def _render_istoric_mentenanta(firme_dict: dict):
                 st.write(f"**Nr. fișă:** {nr_fisa} | **Tip mentenanță:** {frec_hist} | **Tehnician:** {fisa.get('tehnician') or '-'}")
             with c2:
                 if st.button("✏️ Editează", key=f"edit_ment_rec_{rec_id}", use_container_width=True):
-                    for k in [k for k in list(st.session_state.keys()) if k.startswith("ment_ops_rows_")]:
-                        del st.session_state[k]
+                    _curata_chei_operatiuni_sesiune()
                     _incarca_fisa_din_istoric_pentru_editare(fisa, firme_dict)
                     st.rerun()
             with c3:
-                ops_hist = _normalizare_randuri_operatiuni(fisa.get("operatiuni") or [])
-                fisa_pdf_payload = dict(fisa)
-                fisa_pdf_payload["operatiuni"] = ops_hist
-                fisa_pdf_payload["titlu_pdf_operatiuni"] = titlu_pdf_hist
-                fisa_pdf_payload["checklist_json"] = {
-                    "fisa_specifica_utilaj": {
-                        "titlu": construieste_nume_fisa_masina(fisa.get("masina_nume") or "", tip_hist, frec_hist),
-                        "titlu_pdf": titlu_pdf_hist,
-                        "frecventa": frec_hist,
-                        "nr_fisa": nr_fisa,
-                        "randuri": ops_hist,
-                    }
-                }
-                pdf_hist = genereaza_pdf_mentenanta(fisa_pdf_payload)
+                pdf_state_key = f"ment_hist_pdf_{rec_id}"
                 nume_pdf_hist = construieste_nume_fisier_pdf(titlu_pdf_hist)
-                st.download_button(
-                    label="📥 PDF",
-                    data=pdf_hist,
-                    file_name=nume_pdf_hist,
-                    mime="application/pdf",
-                    key=f"dl_ment_rec_{rec_id}",
-                    use_container_width=True
-                )
+                if st.button("📄 Generează PDF", key=f"prep_ment_rec_{rec_id}", use_container_width=True):
+                    ops_hist = _normalizare_randuri_operatiuni(fisa.get("operatiuni") or [])
+                    payload_pdf = _construieste_payload_pdf_fisa(fisa, ops_hist, titlu_pdf_hist, frec_hist, tip_hist, nr_fisa)
+                    st.session_state[pdf_state_key] = genereaza_pdf_mentenanta(payload_pdf)
+                if st.session_state.get(pdf_state_key):
+                    st.download_button(
+                        label="📥 Descarcă PDF",
+                        data=st.session_state[pdf_state_key],
+                        file_name=nume_pdf_hist,
+                        mime="application/pdf",
+                        key=f"dl_ment_rec_{rec_id}",
+                        use_container_width=True,
+                    )
             with c4:
                 if st.button("🗑️ Șterge", key=f"del_ment_rec_{rec_id}", use_container_width=True):
                     _sterge_fisa_recurenta_db(rec_id)
+                    st.session_state.pop(f"ment_hist_pdf_{rec_id}", None)
                     st.rerun()
 
             ops_rows = _normalizare_randuri_operatiuni(fisa.get("operatiuni") or [])
