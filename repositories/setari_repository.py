@@ -61,6 +61,15 @@ def _ensure_setari_schema_once() -> bool:
         return False
 
 
+def _goleste_cache_setari() -> None:
+    fn = getattr(SetariRepository.get_setari, "clear", None)
+    if callable(fn):
+        try:
+            fn()
+        except Exception:
+            pass
+
+
 class SetariRepository(BaseRepository):
     @classmethod
     @st.cache_data(ttl=300)
@@ -141,7 +150,7 @@ class SetariRepository(BaseRepository):
                 """,
                 params,
             )
-        cls.get_setari.clear()
+        _goleste_cache_setari()
         logger.info("Setările au fost salvate în baza de date.")
 
     @classmethod
@@ -154,5 +163,5 @@ class SetariRepository(BaseRepository):
                 cur.execute("INSERT INTO setari (pass) VALUES (%s)", (noua_parola,))
             else:
                 cur.execute("UPDATE setari SET pass = %s", (noua_parola,))
-        cls.get_setari.clear()
+        _goleste_cache_setari()
         logger.info("Parola a fost actualizată în setări.")

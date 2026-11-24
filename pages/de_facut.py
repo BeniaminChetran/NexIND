@@ -153,13 +153,37 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
             return [dict(r) for r in (c.fetchall() or [])]
 
 
+def _goleste_cache_taskuri():
+    _obtine_taskuri_cached.clear()
+    _colecteaza_piese_necesare.clear()
+    if hasattr(TaskuriVizitaRepository, "get_all") and hasattr(TaskuriVizitaRepository.get_all, "clear"):
+        try:
+            TaskuriVizitaRepository.get_all.clear()
+        except Exception:
+            pass
+
+
+def _goleste_cache_piese_si_rfq():
+    _colecteaza_piese_necesare.clear()
+    _incarca_optiuni_lookup_piese.clear()
+    for repo in (PieseRepository, NecesarPieseRepository, ReparatiiRepository, CereriOfertaRepository):
+        if repo is None:
+            continue
+        for method_name in ("get_all", "get_recente_pentru_piese", "get_cereri", "get_linii_by_cerere"):
+            fn = getattr(repo, method_name, None)
+            if fn is not None and hasattr(fn, "clear"):
+                try:
+                    fn.clear()
+                except Exception:
+                    pass
+
+
 def _goleste_cache_de_facut():
     incarca_memento_intretinere.clear()
-    _incarca_optiuni_lookup_piese.clear()
-    _colecteaza_piese_necesare.clear()
+    _goleste_cache_taskuri()
+    _goleste_cache_piese_si_rfq()
     _obtine_harta_firme_cached.clear()
     _obtine_masini_cached.clear()
-    _obtine_taskuri_cached.clear()
 
     if hasattr(SetariRepository.get_setari, "clear"):
         try:
@@ -167,18 +191,8 @@ def _goleste_cache_de_facut():
         except Exception:
             pass
 
-    for repo in (
-        PieseRepository,
-        NecesarPieseRepository,
-        ReparatiiRepository,
-        TaskuriVizitaRepository,
-        CereriOfertaRepository,
-        FirmeRepository,
-        MasiniRepository,
-    ):
-        if repo is None:
-            continue
-        for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
+    for repo in (FirmeRepository, MasiniRepository):
+        for method_name in ("get_all", "get_by_firma"):
             fn = getattr(repo, method_name, None)
             if fn is not None and hasattr(fn, "clear"):
                 try:
@@ -267,8 +281,6 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 f"UPDATE {tabela} SET {camp_json} = %s WHERE id = %s",
                 (json.dumps(items, ensure_ascii=False), int(record_id)),
             )
-            if hasattr(c, "connection") and hasattr(c.connection, "commit"):
-                c.connection.commit()
     return modificat
 
 
@@ -339,7 +351,11 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
             "Raport": f"NP #{np_row.get('id')}",
         })
 
-    rapoarte = ReparatiiRepository.get_all() or []
+    if hasattr(ReparatiiRepository, "get_recente_pentru_piese"):
+        rapoarte = ReparatiiRepository.get_recente_pentru_piese(limit=500) or []
+    else:
+        rapoarte = ReparatiiRepository.get_all() or []
+
     for r in rapoarte:
         piese_raw = r.get("piese_valide") or _parse_json_list(r.get("piese_json"))
         for item in piese_raw:
@@ -597,13 +613,13 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
                             "Finalizat",
                             de_facut_pana_la=t.get("de_facut_pana_la"),
                         )
-                    _goleste_cache_de_facut()
-                    st.rerun()
+                    _goleste_cache_taskuri()
+                    st.session_state["df_toast_msg"] = "✅ Task marcat ca Finalizat."
         with c_del:
             if st.button("🗑️ Șterge", key=f"btn_del_task_{nivel}_{tid}", use_container_width=True):
                 TaskuriVizitaRepository.delete(tid)
-                _goleste_cache_de_facut()
-                st.rerun()
+                _goleste_cache_taskuri()
+                st.session_state["df_toast_msg"] = "🗑️ Task șters."
 
 
 def render_notite_vizita_de_facut(taskuri: list[dict]):
@@ -664,9 +680,8 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
                         note_vizita=note_viz,
                         stare=stare_viz,
                     )
-                    _goleste_cache_de_facut()
-                    st.success(f"✅ Notiță salvată pentru **{firma_viz}** — Stare: **{stare_viz}**.")
-                    st.rerun()
+                    _goleste_cache_taskuri()
+                    st.session_state["df_toast_msg"] = f"✅ Notiță salvată pentru {firma_viz} ({stare_viz})."
                 except TypeError:
                     TaskuriVizitaRepository.insert(
                         data_vizita=data_viz,
@@ -677,9 +692,8 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
                         note_vizita=note_viz,
                         stare=stare_viz,
                     )
-                    _goleste_cache_de_facut()
-                    st.success(f"✅ Notiță salvată pentru **{firma_viz}** — Stare: **{stare_viz}**.")
-                    st.rerun()
+                    _goleste_cache_taskuri()
+                    st.session_state["df_toast_msg"] = f"✅ Notiță salvată pentru {firma_viz} ({stare_viz})."
                 except ValueError as ve:
                     st.error(f"⚠️ {ve}")
 
@@ -787,12 +801,11 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
                 if editor_task_key in st.session_state:
                     del st.session_state[editor_task_key]
 
-                _goleste_cache_de_facut()
+                _goleste_cache_taskuri()
                 if nr_mod_t == 0 and nr_del_t == 0:
                     st.info("ℹ️ Nu există modificări nesalvate la notițe.")
                 else:
-                    st.success(f"✅ Actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
-                    st.rerun()
+                    st.session_state["df_toast_msg"] = f"✅ Actualizate: {nr_mod_t} modificate, {nr_del_t} șterse."
 
 
 def render_notare_rapida_teren():
@@ -901,23 +914,9 @@ def render_notare_rapida_teren():
                     status_comanda=status_teren,
                     observatii=obs_teren,
                 )
-                _goleste_cache_de_facut()
-
-                st.session_state["df_teren_lookup_piesa"] = "✍️ Piesă nouă (scriu manual)"
-                st.session_state["_df_last_lookup"] = "✍️ Piesă nouă (scriu manual)"
-                st.session_state["df_teren_den_manual"] = ""
-                st.session_state["df_teren_cod_manual"] = ""
-                st.session_state["df_teren_cant_num"] = 1.0
-                st.session_state["df_teren_prio_sel"] = "Normal"
-                st.session_state["df_teren_status_sel"] = "De căutat"
-                st.session_state["df_teren_obs_txt"] = ""
-
+                _goleste_cache_piese_si_rfq()
                 mesaj_cat = "existentă în catalog" if rez.get("existenta_in_catalog") else "adăugată și în catalogul `piese`"
-                st.success(
-                    f"✅ Salvat **{str(den_finala).strip()}** ({mesaj_cat}). "
-                    f"Pregătit pentru următoarea piesă la **{firma_teren}**."
-                )
-                st.rerun()
+                st.session_state["df_toast_msg"] = f"✅ Salvat {str(den_finala).strip()} ({mesaj_cat})."
             except ValueError as ve:
                 st.error(f"⚠️ {ve}")
 
@@ -1067,14 +1066,13 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
             if editor_dash_key in st.session_state:
                 del st.session_state[editor_dash_key]
 
-            _goleste_cache_de_facut()
+            _goleste_cache_piese_si_rfq()
             if erori_salvare:
                 st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_salvare))
             elif nr_mod == 0:
                 st.info("ℹ️ Nu există modificări nesalvate.")
             else:
-                st.success(f"✅ Stările au fost actualizate în baza de date pentru **{nr_mod}** poziții.")
-                st.rerun()
+                st.session_state["df_toast_msg"] = f"✅ Stările au fost actualizate pentru {nr_mod} poziții."
 
 
 def render_cereri_oferta_furnizori_de_facut():
@@ -1194,9 +1192,8 @@ def render_cereri_oferta_furnizori_de_facut():
                         linii_piese=linii_de_trimis,
                         furnizori_selectati=furn_finale,
                     )
-                    _goleste_cache_de_facut()
-                    st.success(f"✅ Cererea **{cer_noua.get('cod_cerere')}** a fost creată cu status **Trimis - aștept**.")
-                    st.rerun()
+                    _goleste_cache_piese_si_rfq()
+                    st.session_state["df_toast_msg"] = f"✅ Cererea {cer_noua.get('cod_cerere')} a fost creată."
                 except ValueError as ve:
                     st.error(f"⚠️ {ve}")
 
@@ -1253,9 +1250,9 @@ def render_cereri_oferta_furnizori_de_facut():
         with cs_right:
             if st.button("🔄 Actualizează Starea Cererii", key=f"df_rfq_btn_st_{cid_activa}", use_container_width=True):
                 CereriOfertaRepository.update_status_cerere(cid_activa, nou_st_cer)
-                _goleste_cache_de_facut()
-                st.success(f"✅ Starea cererii {cer_activa.get('cod_cerere')} a devenit **{nou_st_cer}**.")
-                st.rerun()
+                _goleste_cache_taskuri()
+                _goleste_cache_piese_si_rfq()
+                st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
 
         if linii_cer:
             df_lin_init = pd.DataFrame([
@@ -1330,12 +1327,9 @@ def render_cereri_oferta_furnizori_de_facut():
                         for _, r in df_lin_edit.iterrows()
                     ]
                     CereriOfertaRepository.salveaza_oferta_primita_furnizor(cid_activa, payload_linii)
-                    _goleste_cache_de_facut()
-                    st.success(
-                        f"✅ Oferta furnizor pentru **{cer_activa.get('firma_nume')}** ({cer_activa.get('cod_cerere')}) "
-                        f"a fost salvată și s-a adăugat task-ul în lista de task-uri."
-                    )
-                    st.rerun()
+                    _goleste_cache_taskuri()
+                    _goleste_cache_piese_si_rfq()
+                    st.session_state["df_toast_msg"] = f"✅ Oferta furnizor pentru {cer_activa.get('firma_nume')} a fost salvată."
 
             with ca_b2:
                 if st.button(
@@ -1394,9 +1388,8 @@ def render_cereri_oferta_furnizori_de_facut():
                         st.session_state["ofs_cnt"] = st.session_state.get("ofs_cnt", 0) + 1
 
                     CereriOfertaRepository.update_status_cerere(cid_activa, "Ofertat la client")
-                    _goleste_cache_de_facut()
-                    st.success(f"✅ Liniile au fost pregătite în editorul de **Oferte** pentru **{firma_nume}**.")
-                    st.rerun()
+                    _goleste_cache_piese_si_rfq()
+                    st.session_state["df_toast_msg"] = f"✅ Liniile au fost pregătite în Oferte pentru {firma_nume}."
 
 
 def render_memento_intretinere_de_facut():
@@ -1441,13 +1434,16 @@ def render_memento_intretinere_de_facut():
 def render_de_facut():
     t0 = time.perf_counter()
 
+    if st.session_state.get("df_toast_msg"):
+        st.toast(st.session_state.pop("df_toast_msg"))
+
     col_title, col_refresh, col_perf = st.columns([4.4, 1.0, 0.8], vertical_alignment="center")
     with col_title:
         st.title("✅ De făcut & Activități Teren")
     with col_refresh:
         if st.button("🔄 Actualizează", use_container_width=True, key="btn_df_refresh_unic"):
             _goleste_cache_de_facut()
-            st.rerun()
+            st.session_state["df_toast_msg"] = "🔄 Datele au fost reîncărcate."
     with col_perf:
         arat_timpi = st.checkbox("⏱️ Timpi", value=False, key="df_show_timings")
 
@@ -1479,62 +1475,3 @@ def render_de_facut():
             f"Întrețineri: {(ts_e - ts_d):.2f}s | "
             f"Total: {(ts_e - t0):.2f}s"
         )
-        
-        
-def _goleste_cache_taskuri():
-    _obtine_taskuri_cached.clear()
-    _colecteaza_piese_necesare.clear()
-    if hasattr(TaskuriVizitaRepository, "get_all") and hasattr(TaskuriVizitaRepository.get_all, "clear"):
-        try:
-            TaskuriVizitaRepository.get_all.clear()
-        except Exception:
-            pass
-
-
-def _goleste_cache_piese_si_rfq():
-    _colecteaza_piese_necesare.clear()
-    _incarca_optiuni_lookup_piese.clear()
-    for repo in (PieseRepository, NecesarPieseRepository, ReparatiiRepository, CereriOfertaRepository):
-        if repo is None:
-            continue
-        for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
-            fn = getattr(repo, method_name, None)
-            if fn is not None and hasattr(fn, "clear"):
-                try:
-                    fn.clear()
-                except Exception:
-                    pass
-
-
-def _goleste_cache_de_facut():
-    incarca_memento_intretinere.clear()
-    _incarca_optiuni_lookup_piese.clear()
-    _colecteaza_piese_necesare.clear()
-    _obtine_harta_firme_cached.clear()
-    _obtine_masini_cached.clear()
-    _obtine_taskuri_cached.clear()
-
-    if hasattr(SetariRepository.get_setari, "clear"):
-        try:
-            SetariRepository.get_setari.clear()
-        except Exception:
-            pass
-
-    for repo in (
-        PieseRepository,
-        NecesarPieseRepository,
-        ReparatiiRepository,
-        TaskuriVizitaRepository,
-        CereriOfertaRepository,
-        FirmeRepository,
-        MasiniRepository,
-    ):
-        if repo is None:
-            continue
-        for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
-            fn = getattr(repo, method_name, None)
-            if fn is not None and hasattr(fn, "clear"):
-                try:
-                    fn.clear()
-                except Exception:
-                    pass

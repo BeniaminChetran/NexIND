@@ -6,12 +6,12 @@ from datetime import date, timedelta
 import json
 import logging
 import streamlit as st
-from config import db_cursor
-from repositories.base_repository import BaseRepository
+from config import db_cursor[cite: 10]
+from repositories.base_repository import BaseRepository[cite: 10]
 
-logger = logging.getLogger("NexIndCMMS.MasiniRepository")
+logger = logging.getLogger("NexIndCMMS.MasiniRepository")[cite: 10]
 
-ALL_SISTEME_DEFAULT = "Electric,Mecanic,Hidraulic,Pneumatic,Vacuum,Auxiliare"
+ALL_SISTEME_DEFAULT = "Electric,Mecanic,Hidraulic,Pneumatic,Vacuum,Auxiliare"[cite: 10]
 
 TIPURI_CONTROL_CNC = (
     "Fanuc",
@@ -22,7 +22,7 @@ TIPURI_CONTROL_CNC = (
     "Mazatrol",
     "Beckhoff / TwinCAT",
     "Altele",
-)
+)[cite: 10]
 
 
 @st.cache_resource
@@ -46,7 +46,7 @@ def _asigura_schema_si_indexuri_masini_once() -> bool:
         CREATE INDEX IF NOT EXISTS idx_masini_firma_id ON masini (firma_id);
         CREATE INDEX IF NOT EXISTS idx_masini_denumire ON masini (denumire);
         CREATE INDEX IF NOT EXISTS idx_masini_data_intretinere ON masini (data_intretinere);
-    """
+    """[cite: 10]
     with db_cursor() as c:
         c.execute(ddl_si_indexuri)
 
@@ -79,19 +79,19 @@ class MasiniRepository(BaseRepository):
     @staticmethod
     def _parse_json(val, default):
         if val is None:
-            return default
+            return default[cite: 10]
         if isinstance(val, (dict, list)):
-            return val
+            return val[cite: 10]
         try:
-            return json.loads(val)
+            return json.loads(val)[cite: 10]
         except Exception:
-            return default
+            return default[cite: 10]
 
     @classmethod
     @st.cache_data(ttl=180)
     def get_all(cls_or_self=None):
         cls = cls_or_self if isinstance(cls_or_self, type) else MasiniRepository
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         query = """
             WITH cnt_rep AS (
                 SELECT COALESCE(firma, '') AS firma_txt, COALESCE(masina, '') AS masina_txt, COUNT(*) AS cnt
@@ -132,20 +132,20 @@ class MasiniRepository(BaseRepository):
             LEFT JOIN cnt_mp cmp ON cmp.masina_id = m.id
             LEFT JOIN cnt_re cre ON cre.masina_id = m.id
             ORDER BY m.denumire
-        """
-        rows = cls().fetch_all(query, (ALL_SISTEME_DEFAULT,)) or []
+        """[cite: 10]
+        rows = cls().fetch_all(query, (ALL_SISTEME_DEFAULT,)) or [][cite: 10]
         for r in rows:
-            r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})
-            r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])
-            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))
-            r["prag_interventii"] = int(r.get("prag_interventii") or 20)
-        return rows
+            r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})[cite: 10]
+            r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])[cite: 10]
+            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))[cite: 10]
+            r["prag_interventii"] = int(r.get("prag_interventii") or 20)[cite: 10]
+        return rows[cite: 10]
 
     @classmethod
     @st.cache_data(ttl=180)
     def get_by_firma(cls_or_self, firma_id: int):
         cls = cls_or_self if isinstance(cls_or_self, type) else MasiniRepository
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         query = """
             WITH cnt_rep AS (
                 SELECT COALESCE(firma, '') AS firma_txt, COALESCE(masina, '') AS masina_txt, COUNT(*) AS cnt
@@ -186,57 +186,57 @@ class MasiniRepository(BaseRepository):
             LEFT JOIN cnt_re cre ON cre.masina_id = m.id
             WHERE f.id = %s
             ORDER BY m.denumire
-        """
-        rows = cls().fetch_all(query, (ALL_SISTEME_DEFAULT, int(firma_id))) or []
+        """[cite: 10]
+        rows = cls().fetch_all(query, (ALL_SISTEME_DEFAULT, int(firma_id))) or [][cite: 10]
         for r in rows:
-            r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})
-            r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])
-            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))
-            r["prag_interventii"] = int(r.get("prag_interventii") or 20)
-        return rows
+            r["verificari_custom_json"] = cls._parse_json(r.get("verificari_custom_json"), {})[cite: 10]
+            r["componenta_sisteme_json"] = cls._parse_json(r.get("componenta_sisteme_json"), [])[cite: 10]
+            r["total_interventii"] = max(0, int(r.get("total_interventii") or 0))[cite: 10]
+            r["prag_interventii"] = int(r.get("prag_interventii") or 20)[cite: 10]
+        return rows[cite: 10]
 
     @classmethod
     def update_grila_tarifare(cls, masina_id: int, grila_noua: str):
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         cls().execute(
             "UPDATE masini SET grila_tarifare = %s WHERE id = %s",
             (grila_noua, int(masina_id)),
-        )
+        )[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Grila tarifară pentru mașina #{masina_id} a fost schimbată în {grila_noua}")
+        logger.info(f"Grila tarifară pentru mașina #{masina_id} a fost schimbată în {grila_noua}")[cite: 10]
 
     @staticmethod
     def determina_grila_efectiva(masina_obj: dict) -> str:
-        mod = str(masina_obj.get("grila_tarifare") or "AUTO").strip()
+        mod = str(masina_obj.get("grila_tarifare") or "AUTO").strip()[cite: 10]
         if mod in ("Nivel A", "Nivel B"):
-            return mod
-        total_int = int(masina_obj.get("total_interventii", 0))
-        prag_int = int(masina_obj.get("prag_interventii", 20))
-        return "Nivel B" if total_int >= prag_int else "Nivel A"
+            return mod[cite: 10]
+        total_int = int(masina_obj.get("total_interventii", 0))[cite: 10]
+        prag_int = int(masina_obj.get("prag_interventii", 20))[cite: 10]
+        return "Nivel B" if total_int >= prag_int else "Nivel A"[cite: 10]
 
     @classmethod
     def update_verificari_custom(cls, masina_id: int, verificari_dict: dict):
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         cls().execute(
             "UPDATE masini SET verificari_custom_json = %s::jsonb WHERE id = %s",
             (json.dumps(verificari_dict, ensure_ascii=False), int(masina_id)),
-        )
+        )[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Verificările tehnice personalizate au fost actualizate pentru mașina #{masina_id}")
+        logger.info(f"Verificările tehnice personalizate au fost actualizate pentru mașina #{masina_id}")[cite: 10]
 
     @classmethod
     def update_componenta_sisteme(cls, masina_id: int, componenta_list: list):
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         cls().execute(
             "UPDATE masini SET componenta_sisteme_json = %s::jsonb WHERE id = %s",
             (json.dumps(componenta_list, ensure_ascii=False), int(masina_id)),
-        )
+        )[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Componența sistemelor a fost actualizată pentru mașina #{masina_id}")
+        logger.info(f"Componența sistemelor a fost actualizată pentru mașina #{masina_id}")[cite: 10]
 
     @classmethod
     def insert(cls, data: dict):
-        cls._ensure_sisteme_col()
+        cls._ensure_sisteme_col()[cite: 10]
         query = """
             INSERT INTO masini (
                 firma_id, denumire, tip_masina, serie, an_fabricatie, subansambluri, erori,
@@ -246,7 +246,7 @@ class MasiniRepository(BaseRepository):
                 este_masina_noua, prag_interventii, offset_interventii, grila_tarifare
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
-        """
+        """[cite: 10]
         params = (
             data["firma_id"],
             data["denumire"],
@@ -269,17 +269,17 @@ class MasiniRepository(BaseRepository):
             int(data.get("prag_interventii", 20) or 20),
             int(data.get("offset_interventii", 0) or 0),
             data.get("grila_tarifare") or "AUTO",
-        )
-        cls().execute(query, params)
+        )[cite: 10]
+        cls().execute(query, params)[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Mașină adăugată: {data['denumire']}")
+        logger.info(f"Mașină adăugată: {data['denumire']}")[cite: 10]
 
     @classmethod
     def delete(cls, masina_id: int):
-        query = "DELETE FROM masini WHERE id=%s"
-        cls().execute(query, (int(masina_id),))
+        query = "DELETE FROM masini WHERE id=%s"[cite: 10]
+        cls().execute(query, (int(masina_id),))[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Mașina #{masina_id} a fost ștearsă")
+        logger.info(f"Mașina #{masina_id} a fost ștearsă")[cite: 10]
 
 
 def asigura_coloane_mentenanta_masini():
@@ -291,15 +291,15 @@ def calculeaza_urmatoarea_data_intretinere(
     interval_zile: int | None,
     fallback_zile: int = 90,
 ) -> date:
-    zile = int(interval_zile or 0)
+    zile = int(interval_zile or 0)[cite: 10]
     if zile <= 0:
-        zile = int(fallback_zile or 90)
-    return data_efectuare + timedelta(days=zile)
+        zile = int(fallback_zile or 90)[cite: 10]
+    return data_efectuare + timedelta(days=zile)[cite: 10]
 
 
 def scoate_masina_din_intretinere(masina_id: int):
     asigura_coloane_mentenanta_masini()
-    with db_cursor() as c:
+    with db_cursor() as c:[cite: 10]
         c.execute(
             """
             UPDATE masini
@@ -308,7 +308,7 @@ def scoate_masina_din_intretinere(masina_id: int):
             WHERE id = %s
             """,
             (int(masina_id),),
-        )
+        )[cite: 10]
     _goleste_cache_masini()
 
 
@@ -319,7 +319,7 @@ def activeaza_si_programeaza_intretinere(
     ultima_intretinere: date | None = None,
 ):
     asigura_coloane_mentenanta_masini()
-    with db_cursor() as c:
+    with db_cursor() as c:[cite: 10]
         c.execute(
             """
             UPDATE masini
@@ -335,7 +335,7 @@ def activeaza_si_programeaza_intretinere(
                 ultima_intretinere,
                 int(masina_id),
             ),
-        )
+        )[cite: 10]
     _goleste_cache_masini()
 
 
@@ -346,7 +346,7 @@ def finalizeaza_si_replanifica_intretinere(
     interval_zile: int = 0,
 ):
     asigura_coloane_mentenanta_masini()
-    with db_cursor() as c:
+    with db_cursor() as c:[cite: 10]
         c.execute(
             """
             UPDATE masini
@@ -366,7 +366,7 @@ def finalizeaza_si_replanifica_intretinere(
                 int(interval_zile or 0),
                 int(masina_id),
             ),
-        )
+        )[cite: 10]
     _goleste_cache_masini()
 
 
@@ -397,7 +397,7 @@ class MasiniRepositoryExt(BaseRepository):
                 str(row.get(k) or "").strip()
                 for k in ("Rol / Tip", "Producător / Model", "Axă / Zonă / Detalii", "Observații")
             )
-        ]
+        ][cite: 10]
         cls().execute(
             """
             UPDATE masini
@@ -414,6 +414,6 @@ class MasiniRepositoryExt(BaseRepository):
                 str(gdrive_folder_id or "").strip(),
                 int(masina_id),
             ),
-        )
+        )[cite: 10]
         _goleste_cache_masini()
-        logger.info(f"Actualizat control CNC ({tip_control_cnc}) și componente electrice pentru mașina #{masina_id}.")
+        logger.info(f"Actualizat control CNC ({tip_control_cnc}) și componente electrice pentru mașina #{masina_id}.")[cite: 10]
