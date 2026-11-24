@@ -5,9 +5,9 @@
 import logging
 import streamlit as st
 from config import db_cursor
-from repositories.base_repository import BaseRepository[cite: 5]
+from repositories.base_repository import BaseRepository
 
-logger = logging.getLogger("NexIndCMMS.PieseRepository")[cite: 5]
+logger = logging.getLogger("NexIndCMMS.PieseRepository")
 
 OPTIUNI_STARE_COMANDA = [
     "De căutat",
@@ -16,11 +16,11 @@ OPTIUNI_STARE_COMANDA = [
     "Comandată",
     "În așteptare",
     "Anulată",
-][cite: 5]
+]
 
 
 def _normalizeaza_stare_comanda(val) -> str:
-    s = str(val or "").strip()[cite: 5]
+    s = str(val or "").strip()
     mapa = {
         "de cautat": "De căutat",
         "de căutat": "De căutat",
@@ -34,8 +34,8 @@ def _normalizeaza_stare_comanda(val) -> str:
         "în așteptare": "În așteptare",
         "anulata": "Anulată",
         "anulată": "Anulată",
-    }[cite: 5]
-    return mapa.get(s.lower(), "De căutat")[cite: 5]
+    }
+    return mapa.get(s.lower(), "De căutat")
 
 
 @st.cache_resource
@@ -46,7 +46,7 @@ def _asigura_coloane_piese_once() -> bool:
         CREATE INDEX IF NOT EXISTS idx_piese_denumire ON piese (denumire);
         CREATE INDEX IF NOT EXISTS idx_piese_cod_producator ON piese (cod_producator);
         CREATE INDEX IF NOT EXISTS idx_piese_stare_comandata ON piese (stare_comandata);
-    """[cite: 5]
+    """
     with db_cursor() as cur:
         cur.execute(ddl_si_indexuri)
     return True
@@ -68,7 +68,7 @@ class PieseRepository(BaseRepository):
     @st.cache_data(ttl=300)
     def get_all(cls_or_self=None):
         cls = cls_or_self if isinstance(cls_or_self, type) else PieseRepository
-        cls._asigura_coloane_piese()[cite: 5]
+        cls._asigura_coloane_piese()
         query = """
             SELECT id, denumire, cod_producator, cod_comercial, masina_montaj,
                    subansamblu, parametri, pret_achizitie,
@@ -77,17 +77,17 @@ class PieseRepository(BaseRepository):
                    COALESCE(NULLIF(TRIM(stare_comandata), ''), 'De căutat') AS stare_comandata
             FROM piese
             ORDER BY denumire
-        """[cite: 5]
-        rows = cls().fetch_all(query) or [][cite: 5]
+        """
+        rows = cls().fetch_all(query) or []
         for r in rows:
-            r["stare_comandata"] = _normalizeaza_stare_comanda(r.get("stare_comandata"))[cite: 5]
-        return rows[cite: 5]
+            r["stare_comandata"] = _normalizeaza_stare_comanda(r.get("stare_comandata"))
+        return rows
 
     @classmethod
     @st.cache_data(ttl=180)
     def get_filtrate(cls_or_self, select_masina_unica: str):
         cls = cls_or_self if isinstance(cls_or_self, type) else PieseRepository
-        cls._asigura_coloane_piese()[cite: 5]
+        cls._asigura_coloane_piese()
         if select_masina_unica != "Toate mașinile / General":
             query = """
                 SELECT id, denumire, cod_producator, cod_comercial, masina_montaj,
@@ -103,26 +103,26 @@ class PieseRepository(BaseRepository):
                    OR masina_montaj = ''
                    OR masina_montaj IS NULL
                 ORDER BY denumire
-            """[cite: 5]
+            """
             params = (
                 f"%{select_masina_unica.strip()}%",
                 f"{select_masina_unica.strip()},%",
                 f"%, {select_masina_unica.strip()}%",
-            )[cite: 5]
-            rows = cls().fetch_all(query, params) or [][cite: 5]
+            )
+            rows = cls().fetch_all(query, params) or []
             for r in rows:
-                r["stare_comandata"] = _normalizeaza_stare_comanda(r.get("stare_comandata"))[cite: 5]
-            return rows[cite: 5]
-        return cls.get_all()[cite: 5]
+                r["stare_comandata"] = _normalizeaza_stare_comanda(r.get("stare_comandata"))
+            return rows
+        return cls.get_all()
 
     @classmethod
     def insert(cls, data: dict):
-        cls._asigura_coloane_piese()[cite: 5]
-        valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()[cite: 5]
+        cls._asigura_coloane_piese()
+        valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()
         if valuta not in ("RON", "EUR"):
-            valuta = "RON"[cite: 5]
-        masina_val = str(data.get("masina_montaj") or "").strip() or "General"[cite: 5]
-        stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))[cite: 5]
+            valuta = "RON"
+        masina_val = str(data.get("masina_montaj") or "").strip() or "General"
+        stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))
         query = """
             INSERT INTO piese (
                 denumire, cod_producator, cod_comercial, masina_montaj,
@@ -130,7 +130,7 @@ class PieseRepository(BaseRepository):
                 link_furnizor, termen_livrare, stare_comandata
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """[cite: 5]
+        """
         params = (
             data["denumire"],
             data.get("cod_producator"),
@@ -143,26 +143,26 @@ class PieseRepository(BaseRepository):
             data.get("link_furnizor", ""),
             str(data.get("termen_livrare") or "1").strip(),
             stare_cmd,
-        )[cite: 5]
-        cls().execute(query, params)[cite: 5]
+        )
+        cls().execute(query, params)
         cls._goleste_cache_piese()
-        logger.info(f"Piesă adăugată: {data['denumire']} ({masina_val}, {valuta}, {stare_cmd})")[cite: 5]
+        logger.info(f"Piesă adăugată: {data['denumire']} ({masina_val}, {valuta}, {stare_cmd})")
 
     @classmethod
     def update(cls, piesa_id: int, data: dict):
-        cls._asigura_coloane_piese()[cite: 5]
-        valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()[cite: 5]
+        cls._asigura_coloane_piese()
+        valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()
         if valuta not in ("RON", "EUR"):
-            valuta = "RON"[cite: 5]
-        masina_val = str(data.get("masina_montaj") or "").strip() or "General"[cite: 5]
-        stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))[cite: 5]
+            valuta = "RON"
+        masina_val = str(data.get("masina_montaj") or "").strip() or "General"
+        stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))
         query = """
             UPDATE piese
             SET denumire=%s, cod_producator=%s, cod_comercial=%s, masina_montaj=%s,
                 subansamblu=%s, parametri=%s, pret_achizitie=%s, valuta_achizitie=%s,
                 link_furnizor=%s, termen_livrare=%s, stare_comandata=%s
             WHERE id=%s
-        """[cite: 5]
+        """
         params = (
             data["denumire"],
             data.get("cod_producator"),
@@ -176,25 +176,25 @@ class PieseRepository(BaseRepository):
             str(data.get("termen_livrare") or "1").strip(),
             stare_cmd,
             int(piesa_id),
-        )[cite: 5]
-        cls().execute(query, params)[cite: 5]
+        )
+        cls().execute(query, params)
         cls._goleste_cache_piese()
-        logger.info(f"Piesa #{piesa_id} a fost actualizată ({masina_val}, {valuta}, {stare_cmd}).")[cite: 5]
+        logger.info(f"Piesa #{piesa_id} a fost actualizată ({masina_val}, {valuta}, {stare_cmd}).")
 
     @classmethod
     def update_stare_comandata(cls, piesa_id: int, stare_noua: str):
-        cls._asigura_coloane_piese()[cite: 5]
-        stare_cmd = _normalizeaza_stare_comanda(stare_noua)[cite: 5]
+        cls._asigura_coloane_piese()
+        stare_cmd = _normalizeaza_stare_comanda(stare_noua)
         cls().execute(
             "UPDATE piese SET stare_comandata=%s WHERE id=%s",
             (stare_cmd, int(piesa_id)),
-        )[cite: 5]
+        )
         cls._goleste_cache_piese()
-        logger.info(f"Piesa #{piesa_id} -> stare comandă: {stare_cmd}")[cite: 5]
+        logger.info(f"Piesa #{piesa_id} -> stare comandă: {stare_cmd}")
 
     @classmethod
     def delete(cls, piesa_id: int):
-        query = "DELETE FROM piese WHERE id=%s"[cite: 5]
-        cls().execute(query, (int(piesa_id),))[cite: 5]
+        query = "DELETE FROM piese WHERE id=%s"
+        cls().execute(query, (int(piesa_id),))
         cls._goleste_cache_piese()
-        logger.info(f"Piesa #{piesa_id} ștearsă.")[cite: 5]
+        logger.info(f"Piesa #{piesa_id} ștearsă.")

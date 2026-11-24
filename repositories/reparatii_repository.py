@@ -1,7 +1,7 @@
 import json
 import streamlit as st
 from config import db_cursor
-from repositories.base_repository import BaseRepository[cite: 6]
+from repositories.base_repository import BaseRepository
 
 
 @st.cache_resource
@@ -28,8 +28,8 @@ class ReparatiiRepository(BaseRepository):
                    verificator AS verificator_nume, data_creare AS data, tip_interventie
             FROM reparatii
             ORDER BY id DESC
-        """[cite: 6]
-        return BaseRepository().fetch_all(query)[cite: 6]
+        """
+        return BaseRepository().fetch_all(query)
 
     @classmethod
     @st.cache_data(ttl=180)
@@ -56,7 +56,7 @@ class ReparatiiRepository(BaseRepository):
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        """[cite: 6]
+        """
         params = (
             data.get("firma"),
             data.get("masina"),
@@ -73,8 +73,8 @@ class ReparatiiRepository(BaseRepository):
             data.get("tehnician_nume"),
             data.get("verificator_nume"),
             data.get("tip_interventie"),
-        )[cite: 6]
-        res = cls().execute_returning(query, params)[cite: 6]
-        cls.get_all.clear()[cite: 6]
+        )
+        res = cls().execute_returning(query, params)
+        cls.get_all.clear()
         cls.get_recente_pentru_piese.clear()
-        return res["id"] if res else None[cite: 6]
+        return res["id"] if res else None

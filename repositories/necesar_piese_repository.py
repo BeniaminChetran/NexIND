@@ -6,20 +6,20 @@ import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
 from config import db_cursor
-from repositories.base_repository import BaseRepository[cite: 4]
-from repositories.piese_repository import PieseRepository, _normalizeaza_stare_comanda[cite: 4]
+from repositories.base_repository import BaseRepository
+from repositories.piese_repository import PieseRepository, _normalizeaza_stare_comanda
 
-logger = logging.getLogger("NexIndCMMS.NecesarPieseRepository")[cite: 4]
+logger = logging.getLogger("NexIndCMMS.NecesarPieseRepository")
 
-OPTIUNI_PRIORITATE_PIESA = ["Normal", "Urgent"][cite: 4]
-OPTIUNI_STATUS_TEREN = ["De căutat", "De comandat", "De ofertat", "În așteptare"][cite: 4]
+OPTIUNI_PRIORITATE_PIESA = ["Normal", "Urgent"]
+OPTIUNI_STATUS_TEREN = ["De căutat", "De comandat", "De ofertat", "În așteptare"]
 
 
 def normalizeaza_prioritate_piesa(val: Any) -> str:
-    s = str(val or "").strip().lower()[cite: 4]
+    s = str(val or "").strip().lower()
     if s in ("urgent", "urgentă", "urgenta", "ridicată", "ridicata", "high"):
-        return "Urgent"[cite: 4]
-    return "Normal"[cite: 4]
+        return "Urgent"
+    return "Normal"
 
 
 @st.cache_resource
@@ -44,7 +44,7 @@ def _asigura_tabela_necesar_once() -> bool:
         CREATE INDEX IF NOT EXISTS idx_necesar_piese_status ON necesar_piese (status_comanda);
         CREATE INDEX IF NOT EXISTS idx_necesar_piese_prioritate ON necesar_piese (prioritate_piesa);
         CREATE INDEX IF NOT EXISTS idx_necesar_piese_firma ON necesar_piese (firma_id);
-    """[cite: 4]
+    """
     with db_cursor() as cur:
         cur.execute(ddl_si_indexuri)
     return True
@@ -88,46 +88,46 @@ class NecesarPieseRepository(BaseRepository):
         status_comanda: Optional[str] = None,
         observatii: str = "",
     ) -> Dict[str, Any]:
-        cls._asigura_tabela()[cite: 4]
+        cls._asigura_tabela()
 
-        firma_curata = str(firma_client or "").strip()[cite: 4]
+        firma_curata = str(firma_client or "").strip()
         if not firma_curata:
-            raise ValueError("Clientul / firma este obligatorie.")[cite: 4]
+            raise ValueError("Clientul / firma este obligatorie.")
 
-        den_curata = " ".join(str(denumire_piesa or "").strip().split())[cite: 4]
+        den_curata = " ".join(str(denumire_piesa or "").strip().split())
         if not den_curata:
-            raise ValueError("Denumirea piesei este obligatorie.")[cite: 4]
+            raise ValueError("Denumirea piesei este obligatorie.")
 
-        cant_num = round(float(cantitate), 2)[cite: 4]
+        cant_num = round(float(cantitate), 2)
         if cant_num <= 0:
-            raise ValueError("Cantitatea trebuie să fie mai mare decât 0.")[cite: 4]
+            raise ValueError("Cantitatea trebuie să fie mai mare decât 0.")
 
-        cod_curat = str(cod_producator or "").strip()[cite: 4]
-        masina_curata = str(masina or "").strip()[cite: 4]
+        cod_curat = str(cod_producator or "").strip()
+        masina_curata = str(masina or "").strip()
         if masina_curata.startswith("--"):
-            masina_curata = ""[cite: 4]
-        prio_norm = normalizeaza_prioritate_piesa(prioritate_piesa)[cite: 4]
-        obs_curata = str(observatii or "").strip()[cite: 4]
-        fid_val = int(firma_id) if firma_id is not None else None[cite: 4]
+            masina_curata = ""
+        prio_norm = normalizeaza_prioritate_piesa(prioritate_piesa)
+        obs_curata = str(observatii or "").strip()
+        fid_val = int(firma_id) if firma_id is not None else None
 
-        piesa_catalog = cls._gaseste_piesa_catalog(den_curata, cod_curat)[cite: 4]
-        existenta_in_catalog = piesa_catalog is not None[cite: 4]
+        piesa_catalog = cls._gaseste_piesa_catalog(den_curata, cod_curat)
+        existenta_in_catalog = piesa_catalog is not None
 
         if status_comanda and str(status_comanda).strip():
-            status_final = _normalizeaza_stare_comanda(status_comanda)[cite: 4]
+            status_final = _normalizeaza_stare_comanda(status_comanda)
         else:
-            status_final = "De ofertat" if existenta_in_catalog else "De căutat"[cite: 4]
+            status_final = "De ofertat" if existenta_in_catalog else "De căutat"
 
         if existenta_in_catalog:
-            piesa_id = piesa_catalog.get("id")[cite: 4]
+            piesa_id = piesa_catalog.get("id")
             if not cod_curat:
-                cod_curat = str(piesa_catalog.get("cod_producator") or "").strip()[cite: 4]
+                cod_curat = str(piesa_catalog.get("cod_producator") or "").strip()
         else:
-            PieseRepository._asigura_coloane_piese()[cite: 4]
-            masina_catalog = masina_curata or "General"[cite: 4]
-            obs_catalog = f"Notat pe teren | Client: {firma_curata} | Stare piesă: {prio_norm}"[cite: 4]
+            PieseRepository._asigura_coloane_piese()
+            masina_catalog = masina_curata or "General"
+            obs_catalog = f"Notat pe teren | Client: {firma_curata} | Stare piesă: {prio_norm}"
             if obs_curata:
-                obs_catalog = f"{obs_catalog} | {obs_curata}"[cite: 4]
+                obs_catalog = f"{obs_catalog} | {obs_curata}"
 
             inserted = cls().execute_returning(
                 """
@@ -152,12 +152,12 @@ class NecesarPieseRepository(BaseRepository):
                     "1",
                     status_final,
                 ),
-            )[cite: 4]
+            )
             if hasattr(PieseRepository, "_goleste_cache_piese"):
                 PieseRepository._goleste_cache_piese()
             elif hasattr(PieseRepository.get_all, "clear"):
-                PieseRepository.get_all.clear()[cite: 4]
-            piesa_id = inserted.get("id") if isinstance(inserted, dict) else None[cite: 4]
+                PieseRepository.get_all.clear()
+            piesa_id = inserted.get("id") if isinstance(inserted, dict) else None
 
         row_necesar = cls().execute_returning(
             """
@@ -180,8 +180,8 @@ class NecesarPieseRepository(BaseRepository):
                 obs_curata,
                 status_final,
             ),
-        )[cite: 4]
-        cls.get_all.clear()[cite: 4]
+        )
+        cls.get_all.clear()
 
         return {
             "record": dict(row_necesar) if row_necesar else {},
@@ -189,13 +189,13 @@ class NecesarPieseRepository(BaseRepository):
             "prioritate_piesa": prio_norm,
             "status_comanda": status_final,
             "piesa_id": piesa_id,
-        }[cite: 4]
+        }
 
     @classmethod
     @st.cache_data(ttl=120)
     def get_all(cls_or_self=None) -> List[Dict[str, Any]]:
-        cls = cls_or_self if isinstance(cls_or_self, type) else NecesarPieseRepository[cite: 4]
-        cls._asigura_tabela()[cite: 4]
+        cls = cls_or_self if isinstance(cls_or_self, type) else NecesarPieseRepository
+        cls._asigura_tabela()
         rows = cls().fetch_all(
             """
             SELECT
@@ -228,32 +228,32 @@ class NecesarPieseRepository(BaseRepository):
                 np.data_creare DESC,
                 np.id DESC
             """
-        ) or [][cite: 4]
+        ) or []
 
         rez: List[Dict[str, Any]] = []
         for r in rows:
-            d = dict(r)[cite: 4]
-            d["prioritate_piesa"] = normalizeaza_prioritate_piesa(d.get("prioritate_piesa"))[cite: 4]
-            d["status_comanda"] = _normalizeaza_stare_comanda(d.get("status_comanda"))[cite: 4]
-            rez.append(d)[cite: 4]
-        return rez[cite: 4]
+            d = dict(r)
+            d["prioritate_piesa"] = normalizeaza_prioritate_piesa(d.get("prioritate_piesa"))
+            d["status_comanda"] = _normalizeaza_stare_comanda(d.get("status_comanda"))
+            rez.append(d)
+        return rez
 
     @classmethod
     def update_status_comanda(cls, necesar_id: int, status_nou: str) -> None:
-        cls._asigura_tabela()[cite: 4]
-        stare_norm = _normalizeaza_stare_comanda(status_nou)[cite: 4]
+        cls._asigura_tabela()
+        stare_norm = _normalizeaza_stare_comanda(status_nou)
         cls().execute(
             "UPDATE necesar_piese SET status_comanda = %s WHERE id = %s",
             (stare_norm, int(necesar_id)),
-        )[cite: 4]
-        cls.get_all.clear()[cite: 4]
+        )
+        cls.get_all.clear()
 
     @classmethod
     def update_prioritate_piesa(cls, necesar_id: int, prioritate_noua: str) -> None:
-        cls._asigura_tabela()[cite: 4]
-        prio_norm = normalizeaza_prioritate_piesa(prioritate_noua)[cite: 4]
+        cls._asigura_tabela()
+        prio_norm = normalizeaza_prioritate_piesa(prioritate_noua)
         cls().execute(
             "UPDATE necesar_piese SET prioritate_piesa = %s WHERE id = %s",
             (prio_norm, int(necesar_id)),
-        )[cite: 4]
-        cls.get_all.clear()[cite: 4]
+        )
+        cls.get_all.clear()

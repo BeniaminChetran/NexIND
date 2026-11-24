@@ -7,28 +7,28 @@ import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
 from config import db_cursor
-from repositories.base_repository import BaseRepository[cite: 7]
-from repositories.taskuri_vizita_repository import TaskuriVizitaRepository[cite: 7]
+from repositories.base_repository import BaseRepository
+from repositories.taskuri_vizita_repository import TaskuriVizitaRepository
 
-logger = logging.getLogger("NexIndCMMS.CereriOfertaRepository")[cite: 7]
+logger = logging.getLogger("NexIndCMMS.CereriOfertaRepository")
 
 OPTIUNI_STATUS_CERERE_OFERTA = [
     "Trimis - aștept",
     "Primită - de făcut către client",
     "Ofertat la client",
     "Închisă",
-][cite: 7]
+]
 
 
 def normalizeaza_status_cerere_oferta(val: Any) -> str:
-    s = str(val or "").strip().lower()[cite: 7]
+    s = str(val or "").strip().lower()
     if "primit" in s or "de facut" in s or "de făcut" in s:
-        return "Primită - de făcut către client"[cite: 7]
+        return "Primită - de făcut către client"
     if "ofertat" in s:
-        return "Ofertat la client"[cite: 7]
+        return "Ofertat la client"
     if "inchis" in s or "închis" in s or "anulat" in s:
-        return "Închisă"[cite: 7]
-    return "Trimis - aștept"[cite: 7]
+        return "Închisă"
+    return "Trimis - aștept"
 
 
 @st.cache_resource
@@ -76,7 +76,7 @@ def _asigura_tabele_cereri_once() -> bool:
         CREATE INDEX IF NOT EXISTS idx_cereri_oferta_status ON cereri_oferta_furnizori (status_cerere);
         CREATE INDEX IF NOT EXISTS idx_cereri_oferta_firma ON cereri_oferta_furnizori (firma_id);
         CREATE INDEX IF NOT EXISTS idx_oferte_linii_cerere ON oferte_furnizori_linii (cerere_id);
-    """[cite: 7]
+    """
     with db_cursor() as cur:
         cur.execute(ddl_si_indexuri)
     return True
@@ -99,17 +99,17 @@ class CereriOfertaRepository(BaseRepository):
         linii_piese: Optional[List[Dict[str, Any]]] = None,
         furnizori_selectati: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        cls._asigura_tabele()[cite: 7]
+        cls._asigura_tabele()
 
-        firma_curata = str(firma_nume or "").strip()[cite: 7]
+        firma_curata = str(firma_nume or "").strip()
         if not firma_curata:
-            raise ValueError("Clientul / firma este obligatorie.")[cite: 7]
+            raise ValueError("Clientul / firma este obligatorie.")
 
-        masina_curata = str(masina_nume or "").strip()[cite: 7]
+        masina_curata = str(masina_nume or "").strip()
         if masina_curata.startswith("--"):
-            masina_curata = ""[cite: 7]
+            masina_curata = ""
 
-        cod_cerere = f"RFQ-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"[cite: 7]
+        cod_cerere = f"RFQ-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
         row = cls().execute_returning(
             """
             INSERT INTO cereri_oferta_furnizori (
@@ -129,21 +129,21 @@ class CereriOfertaRepository(BaseRepository):
                 termen_raspuns,
                 str(observatii or "").strip(),
             ),
-        )[cite: 7]
-        cerere = dict(row) if row else {}[cite: 7]
-        cerere_id = cerere.get("id")[cite: 7]
+        )
+        cerere = dict(row) if row else {}
+        cerere_id = cerere.get("id")
 
-        furnizori_lista = [str(f).strip() for f in (furnizori_selectati or []) if str(f).strip()][cite: 7]
+        furnizori_lista = [str(f).strip() for f in (furnizori_selectati or []) if str(f).strip()]
         if not furnizori_lista:
-            furnizori_lista = ["Furnizor de stabilit"][cite: 7]
+            furnizori_lista = ["Furnizor de stabilit"]
 
         if cerere_id and linii_piese:
             batch_linii = []
             for furn in furnizori_lista:
                 for idx_l, lp in enumerate(linii_piese):
-                    den = str(lp.get("denumire_piesa") or "").strip()[cite: 7]
+                    den = str(lp.get("denumire_piesa") or "").strip()
                     if not den:
-                        continue[cite: 7]
+                        continue
                     batch_linii.append((
                         int(cerere_id),
                         furn,
@@ -156,7 +156,7 @@ class CereriOfertaRepository(BaseRepository):
                         str(lp.get("moneda") or "EUR").strip().upper(),
                         str(lp.get("termen_livrare_zile") or "").strip(),
                         idx_l == 0 and furn == furnizori_lista[0],
-                    ))[cite: 7]
+                    ))
             if batch_linii:
                 cls().executemany(
                     """
@@ -170,9 +170,9 @@ class CereriOfertaRepository(BaseRepository):
                     batch_linii,
                 )
 
-        cls.get_cereri.clear()[cite: 7]
-        cls.get_linii_by_cerere.clear()[cite: 7]
-        return cerere[cite: 7]
+        cls.get_cereri.clear()
+        cls.get_linii_by_cerere.clear()
+        return cerere
 
     @classmethod
     def salveaza_oferta_primita_furnizor(
@@ -181,15 +181,15 @@ class CereriOfertaRepository(BaseRepository):
         linii_actualizate: List[Dict[str, Any]],
         creeaza_task_daca_lipseste: bool = True,
     ) -> None:
-        cls._asigura_tabele()[cite: 7]
-        cerere = cls().fetch_one("SELECT * FROM cereri_oferta_furnizori WHERE id = %s", (int(cerere_id),))[cite: 7]
+        cls._asigura_tabele()
+        cerere = cls().fetch_one("SELECT * FROM cereri_oferta_furnizori WHERE id = %s", (int(cerere_id),))
         if not cerere:
-            raise ValueError("Cererea de ofertă nu a fost găsită.")[cite: 7]
-        cerere = dict(cerere)[cite: 7]
+            raise ValueError("Cererea de ofertă nu a fost găsită.")
+        cerere = dict(cerere)
 
         batch_updates = []
         for l in linii_actualizate or []:
-            lid = l.get("id")[cite: 7]
+            lid = l.get("id")
             if lid is not None:
                 batch_updates.append((
                     str(l.get("furnizor_nume") or "").strip(),
@@ -200,7 +200,7 @@ class CereriOfertaRepository(BaseRepository):
                     bool(l.get("selectat_pentru_client", False)),
                     int(lid),
                     int(cerere_id),
-                ))[cite: 7]
+                ))
 
         if batch_updates:
             cls().executemany(
@@ -220,15 +220,15 @@ class CereriOfertaRepository(BaseRepository):
         cls().execute(
             "UPDATE cereri_oferta_furnizori SET status_cerere = %s WHERE id = %s",
             ("Primită - de făcut către client", int(cerere_id)),
-        )[cite: 7]
+        )
 
         if creeaza_task_daca_lipseste and not bool(cerere.get("task_creat", False)):
-            firma = str(cerere.get("firma_nume") or "").strip()[cite: 7]
-            masina = str(cerere.get("masina_nume") or "").strip()[cite: 7]
-            cod_c = str(cerere.get("cod_cerere") or f"#{cerere_id}").strip()[cite: 7]
-            nota_task = f"De făcut ofertă la client ({firma}) — ofertă furnizor primită pe cererea {cod_c}."[cite: 7]
+            firma = str(cerere.get("firma_nume") or "").strip()
+            masina = str(cerere.get("masina_nume") or "").strip()
+            cod_c = str(cerere.get("cod_cerere") or f"#{cerere_id}").strip()
+            nota_task = f"De făcut ofertă la client ({firma}) — ofertă furnizor primită pe cererea {cod_c}."
             if masina:
-                nota_task += f" Echipament: {masina}."[cite: 7]
+                nota_task += f" Echipament: {masina}."
 
             TaskuriVizitaRepository.insert(
                 data_vizita=datetime.date.today(),
@@ -238,30 +238,30 @@ class CereriOfertaRepository(BaseRepository):
                 masina=masina,
                 note_vizita=nota_task,
                 stare="De ofertat",
-            )[cite: 7]
+            )
             cls().execute(
                 "UPDATE cereri_oferta_furnizori SET task_creat = TRUE WHERE id = %s",
                 (int(cerere_id),),
-            )[cite: 7]
+            )
 
-        cls.get_cereri.clear()[cite: 7]
-        cls.get_linii_by_cerere.clear()[cite: 7]
+        cls.get_cereri.clear()
+        cls.get_linii_by_cerere.clear()
 
     @classmethod
     def update_status_cerere(cls, cerere_id: int, status_nou: str) -> None:
-        cls._asigura_tabele()[cite: 7]
-        st_norm = normalizeaza_status_cerere_oferta(status_nou)[cite: 7]
+        cls._asigura_tabele()
+        st_norm = normalizeaza_status_cerere_oferta(status_nou)
         cls().execute(
             "UPDATE cereri_oferta_furnizori SET status_cerere = %s WHERE id = %s",
             (st_norm, int(cerere_id)),
-        )[cite: 7]
+        )
         if st_norm == "Primită - de făcut către client":
-            cerere = cls().fetch_one("SELECT * FROM cereri_oferta_furnizori WHERE id = %s", (int(cerere_id),))[cite: 7]
+            cerere = cls().fetch_one("SELECT * FROM cereri_oferta_furnizori WHERE id = %s", (int(cerere_id),))
             if cerere and not bool(dict(cerere).get("task_creat", False)):
-                c_dict = dict(cerere)[cite: 7]
-                nota_task = f"De făcut ofertă la client ({c_dict.get('firma_nume')}) — cererea {c_dict.get('cod_cerere')} este primită."[cite: 7]
+                c_dict = dict(cerere)
+                nota_task = f"De făcut ofertă la client ({c_dict.get('firma_nume')}) — cererea {c_dict.get('cod_cerere')} este primită."
                 if c_dict.get("masina_nume"):
-                    nota_task += f" Echipament: {c_dict.get('masina_nume')}."[cite: 7]
+                    nota_task += f" Echipament: {c_dict.get('masina_nume')}."
                 TaskuriVizitaRepository.insert(
                     data_vizita=datetime.date.today(),
                     de_facut_pana_la=datetime.date.today() + datetime.timedelta(days=1),
@@ -270,17 +270,17 @@ class CereriOfertaRepository(BaseRepository):
                     masina=c_dict.get("masina_nume") or "",
                     note_vizita=nota_task,
                     stare="De ofertat",
-                )[cite: 7]
+                )
                 cls().execute(
                     "UPDATE cereri_oferta_furnizori SET task_creat = TRUE WHERE id = %s",
                     (int(cerere_id),),
-                )[cite: 7]
+                )
 
-        cls.get_cereri.clear()[cite: 7]
+        cls.get_cereri.clear()
 
     @classmethod
     def leaga_oferta_client(cls, cerere_id: int, oferta_client_id: int) -> None:
-        cls._asigura_tabele()[cite: 7]
+        cls._asigura_tabele()
         cls().execute(
             """
             UPDATE cereri_oferta_furnizori
@@ -288,28 +288,28 @@ class CereriOfertaRepository(BaseRepository):
             WHERE id = %s
             """,
             (int(oferta_client_id), int(cerere_id)),
-        )[cite: 7]
-        cls.get_cereri.clear()[cite: 7]
+        )
+        cls.get_cereri.clear()
 
     @classmethod
     @st.cache_data(ttl=120)
     def get_cereri(cls_or_self=None) -> List[Dict[str, Any]]:
-        cls = cls_or_self if isinstance(cls_or_self, type) else CereriOfertaRepository[cite: 7]
-        cls._asigura_tabele()[cite: 7]
+        cls = cls_or_self if isinstance(cls_or_self, type) else CereriOfertaRepository
+        cls._asigura_tabele()
         rows = cls().fetch_all(
             """
             SELECT *
             FROM cereri_oferta_furnizori
             ORDER BY data_trimitere DESC, id DESC
             """
-        ) or [][cite: 7]
-        return [dict(r) for r in rows][cite: 7]
+        ) or []
+        return [dict(r) for r in rows]
 
     @classmethod
     @st.cache_data(ttl=120)
     def get_linii_by_cerere(cls_or_self, cerere_id: int) -> List[Dict[str, Any]]:
-        cls = cls_or_self if isinstance(cls_or_self, type) else CereriOfertaRepository[cite: 7]
-        cls._asigura_tabele()[cite: 7]
+        cls = cls_or_self if isinstance(cls_or_self, type) else CereriOfertaRepository
+        cls._asigura_tabele()
         rows = cls().fetch_all(
             """
             SELECT *
@@ -318,5 +318,5 @@ class CereriOfertaRepository(BaseRepository):
             ORDER BY furnizor_nume ASC, id ASC
             """,
             (int(cerere_id),),
-        ) or [][cite: 7]
-        return [dict(r) for r in rows][cite: 7]
+        ) or []
+        return [dict(r) for r in rows]

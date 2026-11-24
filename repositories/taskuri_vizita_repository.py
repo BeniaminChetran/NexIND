@@ -7,9 +7,9 @@ import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
 from config import db_cursor
-from repositories.base_repository import BaseRepository[cite: 2]
+from repositories.base_repository import BaseRepository
 
-logger = logging.getLogger("NexIndCMMS.TaskuriVizitaRepository")[cite: 2]
+logger = logging.getLogger("NexIndCMMS.TaskuriVizitaRepository")
 
 OPTIUNI_STARE_TASK_VIZITA = [
     "Urgent",
@@ -19,11 +19,11 @@ OPTIUNI_STARE_TASK_VIZITA = [
     "De ofertat",
     "În lucru",
     "Finalizat",
-][cite: 2]
+]
 
 
 def normalizeaza_stare_task_vizita(val: Any) -> str:
-    s = str(val or "").strip()[cite: 2]
+    s = str(val or "").strip()
     mapa = {
         "urgent": "Urgent",
         "de cautat": "De căutat",
@@ -36,27 +36,27 @@ def normalizeaza_stare_task_vizita(val: Any) -> str:
         "finalizat": "Finalizat",
         "finalizata": "Finalizat",
         "finalizată": "Finalizat",
-    }[cite: 2]
-    return mapa.get(s.lower(), s if s in OPTIUNI_STARE_TASK_VIZITA else "Urgent")[cite: 2]
+    }
+    return mapa.get(s.lower(), s if s in OPTIUNI_STARE_TASK_VIZITA else "Urgent")
 
 
 def formateaza_ora_limita(val: Any) -> str:
     if isinstance(val, datetime.time):
-        return val.strftime("%H:%M")[cite: 2]
+        return val.strftime("%H:%M")
     if isinstance(val, datetime.datetime):
-        return val.strftime("%H:%M")[cite: 2]
-    s = str(val or "").strip()[cite: 2]
+        return val.strftime("%H:%M")
+    s = str(val or "").strip()
     if not s:
-        return ""[cite: 2]
-    return s[:5][cite: 2]
+        return ""
+    return s[:5]
 
 
 def formateaza_termen_complet(data_val: Any, ora_val: Any = "") -> str:
     if not data_val:
-        return "-"[cite: 2]
-    d_str = str(data_val)[:10][cite: 2]
-    o_str = formateaza_ora_limita(ora_val)[cite: 2]
-    return f"{d_str} {o_str}".strip() if o_str else d_str[cite: 2]
+        return "-"
+    d_str = str(data_val)[:10]
+    o_str = formateaza_ora_limita(ora_val)
+    return f"{d_str} {o_str}".strip() if o_str else d_str
 
 
 @st.cache_resource
@@ -79,7 +79,7 @@ def _asigura_tabela_taskuri_once() -> bool:
         ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS masina VARCHAR(255) DEFAULT '';
         CREATE INDEX IF NOT EXISTS idx_taskuri_vizita_stare ON taskuri_vizita (stare);
         CREATE INDEX IF NOT EXISTS idx_taskuri_vizita_termen ON taskuri_vizita (de_facut_pana_la);
-    """[cite: 2]
+    """
     with db_cursor() as cur:
         cur.execute(ddl_si_indexuri)
     return True
@@ -102,24 +102,24 @@ class TaskuriVizitaRepository(BaseRepository):
         de_facut_pana_la: Optional[datetime.date] = None,
         ora_limita: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        cls._asigura_tabela()[cite: 2]
+        cls._asigura_tabela()
 
-        firma_curata = str(firma or "").strip()[cite: 2]
+        firma_curata = str(firma or "").strip()
         if not firma_curata:
-            raise ValueError("Clientul / firma este obligatorie.")[cite: 2]
+            raise ValueError("Clientul / firma este obligatorie.")
 
-        note_curate = str(note_vizita or "").strip()[cite: 2]
+        note_curate = str(note_vizita or "").strip()
         if not note_curate:
-            raise ValueError("Câmpul «Note de vizită» nu poate fi gol.")[cite: 2]
+            raise ValueError("Câmpul «Note de vizită» nu poate fi gol.")
 
-        stare_norm = normalizeaza_stare_task_vizita(stare)[cite: 2]
-        fid_val = int(firma_id) if firma_id is not None else None[cite: 2]
-        masina_curata = str(masina or "").strip()[cite: 2]
+        stare_norm = normalizeaza_stare_task_vizita(stare)
+        fid_val = int(firma_id) if firma_id is not None else None
+        masina_curata = str(masina or "").strip()
         if masina_curata.startswith("--"):
-            masina_curata = ""[cite: 2]
-        data_val = data_vizita if isinstance(data_vizita, datetime.date) else datetime.date.today()[cite: 2]
-        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None[cite: 2]
-        ora_val = formateaza_ora_limita(ora_limita) if termen_val else None[cite: 2]
+            masina_curata = ""
+        data_val = data_vizita if isinstance(data_vizita, datetime.date) else datetime.date.today()
+        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None
+        ora_val = formateaza_ora_limita(ora_limita) if termen_val else None
 
         row = cls().execute_returning(
             """
@@ -130,15 +130,15 @@ class TaskuriVizitaRepository(BaseRepository):
             RETURNING *
             """,
             (data_val, termen_val, ora_val, fid_val, firma_curata, masina_curata, note_curate, stare_norm),
-        )[cite: 2]
-        cls.get_all.clear()[cite: 2]
-        return dict(row) if row else {}[cite: 2]
+        )
+        cls.get_all.clear()
+        return dict(row) if row else {}
 
     @classmethod
     @st.cache_data(ttl=120)
     def get_all(cls_or_self=None) -> List[Dict[str, Any]]:
-        cls = cls_or_self if isinstance(cls_or_self, type) else TaskuriVizitaRepository[cite: 2]
-        cls._asigura_tabela()[cite: 2]
+        cls = cls_or_self if isinstance(cls_or_self, type) else TaskuriVizitaRepository
+        cls._asigura_tabela()
         rows = cls().fetch_all(
             """
             SELECT
@@ -169,15 +169,15 @@ class TaskuriVizitaRepository(BaseRepository):
                 data_vizita DESC,
                 id DESC
             """
-        ) or [][cite: 2]
+        ) or []
 
         rez: List[Dict[str, Any]] = []
         for r in rows:
-            d = dict(r)[cite: 2]
-            d["stare"] = normalizeaza_stare_task_vizita(d.get("stare"))[cite: 2]
-            d["ora_limita"] = formateaza_ora_limita(d.get("ora_limita"))[cite: 2]
-            rez.append(d)[cite: 2]
-        return rez[cite: 2]
+            d = dict(r)
+            d["stare"] = normalizeaza_stare_task_vizita(d.get("stare"))
+            d["ora_limita"] = formateaza_ora_limita(d.get("ora_limita"))
+            rez.append(d)
+        return rez
 
     @classmethod
     def update(
@@ -188,11 +188,11 @@ class TaskuriVizitaRepository(BaseRepository):
         de_facut_pana_la: Optional[datetime.date] = None,
         ora_limita: Optional[Any] = None,
     ) -> None:
-        cls._asigura_tabela()[cite: 2]
-        note_curate = str(note_vizita or "").strip()[cite: 2]
-        stare_norm = normalizeaza_stare_task_vizita(stare)[cite: 2]
-        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None[cite: 2]
-        ora_val = formateaza_ora_limita(ora_limita) if termen_val else None[cite: 2]
+        cls._asigura_tabela()
+        note_curate = str(note_vizita or "").strip()
+        stare_norm = normalizeaza_stare_task_vizita(stare)
+        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None
+        ora_val = formateaza_ora_limita(ora_limita) if termen_val else None
         cls().execute(
             """
             UPDATE taskuri_vizita
@@ -200,20 +200,20 @@ class TaskuriVizitaRepository(BaseRepository):
             WHERE id = %s
             """,
             (note_curate, stare_norm, termen_val, ora_val, int(task_id)),
-        )[cite: 2]
-        cls.get_all.clear()[cite: 2]
+        )
+        cls.get_all.clear()
 
     @classmethod
     def mark_completed(cls, task_id: int) -> None:
-        cls._asigura_tabela()[cite: 2]
+        cls._asigura_tabela()
         cls().execute(
             "UPDATE taskuri_vizita SET stare = 'Finalizat' WHERE id = %s",
             (int(task_id),),
-        )[cite: 2]
-        cls.get_all.clear()[cite: 2]
+        )
+        cls.get_all.clear()
 
     @classmethod
     def delete(cls, task_id: int) -> None:
-        cls._asigura_tabela()[cite: 2]
-        cls().execute("DELETE FROM taskuri_vizita WHERE id = %s", (int(task_id),))[cite: 2]
-        cls.get_all.clear()[cite: 2]
+        cls._asigura_tabela()
+        cls().execute("DELETE FROM taskuri_vizita WHERE id = %s", (int(task_id),))
+        cls.get_all.clear()
