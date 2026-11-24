@@ -190,7 +190,7 @@ def render_masuratori():
         m_id = masina_obj_val["id"]
         m_nume = masina_obj_val["denumire"]
         extra_key = f"mas_sub_extra_{m_id}"
-        sub_state_key = f"_mas_sub_ales_{m_id}"
+        sub_state_key = f"_mas_sub_val_{m_id}"
         sub_nou_key = f"mas_nou_sub_{m_id}"
         sel_derulare_key = f"mas_sel_derulare_{m_id}"
         last_derulare_key = f"_mas_last_derulare_{m_id}"
@@ -240,7 +240,7 @@ def render_masuratori():
                 "Subansamblu de măsurat",
                 options=opt_sub,
                 index=idx_sub,
-                key=f"mas_sel_sub_view_{m_id}",
+                key=f"mas_sub_select_v2_{m_id}",
             )
             st.session_state[sub_state_key] = subansamblu_ales
         with c_sub2:
