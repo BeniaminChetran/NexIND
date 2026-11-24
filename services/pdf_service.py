@@ -665,13 +665,13 @@ def genereaza_pdf_oferta(data):
         Paragraph("<b>Termen<br/>livrare</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))
     ]]
 
-       subtotal_brut = 0.0
-       discount_reper_total = 0.0
-       tip_discount = str(data.get("tip_discount") or "Fără discount").strip()
-       val_disc_input = float(data.get("valoare_discount_input") or data.get("valoare_discount_total") or 0.0)
+        subtotal_brut = 0.0
+        discount_reper_total = 0.0
+        tip_discount = str(data.get("tip_discount") or "Fără discount").strip()
+        val_disc_input = float(data.get("valoare_discount_input") or data.get("valoare_discount_total") or 0.0)
 
-       col_pret_cheie = f"Pret Unitar ({moneda})"
-       curs_conv = float(data.get("curs_valutar") or 1.0)
+        col_pret_cheie = f"Pret Unitar ({moneda})"
+        curs_conv = float(data.get("curs_valutar") or 1.0)
 
     for idx, art in enumerate(articole, 1):
         cant = float(art.get("Cantitate") or 1.0)
