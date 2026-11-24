@@ -4,6 +4,7 @@
 
 import datetime
 import json
+import time
 import pandas as pd
 import streamlit as st
 
@@ -63,7 +64,8 @@ def _obtine_link_gdrive_setari() -> str:
     return link if link.startswith(("http://", "https://")) else ""
 
 
-def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
+@st.cache_data(ttl=180)
+def _obtine_harta_firme_cached() -> tuple[list[str], dict[str, int]]:
     firme_all = FirmeRepository.get_all() or []
     nume_to_id: dict[str, int] = {}
     for f in firme_all:
@@ -72,6 +74,16 @@ def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
         if nume and fid is not None:
             nume_to_id[nume] = int(fid)
     return sorted(nume_to_id.keys()), nume_to_id
+
+
+@st.cache_data(ttl=180)
+def _obtine_masini_cached() -> list[dict]:
+    return MasiniRepository.get_all() or []
+
+
+@st.cache_data(ttl=120)
+def _obtine_taskuri_cached() -> list[dict]:
+    return TaskuriVizitaRepository.get_all() or []
 
 
 @st.cache_data(ttl=300)
@@ -116,7 +128,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                   AND m.data_intretinere IS NOT NULL
                   AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
                 ORDER BY CAST(m.data_intretinere AS DATE) ASC, firma ASC, m.denumire ASC
-            """,
+                """,
                 (zile,),
             )
             return [dict(r) for r in (c.fetchall() or [])]
@@ -129,13 +141,13 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                     'Fără firmă' AS firma,
                     denumire AS utilaj,
                     CAST(data_intretinere AS DATE) AS data_scadenta,
-                    (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
-                FROM masini m
-                WHERE COALESCE(m.fara_intretinere, FALSE) = FALSE
-                  AND m.data_intretinere IS NOT NULL
-                  AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY CAST(m.data_intretinere AS DATE) ASC, m.denumire ASC
-            """,
+                    (CAST(data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
+                FROM masini
+                WHERE COALESCE(fara_intretinere, FALSE) = FALSE
+                  AND data_intretinere IS NOT NULL
+                  AND CAST(data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
+                ORDER BY CAST(data_intretinere AS DATE) ASC, denumire ASC
+                """,
                 (zile,),
             )
             return [dict(r) for r in (c.fetchall() or [])]
@@ -145,12 +157,25 @@ def _goleste_cache_de_facut():
     incarca_memento_intretinere.clear()
     _incarca_optiuni_lookup_piese.clear()
     _colecteaza_piese_necesare.clear()
+    _obtine_harta_firme_cached.clear()
+    _obtine_masini_cached.clear()
+    _obtine_taskuri_cached.clear()
+
     if hasattr(SetariRepository.get_setari, "clear"):
         try:
             SetariRepository.get_setari.clear()
         except Exception:
             pass
-    for repo in (PieseRepository, NecesarPieseRepository, TaskuriVizitaRepository, CereriOfertaRepository):
+
+    for repo in (
+        PieseRepository,
+        NecesarPieseRepository,
+        ReparatiiRepository,
+        TaskuriVizitaRepository,
+        CereriOfertaRepository,
+        FirmeRepository,
+        MasiniRepository,
+    ):
         if repo is None:
             continue
         for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
@@ -190,6 +215,20 @@ def _extrage_link_gdrive(piesa_row: dict, link_global: str = "") -> str:
     return ""
 
 
+def _parse_json_list(raw_val) -> list:
+    if not raw_val:
+        return []
+    if isinstance(raw_val, list):
+        return raw_val
+    if isinstance(raw_val, str):
+        try:
+            parsed = json.loads(raw_val)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
 def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: str, stare_noua: str) -> bool:
     camp_json = "piese_json" if tabela == "reparatii" else "componente_json"
     with db_cursor() as c:
@@ -197,14 +236,8 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
         row = c.fetchone() or {}
         if not isinstance(row, dict):
             row = dict(row)
-        raw_val = row.get(camp_json)
-        items = raw_val
-        if isinstance(raw_val, str):
-            try:
-                items = json.loads(raw_val)
-            except Exception:
-                items = []
-        if not isinstance(items, list):
+        items = _parse_json_list(row.get(camp_json))
+        if not items:
             return False
 
         modificat = False
@@ -239,7 +272,7 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
     return modificat
 
 
-@st.cache_data(ttl=180)
+@st.cache_data(ttl=120)
 def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
     piese_db = PieseRepository.get_all() or []
     furnizor_map = {}
@@ -308,15 +341,7 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
 
     rapoarte = ReparatiiRepository.get_all() or []
     for r in rapoarte:
-        piese_raw = r.get("piese_valide")
-        if not piese_raw:
-            piese_raw = r.get("piese_json") or []
-        if isinstance(piese_raw, str):
-            try:
-                piese_raw = json.loads(piese_raw)
-            except Exception:
-                piese_raw = []
-
+        piese_raw = r.get("piese_valide") or _parse_json_list(r.get("piese_json"))
         for item in piese_raw:
             if not isinstance(item, dict):
                 continue
@@ -328,11 +353,8 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
             if stare_item.lower() not in stari_valide_low and tip_piesa.lower() not in stari_valide_low:
                 continue
 
-            cant = item.get("Cantitate")
-            if cant is None:
-                cant = item.get("cantitate", 1)
             try:
-                cant_num = float(cant)
+                cant_num = float(item.get("Cantitate") if item.get("Cantitate") is not None else item.get("cantitate", 1))
             except Exception:
                 cant_num = 1.0
 
@@ -376,19 +398,16 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
 
     try:
         with db_cursor() as c:
-            c.execute("SELECT id, firma_nume, masina_nume, piesa_subansamblu, componente_json FROM reparatii_electronice ORDER BY id DESC")
+            c.execute(
+                "SELECT id, firma_nume, masina_nume, piesa_subansamblu, componente_json "
+                "FROM reparatii_electronice ORDER BY id DESC LIMIT 500"
+            )
             fise_el = [dict(row) for row in (c.fetchall() or [])]
     except Exception:
         fise_el = []
 
     for f_el in fise_el:
-        comp_raw = f_el.get("componente_json") or []
-        if isinstance(comp_raw, str):
-            try:
-                comp_raw = json.loads(comp_raw)
-            except Exception:
-                comp_raw = []
-
+        comp_raw = _parse_json_list(f_el.get("componente_json"))
         for comp in comp_raw:
             if not isinstance(comp, dict):
                 continue
@@ -403,9 +422,8 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
             if not den_comp or stare_comp.lower() not in stari_valide_low:
                 continue
 
-            cant_c = comp.get("Cantitate", 1.0)
             try:
-                cant_num = float(cant_c)
+                cant_num = float(comp.get("Cantitate", 1.0))
             except Exception:
                 cant_num = 1.0
 
@@ -488,11 +506,11 @@ def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]
                 st.markdown(
                     f"""
                     <div style="background:#FEF2F2;border-left:5px solid #DC2626;padding:8px 12px;margin-bottom:6px;border-radius:4px;">
-                        <div style="color:#B91C1C;font-size:1.12rem;font-weight:700;">
+                        <div style="color:#B91C1C;font-size:1.08rem;font-weight:700;">
                             🚨 {t.get('firma') or '-'} {f"• {t.get('masina')}" if t.get('masina') else ""}
                         </div>
-                        <div style="color:#7F1D1D;font-size:1.05rem;margin-top:2px;">{t.get('note_vizita') or ''}</div>
-                        <div style="color:#991B1B;font-size:0.95rem;margin-top:2px;">⏰ Până la: <b>{termen_txt}</b></div>
+                        <div style="color:#7F1D1D;font-size:1.02rem;margin-top:2px;">{t.get('note_vizita') or ''}</div>
+                        <div style="color:#991B1B;font-size:0.92rem;margin-top:2px;">⏰ Până la: <b>{termen_txt}</b></div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -509,7 +527,7 @@ def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]
         if piese_active_ord:
             df_po = pd.DataFrame([
                 {
-                    "Stare Piesă": p.get("Stare Piesă"),
+                    "Prioritate": f"🚨 {p.get('Stare Piesă')}" if p.get("Stare Piesă") == "Urgent" else p.get("Stare Piesă"),
                     "Status": p.get("Status Comandă"),
                     "Piesă": p.get("Piesă"),
                     "Cant.": p.get("Cantitate"),
@@ -518,18 +536,8 @@ def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]
                 }
                 for p in piese_active_ord[:12]
             ])
-
-            def _stil_rand_ov(row):
-                if row.get("Stare Piesă") == "Urgent":
-                    return ["background-color: #FEE2E2; color: #991B1B; font-weight: 700;"] * len(row)
-                if row.get("Status") == "De ofertat":
-                    return ["background-color: #FEF9C3; color: #854D0E; font-weight: 600;"] * len(row)
-                if row.get("Status") == "De căutat":
-                    return ["background-color: #DBEAFE; color: #1E40AF; font-weight: 600;"] * len(row)
-                return [""] * len(row)
-
             st.dataframe(
-                df_po.style.apply(_stil_rand_ov, axis=1),
+                df_po,
                 column_config={
                     "Doc GDrive": st.column_config.LinkColumn("Doc GDrive", display_text="📂 GDrive"),
                 },
@@ -545,15 +553,11 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
         bg = "#FEF2F2"
         border = "#DC2626"
         text_col = "#991B1B"
-        title_size = "1.18rem"
-        body_size = "1.08rem"
         badge = "🚨 URGENT"
     else:
         bg = "#FEF9C3"
         border = "#D97706"
         text_col = "#854D0E"
-        title_size = "1.02rem"
-        body_size = "0.98rem"
         badge = "🟡 NORMAL"
 
     for t in task_list:
@@ -566,13 +570,13 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
             st.markdown(
                 f"""
                 <div style="background:{bg};border-left:5px solid {border};padding:10px 14px;border-radius:6px;margin-bottom:6px;">
-                    <div style="color:{text_col};font-size:{title_size};font-weight:700;">
+                    <div style="color:{text_col};font-size:1.05rem;font-weight:700;">
                         {badge} • {t.get('firma') or '-'}{masina_str}
                     </div>
-                    <div style="color:{text_col};font-size:{body_size};margin-top:4px;">
+                    <div style="color:{text_col};font-size:1.0rem;margin-top:4px;">
                         {t.get('note_vizita') or ''}
                     </div>
-                    <div style="color:{text_col};font-size:0.88rem;opacity:0.9;margin-top:4px;">
+                    <div style="color:{text_col};font-size:0.86rem;opacity:0.9;margin-top:4px;">
                         📅 Vizită: {str(t.get('data_vizita') or '')[:10]} &nbsp;|&nbsp;
                         ⏰ Termen: <b>{termen_str}</b> &nbsp;|&nbsp;
                         Stare: <b>{t.get('stare')}</b>
@@ -604,8 +608,8 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
 
 def render_notite_vizita_de_facut(taskuri: list[dict]):
     with st.expander("📋 Notițe & Task-uri Vizită Client", expanded=True):
-        firme_nume, nume_to_id = _obtine_harta_firme()
-        masini_all = MasiniRepository.get_all() or []
+        firme_nume, nume_to_id = _obtine_harta_firme_cached()
+        masini_all = _obtine_masini_cached()
 
         if not firme_nume:
             st.warning("⚠️ Nu există firme înregistrate în baza de date.")
@@ -644,7 +648,7 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
                 note_viz = st.text_area(
                     "Note de vizită *",
                     placeholder="ex: De verificat senzor presiune linie 2, de proiectat suport motor...",
-                    height=130,
+                    height=110,
                 )
                 salveaza_nota = st.form_submit_button("💾 Salvează Notița", type="primary")
 
@@ -699,104 +703,102 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
         else:
             st.caption("Nu există task-uri normale active.")
 
-        st.markdown("---")
-        st.markdown("#### ✏️ Editare Rapidă în Tabel")
-        df_t = pd.DataFrame(taskuri)
-        df_t_init = pd.DataFrame([
-            {
-                "id": int(r["id"]),
-                "Data": str(r["data_vizita"]),
-                "De făcut până la": r["de_facut_pana_la"] if pd.notna(r["de_facut_pana_la"]) else None,
-                "Ora limită": formateaza_ora_limita(r.get("ora_limita")),
-                "Stare": normalizeaza_stare_task_vizita(r["stare"]),
-                "Firmă": str(r["firma"]),
-                "Mașină": str(r.get("masina") or "-"),
-                "Note de vizită": str(r["note_vizita"]),
-                "Completed": r["stare"] == "Finalizat",
-                "Șterge": False,
-            }
-            for _, r in df_t.iterrows()
-        ])
+        with st.expander("✏️ Editare Rapidă în Tabel", expanded=False):
+            df_t_init = pd.DataFrame([
+                {
+                    "id": int(r["id"]),
+                    "Data": str(r["data_vizita"])[:10],
+                    "De făcut până la": r["de_facut_pana_la"] if pd.notna(r["de_facut_pana_la"]) else None,
+                    "Ora limită": formateaza_ora_limita(r.get("ora_limita")),
+                    "Stare": normalizeaza_stare_task_vizita(r["stare"]),
+                    "Firmă": str(r["firma"]),
+                    "Mașină": str(r.get("masina") or "-"),
+                    "Note de vizită": str(r["note_vizita"]),
+                    "Completed": r["stare"] == "Finalizat",
+                    "Șterge": False,
+                }
+                for r in taskuri
+            ])
 
-        editor_task_key = f"df_editor_taskuri_{len(df_t_init)}"
-        edited_t = st.data_editor(
-            df_t_init,
-            key=editor_task_key,
-            hide_index=True,
-            num_rows="fixed",
-            use_container_width=True,
-            disabled=["id", "Data", "Firmă", "Mașină"],
-            column_config={
-                "id": None,
-                "Data": st.column_config.TextColumn("Data", width="small"),
-                "De făcut până la": st.column_config.DateColumn("De făcut până la", width="small"),
-                "Ora limită": st.column_config.TextColumn("Ora (HH:MM)", width="small"),
-                "Stare": st.column_config.SelectboxColumn("Stare", options=OPTIUNI_STARE_TASK_VIZITA, required=True, width="medium"),
-                "Firmă": st.column_config.TextColumn("Firmă", width="medium"),
-                "Mașină": st.column_config.TextColumn("Mașină", width="medium"),
-                "Note de vizită": st.column_config.TextColumn("Note de vizită", width="large", required=True),
-                "Completed": st.column_config.CheckboxColumn("✅ Completed", default=False, width="small"),
-                "Șterge": st.column_config.CheckboxColumn("🗑️ Șterge", default=False, width="small"),
-            },
-        )
+            editor_task_key = f"df_editor_taskuri_{len(df_t_init)}"
+            edited_t = st.data_editor(
+                df_t_init,
+                key=editor_task_key,
+                hide_index=True,
+                num_rows="fixed",
+                use_container_width=True,
+                disabled=["id", "Data", "Firmă", "Mașină"],
+                column_config={
+                    "id": None,
+                    "Data": st.column_config.TextColumn("Data", width="small"),
+                    "De făcut până la": st.column_config.DateColumn("De făcut până la", width="small"),
+                    "Ora limită": st.column_config.TextColumn("Ora (HH:MM)", width="small"),
+                    "Stare": st.column_config.SelectboxColumn("Stare", options=OPTIUNI_STARE_TASK_VIZITA, required=True, width="medium"),
+                    "Firmă": st.column_config.TextColumn("Firmă", width="medium"),
+                    "Mașină": st.column_config.TextColumn("Mașină", width="medium"),
+                    "Note de vizită": st.column_config.TextColumn("Note de vizită", width="large", required=True),
+                    "Completed": st.column_config.CheckboxColumn("✅ Completed", default=False, width="small"),
+                    "Șterge": st.column_config.CheckboxColumn("🗑️ Șterge", default=False, width="small"),
+                },
+            )
 
-        if st.button("💾 Salvează Modificările din Tabel", type="primary", key="btn_df_save_taskuri"):
-            orig_t_map = {int(r["id"]): r for _, r in df_t_init.iterrows()}
-            nr_mod_t = 0
-            nr_del_t = 0
+            if st.button("💾 Salvează Modificările din Tabel", type="primary", key="btn_df_save_taskuri"):
+                orig_t_map = {int(r["id"]): r for _, r in df_t_init.iterrows()}
+                nr_mod_t = 0
+                nr_del_t = 0
 
-            for _, row in edited_t.iterrows():
-                tid = int(row["id"])
-                if bool(row.get("Șterge", False)):
-                    TaskuriVizitaRepository.delete(tid)
-                    nr_del_t += 1
-                    continue
+                for _, row in edited_t.iterrows():
+                    tid = int(row["id"])
+                    if bool(row.get("Șterge", False)):
+                        TaskuriVizitaRepository.delete(tid)
+                        nr_del_t += 1
+                        continue
 
-                orig = orig_t_map.get(tid)
-                if orig is None:
-                    continue
+                    orig = orig_t_map.get(tid)
+                    if orig is None:
+                        continue
 
-                nota_noua = str(row.get("Note de vizită") or "").strip()
-                stare_noua = "Finalizat" if bool(row.get("Completed", False)) else normalizeaza_stare_task_vizita(row.get("Stare"))
-                termen_raw = row.get("De făcut până la")
-                termen_nou = termen_raw if isinstance(termen_raw, datetime.date) else None
-                termen_vechi = orig["De făcut până la"] if isinstance(orig["De făcut până la"], datetime.date) else None
-                ora_noua = formateaza_ora_limita(row.get("Ora limită"))
-                ora_veche = formateaza_ora_limita(orig.get("Ora limită"))
+                    nota_noua = str(row.get("Note de vizită") or "").strip()
+                    stare_noua = "Finalizat" if bool(row.get("Completed", False)) else normalizeaza_stare_task_vizita(row.get("Stare"))
+                    termen_raw = row.get("De făcut până la")
+                    termen_nou = termen_raw if isinstance(termen_raw, datetime.date) else None
+                    termen_vechi = orig["De făcut până la"] if isinstance(orig["De făcut până la"], datetime.date) else None
+                    ora_noua = formateaza_ora_limita(row.get("Ora limită"))
+                    ora_veche = formateaza_ora_limita(orig.get("Ora limită"))
 
-                if (
-                    nota_noua != str(orig["Note de vizită"]).strip()
-                    or stare_noua != normalizeaza_stare_task_vizita(orig["Stare"])
-                    or termen_nou != termen_vechi
-                    or ora_noua != ora_veche
-                ) and nota_noua:
-                    try:
-                        TaskuriVizitaRepository.update(
-                            tid,
-                            nota_noua,
-                            stare_noua,
-                            de_facut_pana_la=termen_nou,
-                            ora_limita=ora_noua,
-                        )
-                    except TypeError:
-                        TaskuriVizitaRepository.update(tid, nota_noua, stare_noua, de_facut_pana_la=termen_nou)
-                    nr_mod_t += 1
+                    if (
+                        nota_noua != str(orig["Note de vizită"]).strip()
+                        or stare_noua != normalizeaza_stare_task_vizita(orig["Stare"])
+                        or termen_nou != termen_vechi
+                        or ora_noua != ora_veche
+                    ) and nota_noua:
+                        try:
+                            TaskuriVizitaRepository.update(
+                                tid,
+                                nota_noua,
+                                stare_noua,
+                                de_facut_pana_la=termen_nou,
+                                ora_limita=ora_noua,
+                            )
+                        except TypeError:
+                            TaskuriVizitaRepository.update(tid, nota_noua, stare_noua, de_facut_pana_la=termen_nou)
+                        nr_mod_t += 1
 
-            if editor_task_key in st.session_state:
-                del st.session_state[editor_task_key]
+                if editor_task_key in st.session_state:
+                    del st.session_state[editor_task_key]
 
-            _goleste_cache_de_facut()
-            if nr_mod_t == 0 and nr_del_t == 0:
-                st.info("ℹ️ Nu există modificări nesalvate la notițe.")
-            else:
-                st.success(f"✅ Actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
-                st.rerun()
+                _goleste_cache_de_facut()
+                if nr_mod_t == 0 and nr_del_t == 0:
+                    st.info("ℹ️ Nu există modificări nesalvate la notițe.")
+                else:
+                    st.success(f"✅ Actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
+                    st.rerun()
 
 
 def render_notare_rapida_teren():
     with st.expander("📝 Notare Rapidă Piese pe Teren (Client obligatoriu • Mașină opțională)", expanded=False):
-        firme_nume, nume_to_id = _obtine_harta_firme()
-        masini_all = MasiniRepository.get_all() or []
+        firme_nume, nume_to_id = _obtine_harta_firme_cached()
+        masini_all = _obtine_masini_cached()
         optiuni_piese, detalii_piese = _incarca_optiuni_lookup_piese()
 
         if not firme_nume:
@@ -880,7 +882,7 @@ def render_notare_rapida_teren():
             obs_teren = st.text_area(
                 "Observații / detalii notate la client (opțional)",
                 placeholder="ex: cerută la vizită, verificare ofertă...",
-                height=90,
+                height=85,
                 key="df_teren_obs_txt",
             )
             salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
@@ -922,11 +924,6 @@ def render_notare_rapida_teren():
 
 def render_tabel_piese_de_comandat(randuri: list[dict]):
     with st.expander("🛒 Piese De Comandat / Necesare & Furnizori", expanded=False):
-        st.markdown(
-            "🔴 **Urgent** &nbsp;|&nbsp; 🟡 **De ofertat** &nbsp;|&nbsp; 🔵 **De căutat** — "
-            "Schimbă direct **Stare Piesă** sau **Status Comandă** și apasă **💾 Actualizează Stările în Tabel**."
-        )
-
         if not randuri:
             st.info("Nu există piese marcate ca necesare / de comandat / de căutat / de ofertat.")
             return
@@ -962,38 +959,6 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
             st.info("Nu există piese care să corespundă filtrelor selectate.")
             return
 
-        df_color = df_f[[
-            "Stare Piesă",
-            "Piesă",
-            "Cantitate",
-            "Status Comandă",
-            "Furnizor",
-            "Sursă",
-            "Firmă",
-            "Mașină",
-            "Piese înlocuitoare",
-            "Doc GDrive",
-        ]].reset_index(drop=True)
-        df_color["Doc GDrive"] = df_color["Doc GDrive"].apply(lambda x: x if str(x or "").startswith(("http://", "https://")) else None)
-
-        def _stil_rand_piese(row):
-            if row.get("Stare Piesă") == "Urgent":
-                return ["background-color: #FEE2E2; color: #991B1B; font-weight: 700;"] * len(row)
-            if row.get("Status Comandă") == "De ofertat":
-                return ["background-color: #FEF9C3; color: #854D0E; font-weight: 600;"] * len(row)
-            if row.get("Status Comandă") == "De căutat":
-                return ["background-color: #DBEAFE; color: #1E40AF; font-weight: 600;"] * len(row)
-            return [""] * len(row)
-
-        st.dataframe(
-            df_color.style.apply(_stil_rand_piese, axis=1),
-            column_config={
-                "Doc GDrive": st.column_config.LinkColumn("Doc GDrive", display_text="📂 GDrive"),
-            },
-            hide_index=True,
-            use_container_width=True,
-        )
-
         cols_afis = [
             "_row_id",
             "Stare Piesă",
@@ -1009,7 +974,9 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
             "Raport",
         ]
         df_editor_init = df_f[cols_afis].reset_index(drop=True)
-        df_editor_init["Doc GDrive"] = df_editor_init["Doc GDrive"].apply(lambda x: x if str(x or "").startswith(("http://", "https://")) else None)
+        df_editor_init["Doc GDrive"] = df_editor_init["Doc GDrive"].apply(
+            lambda x: x if str(x or "").startswith(("http://", "https://")) else None
+        )
         editor_dash_key = f"df_editor_stare_piese_{filtru_sursa}_{filtru_furn}_{filtru_stare}"
 
         edited_df = st.data_editor(
@@ -1116,8 +1083,8 @@ def render_cereri_oferta_furnizori_de_facut():
 
     with st.expander("📨 Cereri Ofertă Furnizori (RFQ) • Analiză Prețuri & Legătură Client / Mașină", expanded=False):
         cereri_all = CereriOfertaRepository.get_cereri() or []
-        firme_nume, nume_to_id = _obtine_harta_firme()
-        masini_all = MasiniRepository.get_all() or []
+        firme_nume, nume_to_id = _obtine_harta_firme_cached()
+        masini_all = _obtine_masini_cached()
         piese_catalog = PieseRepository.get_all() or []
         necesar_rows = NecesarPieseRepository.get_all() or []
 
@@ -1248,7 +1215,6 @@ def render_cereri_oferta_furnizori_de_facut():
 
         df_cer = pd.DataFrame([
             {
-                "id": int(c["id"]),
                 "Cod Cerere": str(c.get("cod_cerere") or ""),
                 "Stare Cerere": normalizeaza_status_cerere_oferta(c.get("status_cerere")),
                 "Client": str(c.get("firma_nume") or ""),
@@ -1261,17 +1227,7 @@ def render_cereri_oferta_furnizori_de_facut():
             for c in cereri_filtrate
         ])
 
-        def _stil_status_cerere(row):
-            st_v = row.get("Stare Cerere")
-            if st_v == "Primită - de făcut către client":
-                return ["background-color: #FEF9C3; color: #854D0E; font-weight: 700;"] * len(row)
-            if st_v == "Trimis - aștept":
-                return ["background-color: #DBEAFE; color: #1E40AF; font-weight: 600;"] * len(row)
-            if st_v == "Ofertat la client":
-                return ["background-color: #DCFCE7; color: #166534; font-weight: 600;"] * len(row)
-            return [""] * len(row)
-
-        st.dataframe(df_cer.drop(columns=["id"]).style.apply(_stil_status_cerere, axis=1), hide_index=True, use_container_width=True)
+        st.dataframe(df_cer, hide_index=True, use_container_width=True)
 
         st.markdown("---")
         st.markdown("##### 3. Analiză Oferte Primite de la Furnizori & Legătură cu Oferta către Client")
@@ -1483,25 +1439,43 @@ def render_memento_intretinere_de_facut():
 
 
 def render_de_facut():
-    col_title, col_refresh = st.columns([5, 1])
+    t0 = time.perf_counter()
+
+    col_title, col_refresh, col_perf = st.columns([4.4, 1.0, 0.8], vertical_alignment="center")
     with col_title:
         st.title("✅ De făcut & Activități Teren")
     with col_refresh:
         if st.button("🔄 Actualizează", use_container_width=True, key="btn_df_refresh_unic"):
             _goleste_cache_de_facut()
             st.rerun()
+    with col_perf:
+        arat_timpi = st.checkbox("⏱️ Timpi", value=False, key="df_show_timings")
 
+    ts_a = time.perf_counter()
     link_gdrive_global = _obtine_link_gdrive_setari()
-    taskuri = TaskuriVizitaRepository.get_all() or []
+    taskuri = _obtine_taskuri_cached()
     piese_rows = _colecteaza_piese_necesare(link_gdrive_global)
+    ts_b = time.perf_counter()
 
     render_privire_ansamblu_de_facut(piese_rows, taskuri)
+    ts_c = time.perf_counter()
 
     st.markdown("---")
     render_notite_vizita_de_facut(taskuri)
     render_notare_rapida_teren()
     render_tabel_piese_de_comandat(piese_rows)
     render_cereri_oferta_furnizori_de_facut()
+    ts_d = time.perf_counter()
 
     st.markdown("---")
     render_memento_intretinere_de_facut()
+    ts_e = time.perf_counter()
+
+    if arat_timpi:
+        st.caption(
+            f"⏱️ Date/Cache: {(ts_b - ts_a):.2f}s | "
+            f"Ansamblu: {(ts_c - ts_b):.2f}s | "
+            f"Secțiuni/Formulare: {(ts_d - ts_c):.2f}s | "
+            f"Întrețineri: {(ts_e - ts_d):.2f}s | "
+            f"Total: {(ts_e - t0):.2f}s"
+        )
