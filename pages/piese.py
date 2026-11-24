@@ -606,13 +606,12 @@ def render_piese():
                         st.session_state["calc_nou_deschis"] = False
                         _obtine_corpus_utilizare_istoric.clear()
                         st.markdown(
-                            f'<div style="font-size:1.2rem;font-weight:600;background:#e8f5e9;color:#1b5e20;'
-                            f'padding:12px 16px;border-radius:8px;border-left:5px solid #2e7d32;margin:8px 0;">'
-                            f'✅ Piesa '{denumire}' a fost salvată pe <strong>{masina_tinta_noua}</strong> '
-                            f'[Stare: <strong>{stare_cmd_noua}</strong> | Preț: <strong>{pret_calculat:.2f} {valuta_noua}</strong> | Termen: {termen_livrare_nou}]!'
-                            f'</div>',
+                            f"""<div style="font-size:1.2rem;font-weight:600;background:#e8f5e9;color:#1b5e20;padding:12px 16px;border-radius:8px;border-left:5px solid #2e7d32;margin:8px 0;">
+                            ✅ Piesa '{denumire}' a fost salvată pe <strong>{masina_tinta_noua}</strong>
+                            (Stare: <strong>{stare_cmd_noua}</strong> | Preț: <strong>{pret_calculat:.2f} {valuta_noua}</strong> | Termen: {termen_livrare_nou})
+                            </div>""",
                             unsafe_allow_html=True,
-                        )
+        )
                         st.rerun()
 
         # Bloc import & comasare piese din rapoartele electronice (o singură dată per mașină)
