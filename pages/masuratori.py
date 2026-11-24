@@ -40,10 +40,6 @@ def _invalideaza_cache_masuratori() -> None:
 
 
 def _construieste_masuratori_in_derulare(masuratori_db: list[dict]) -> list[dict]:
-    """
-    Grupează măsurătorile existente ale mașinii în sesiuni/serii în derulare
-    (pe subansamblu și dată) astfel încât utilizatorul să poată selecta ușor o măsurătoare începută.
-    """
     if not masuratori_db:
         return []
 
@@ -119,6 +115,7 @@ def _colecteaza_subansambluri(
 
 
 def _persista_subansamblu_pe_masina(
+    m_id: int,
     masina_obj_val: dict,
     subansambluri: list[str],
     extra_key: str,
@@ -128,12 +125,13 @@ def _persista_subansamblu_pe_masina(
     with db_cursor() as c:
         c.execute(
             "UPDATE masini SET subansambluri = %s WHERE id = %s",
-            (lista_noua_str, masina_obj_val["id"]),
+            (lista_noua_str, m_id),
         )
     masina_obj_val["subansambluri"] = lista_noua_str
-    st.session_state.setdefault(extra_key, [])
-    if sub_nou not in st.session_state[extra_key]:
-        st.session_state[extra_key].append(sub_nou)
+    extra_curent = list(st.session_state.get(extra_key, []))
+    if sub_nou not in extra_curent:
+        extra_curent.append(sub_nou)
+        st.session_state[extra_key] = extra_curent
 
 
 def render_masuratori():
@@ -192,9 +190,7 @@ def render_masuratori():
         m_id = masina_obj_val["id"]
         m_nume = masina_obj_val["denumire"]
         extra_key = f"mas_sub_extra_{m_id}"
-        pending_sub_key = f"_mas_pending_sub_{m_id}"
-        clear_nou_sub_key = f"_mas_clear_nou_sub_{m_id}"
-        sub_select_key = f"mas_sel_sub_{m_id}"
+        sub_state_key = f"_mas_sub_ales_{m_id}"
         sub_nou_key = f"mas_nou_sub_{m_id}"
         sel_derulare_key = f"mas_sel_derulare_{m_id}"
         last_derulare_key = f"_mas_last_derulare_{m_id}"
@@ -206,6 +202,7 @@ def render_masuratori():
             masuratori_db=masuratori_db,
             extra_list=st.session_state.get(extra_key, []),
         )
+        opt_sub = subansambluri_existente if subansambluri_existente else ["General"]
 
         st.markdown(f"### ➕ Introducere Măsurătoare Nouă ({m_nume})")
 
@@ -229,27 +226,23 @@ def render_masuratori():
 
         if sub_din_derulare and st.session_state.get(last_derulare_key) != sel_derulare:
             st.session_state[last_derulare_key] = sel_derulare
-            if sub_din_derulare in subansambluri_existente:
-                st.session_state[pending_sub_key] = sub_din_derulare
+            if sub_din_derulare in opt_sub:
+                st.session_state[sub_state_key] = sub_din_derulare
 
-        if st.session_state.pop(clear_nou_sub_key, False):
-            st.session_state[sub_nou_key] = ""
+        if st.session_state.get(sub_state_key) not in opt_sub:
+            st.session_state[sub_state_key] = opt_sub[0]
 
-        opt_sub = subansambluri_existente if subansambluri_existente else ["General"]
-
-        pending_sub = st.session_state.pop(pending_sub_key, None)
-        if pending_sub and pending_sub in opt_sub:
-            st.session_state[sub_select_key] = pending_sub
-        elif st.session_state.get(sub_select_key) not in opt_sub:
-            st.session_state[sub_select_key] = opt_sub[0]
+        idx_sub = opt_sub.index(st.session_state[sub_state_key])
 
         c_sub1, c_sub2, c_sub3 = st.columns([2.2, 2.0, 1.1], vertical_alignment="bottom")
         with c_sub1:
             subansamblu_ales = st.selectbox(
                 "Subansamblu de măsurat",
                 options=opt_sub,
-                key=sub_select_key,
+                index=idx_sub,
+                key=f"mas_sel_sub_view_{m_id}",
             )
+            st.session_state[sub_state_key] = subansamblu_ales
         with c_sub2:
             subansamblu_nou = st.text_input(
                 "Sau creează subansamblu nou de măsurat",
@@ -257,20 +250,20 @@ def render_masuratori():
                 key=sub_nou_key,
             ).strip()
         with c_sub3:
-            if st.button("➕ Creează subansamblu", key=f"btn_creeaza_sub_{m_id}", use_container_width=True):
+            if st.button("➕ Creează subansamblu", key=f"btn_creeaza_sub_{m_id}", width="stretch"):
                 if not subansamblu_nou:
                     st.warning("Introdu numele subansamblului nou.")
                 else:
                     if subansamblu_nou.lower() not in [s.lower() for s in subansambluri_existente]:
                         subansambluri_existente.append(subansamblu_nou)
                         _persista_subansamblu_pe_masina(
+                            m_id=m_id,
                             masina_obj_val=masina_obj_val,
                             subansambluri=subansambluri_existente,
                             extra_key=extra_key,
                             sub_nou=subansamblu_nou,
                         )
-                    st.session_state[pending_sub_key] = subansamblu_nou
-                    st.session_state[clear_nou_sub_key] = True
+                    st.session_state[sub_state_key] = subansamblu_nou
                     st.toast(f"✅ Subansamblul '{subansamblu_nou}' este pregătit pentru măsurare.")
                     st.rerun(scope="fragment")
 
@@ -324,6 +317,7 @@ def render_masuratori():
                     if sub_curat.lower() not in [s.lower() for s in subansambluri_existente]:
                         subansambluri_existente.append(sub_curat)
                         _persista_subansamblu_pe_masina(
+                            m_id=m_id,
                             masina_obj_val=masina_obj_val,
                             subansambluri=subansambluri_existente,
                             extra_key=extra_key,
@@ -331,13 +325,12 @@ def render_masuratori():
                         )
 
                     _invalideaza_cache_masuratori()
-                    st.session_state[pending_sub_key] = sub_curat
-                    st.session_state[clear_nou_sub_key] = True
+                    st.session_state[sub_state_key] = sub_curat
+                    masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
                     st.success(
                         f"Măsurătoarea pentru '{parametru_input}' ({valoare_input:+.3f} {unitate_input}) "
                         f"pe subansamblul '{sub_curat}' a fost salvată!"
                     )
-                    st.rerun(scope="fragment")
 
         st.markdown("---")
         st.markdown(f"### 📈 Grafic Evoluție Parametri Măsurați — **{m_nume}**")
@@ -391,12 +384,12 @@ def render_masuratori():
                 height=450,
             )
 
-            st.plotly_chart(fig, use_container_width=True, key=f"grafic_masuratori_{m_id}")
+            st.plotly_chart(fig, width="stretch", key=f"grafic_masuratori_{m_id}")
 
             st.markdown("#### 📋 Tabel Istoric Măsurători")
             df_afisare = df_filtrat[["data_masurare", "subansamblu", "parametru", "valoare", "unitate_masura"]].copy()
             df_afisare.columns = ["Data & Ora", "Subansamblu", "Parametru", "Valoare Măsurată", "Unitate"]
             df_afisare["Valoare Măsurată"] = df_afisare["Valoare Măsurată"].map("{:+.3f}".format)
-            st.dataframe(df_afisare, use_container_width=True)
+            st.dataframe(df_afisare, width="stretch")
 
     render_form_si_grafic(firma_id, masina_obj)
