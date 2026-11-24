@@ -11,6 +11,7 @@ from repositories.piese_repository import PieseRepository, _normalizeaza_stare_c
 logger = logging.getLogger("NexIndCMMS.NecesarPieseRepository")
 
 OPTIUNI_PRIORITATE_PIESA = ["Normal", "Urgent"]
+OPTIUNI_STATUS_TEREN = ["De căutat", "De comandat", "De ofertat", "În așteptare"]
 
 
 def normalizeaza_prioritate_piesa(val: Any) -> str:
@@ -80,6 +81,7 @@ class NecesarPieseRepository(BaseRepository):
         masina: str = "",
         cod_producator: str = "",
         prioritate_piesa: str = "Normal",
+        status_comanda: Optional[str] = None,
         observatii: str = "",
     ) -> Dict[str, Any]:
         cls._asigura_tabela()
@@ -107,11 +109,15 @@ class NecesarPieseRepository(BaseRepository):
         piesa_catalog = cls._gaseste_piesa_catalog(den_curata, cod_curat)
         existenta_in_catalog = piesa_catalog is not None
 
+        if status_comanda and str(status_comanda).strip():
+            status_final = _normalizeaza_stare_comanda(status_comanda)
+        else:
+            status_final = "De ofertat" if existenta_in_catalog else "De căutat"
+
         if existenta_in_catalog:
             piesa_id = piesa_catalog.get("id")
             if not cod_curat:
                 cod_curat = str(piesa_catalog.get("cod_producator") or "").strip()
-            status_auto = "De ofertat"
         else:
             PieseRepository._asigura_coloane_piese()
             masina_catalog = masina_curata or "General"
@@ -140,12 +146,11 @@ class NecesarPieseRepository(BaseRepository):
                     "EUR",
                     "",
                     "1",
-                    "De căutat",
+                    status_final,
                 ),
             )
             PieseRepository.get_all.clear()
             piesa_id = inserted.get("id") if isinstance(inserted, dict) else None
-            status_auto = "De căutat"
 
         row_necesar = cls().execute_returning(
             """
@@ -166,7 +171,7 @@ class NecesarPieseRepository(BaseRepository):
                 masina_curata,
                 prio_norm,
                 obs_curata,
-                status_auto,
+                status_final,
             ),
         )
         cls.get_all.clear()
@@ -175,7 +180,7 @@ class NecesarPieseRepository(BaseRepository):
             "record": dict(row_necesar) if row_necesar else {},
             "existenta_in_catalog": existenta_in_catalog,
             "prioritate_piesa": prio_norm,
-            "status_comanda": status_auto,
+            "status_comanda": status_final,
             "piesa_id": piesa_id,
         }
 
@@ -204,6 +209,15 @@ class NecesarPieseRepository(BaseRepository):
             LEFT JOIN piese p ON p.id = np.piesa_id
             ORDER BY
                 CASE WHEN LOWER(TRIM(COALESCE(np.prioritate_piesa, 'Normal'))) = 'urgent' THEN 0 ELSE 1 END,
+                CASE COALESCE(NULLIF(TRIM(np.status_comanda), ''), 'De căutat')
+                    WHEN 'De comandat' THEN 1
+                    WHEN 'De ofertat' THEN 2
+                    WHEN 'De căutat' THEN 3
+                    WHEN 'În așteptare' THEN 4
+                    WHEN 'Comandată' THEN 5
+                    WHEN 'Anulată' THEN 6
+                    ELSE 7
+                END,
                 np.data_creare DESC,
                 np.id DESC
             """

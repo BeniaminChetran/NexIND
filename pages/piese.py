@@ -513,6 +513,36 @@ def render_piese():
             st.session_state["calc_nou_eroare"] = err
 
         with st.expander("➕ Adaugă Piesă Nouă (Preț Achiziție în EUR sau RON)", expanded=False):
+            st.session_state["calc_nou_expr_input"] = st.session_state.get("calc_nou_expr_salvata", "")
+            rez_n_curent = st.session_state.get("calc_nou_rezultat")
+            exp_deschis_calc = bool(st.session_state.get("calc_nou_deschis", False)) or (rez_n_curent is not None)
+            titlu_calc = "Pret Piesa / calcul pret piesa"
+            if rez_n_curent is not None:
+                titlu_calc = f"Pret Piesa / calcul pret piesa — {rez_n_curent:.2f}"
+
+            with st.expander(titlu_calc, expanded=exp_deschis_calc):
+                cc1, cc2 = st.columns([2.8, 1.4], vertical_alignment="center")
+                with cc1:
+                    st.text_input(
+                        "Expresie calcul preț achiziție (Enter pentru a calcula)",
+                        key="calc_nou_expr_input",
+                        placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
+                        on_change=_la_enter_calc_nou,
+                    )
+                with cc2:
+                    rez_n = st.session_state.get("calc_nou_rezultat")
+                    err_n = st.session_state.get("calc_nou_eroare")
+                    if err_n:
+                        st.error(f"⚠️ {err_n}")
+                    elif rez_n is not None:
+                        st.markdown(
+                            f'<div style="font-size:1.35rem;font-weight:700;color:#1b5e20;padding:4px 0;">'
+                            f'Preț calculat: {rez_n:.2f}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.caption("La salvare se folosește valoarea calculată aici (implicit `0.00`).")
+
             with st.form("form_adauga_piesa_unic", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -536,40 +566,10 @@ def render_piese():
                         link_furnizor = ""
                         valuta_noua = "RON"
 
-                st.session_state["calc_nou_expr_input"] = st.session_state.get("calc_nou_expr_salvata", "")
-                rez_n_curent = st.session_state.get("calc_nou_rezultat")
-                exp_deschis_calc = bool(st.session_state.get("calc_nou_deschis", False)) or (rez_n_curent is not None)
-                titlu_calc = "Pret Piesa / calcul pret piesa"
-                if rez_n_curent is not None:
-                    titlu_calc = f"Pret Piesa / calcul pret piesa — {rez_n_curent:.2f}"
-
-                with st.expander(titlu_calc, expanded=exp_deschis_calc):
-                    cc1, cc2 = st.columns([2.8, 1.4], vertical_alignment="center")
-                    with cc1:
-                        st.text_input(
-                            "Expresie calcul preț achiziție (Enter pentru a calcula)",
-                            key="calc_nou_expr_input",
-                            placeholder="ex: 120 + 35  sau  450 / 3  sau  85,50 * 2",
-                            on_change=_la_enter_calc_nou,
-                        )
-                    with cc2:
-                        rez_n = st.session_state.get("calc_nou_rezultat")
-                        err_n = st.session_state.get("calc_nou_eroare")
-                        if err_n:
-                            st.error(f"⚠️ {err_n}")
-                        elif rez_n is not None:
-                            st.markdown(
-                                f'<div style="font-size:1.35rem;font-weight:700;color:#1b5e20;padding:4px 0;">'
-                                f'Preț calculat: {rez_n:.2f}</div>',
-                                unsafe_allow_html=True,
-                            )
-                        else:
-                            st.caption("La salvare se folosește valoarea calculată aici (implicit `0.00`).")
-
-                    st.caption(
-                        f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
-                    )
-                    submit_piesa_noua = st.form_submit_button("💾 Salvează Piesa", type="primary")
+                st.caption(
+                    f"📌 Piesa se va înregistra pentru mașina: **{masina_tinta_noua}** (firmă: **{sel_firma_p}**)."
+                )
+                submit_piesa_noua = st.form_submit_button("💾 Salvează Piesa", type="primary")
 
             if submit_piesa_noua:
                 if not denumire.strip():

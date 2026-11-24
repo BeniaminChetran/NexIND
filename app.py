@@ -72,6 +72,7 @@ from pages.documentatie_gdrive import render_documentatie_gdrive
 from pages.asistent_defecte import render_page as render_asistent_defecte
 from pages.fise_mentenanta import render_fise_mentenanta
 from pages.comenzi import render_comenzi
+from pages.de_facut import render_de_facut
 
 
 def seteaza_iconita_android(cale_png: str):
@@ -190,7 +191,8 @@ with c_status:
 # Structură bară de meniu (Categorie -> Sub-meniuri)
 MENIU_STRUCTURA = {
     "📈 0. DashBoard": {
-        "📈 DashBoard": render_dashboard,
+        "✅ De făcut & Teren": render_de_facut,
+        "📊 Indicatori & Analiză": render_dashboard,
         },
     "🚨 1. Diagnostic & Documentație": {
         "🛠️ Asistent Defecte": render_asistent_defecte,

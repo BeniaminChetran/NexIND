@@ -50,14 +50,24 @@ class TaskuriVizitaRepository(BaseRepository):
             CREATE TABLE IF NOT EXISTS taskuri_vizita (
                 id SERIAL PRIMARY KEY,
                 data_vizita DATE NOT NULL DEFAULT CURRENT_DATE,
+                de_facut_pana_la DATE NULL,
                 firma_id INTEGER NULL,
                 firma VARCHAR(255) NOT NULL,
+                masina VARCHAR(255) DEFAULT '',
                 note_vizita TEXT NOT NULL,
                 stare VARCHAR(60) NOT NULL DEFAULT 'Urgent',
                 data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """
         cls().execute(ddl)
+        for alter_sql in (
+            "ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS de_facut_pana_la DATE NULL",
+            "ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS masina VARCHAR(255) DEFAULT ''",
+        ):
+            try:
+                cls().execute(alter_sql)
+            except Exception:
+                pass
         cls._tabela_asigurata = True
 
     @classmethod
@@ -68,6 +78,8 @@ class TaskuriVizitaRepository(BaseRepository):
         note_vizita: str,
         stare: str = "Urgent",
         firma_id: Optional[int] = None,
+        masina: str = "",
+        de_facut_pana_la: Optional[datetime.date] = None,
     ) -> Dict[str, Any]:
         cls._asigura_tabela()
 
@@ -81,15 +93,19 @@ class TaskuriVizitaRepository(BaseRepository):
 
         stare_norm = normalizeaza_stare_task_vizita(stare)
         fid_val = int(firma_id) if firma_id is not None else None
+        masina_curata = str(masina or "").strip()
+        if masina_curata.startswith("--"):
+            masina_curata = ""
         data_val = data_vizita if isinstance(data_vizita, datetime.date) else datetime.date.today()
+        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None
 
         row = cls().execute_returning(
             """
-            INSERT INTO taskuri_vizita (data_vizita, firma_id, firma, note_vizita, stare)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO taskuri_vizita (data_vizita, de_facut_pana_la, firma_id, firma, masina, note_vizita, stare)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (data_val, fid_val, firma_curata, note_curate, stare_norm),
+            (data_val, termen_val, fid_val, firma_curata, masina_curata, note_curate, stare_norm),
         )
         cls.get_all.clear()
         return dict(row) if row else {}
@@ -104,8 +120,10 @@ class TaskuriVizitaRepository(BaseRepository):
             SELECT
                 id,
                 data_vizita,
+                de_facut_pana_la,
                 firma_id,
                 COALESCE(firma, '') AS firma,
+                COALESCE(masina, '') AS masina,
                 COALESCE(note_vizita, '') AS note_vizita,
                 COALESCE(NULLIF(TRIM(stare), ''), 'Urgent') AS stare,
                 data_creare
@@ -121,6 +139,7 @@ class TaskuriVizitaRepository(BaseRepository):
                     WHEN 'Finalizat' THEN 7
                     ELSE 8
                 END,
+                de_facut_pana_la ASC NULLS LAST,
                 data_vizita DESC,
                 id DESC
             """
@@ -134,13 +153,20 @@ class TaskuriVizitaRepository(BaseRepository):
         return rez
 
     @classmethod
-    def update(cls, task_id: int, note_vizita: str, stare: str) -> None:
+    def update(
+        cls,
+        task_id: int,
+        note_vizita: str,
+        stare: str,
+        de_facut_pana_la: Optional[datetime.date] = None,
+    ) -> None:
         cls._asigura_tabela()
         note_curate = str(note_vizita or "").strip()
         stare_norm = normalizeaza_stare_task_vizita(stare)
+        termen_val = de_facut_pana_la if isinstance(de_facut_pana_la, datetime.date) else None
         cls().execute(
-            "UPDATE taskuri_vizita SET note_vizita = %s, stare = %s WHERE id = %s",
-            (note_curate, stare_norm, int(task_id)),
+            "UPDATE taskuri_vizita SET note_vizita = %s, stare = %s, de_facut_pana_la = %s WHERE id = %s",
+            (note_curate, stare_norm, termen_val, int(task_id)),
         )
         cls.get_all.clear()
 
