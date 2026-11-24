@@ -15,30 +15,39 @@ from repositories.setari_repository import SetariRepository
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-icon_win_path = os.path.join(BASE_DIR, "Nexind.ico")
-icon_android_path = os.path.join(BASE_DIR, "Nexind_android.png")
+ICON_WIN_PATH = os.path.join(BASE_DIR, "Nexind.ico")
+ICON_ANDROID_PATH = os.path.join(BASE_DIR, "Nexind_android.png")
 
 
 @st.cache_resource
 def _incarca_iconita_pagina(android_path: str, win_path: str):
-    if os.path.exists(android_path):
+    if os.path.isfile(android_path):
         return Image.open(android_path)
-    if os.path.exists(win_path):
+    if os.path.isfile(win_path):
         return Image.open(win_path)
     return "⚙️"
 
 
-page_icon = _incarca_iconita_pagina(icon_android_path, icon_win_path)
+@st.cache_resource
+def _incarca_android_logo_b64(android_path: str) -> str | None:
+    if not os.path.isfile(android_path):
+        return None
+    with open(android_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+PAGE_ICON = _incarca_iconita_pagina(ICON_ANDROID_PATH, ICON_WIN_PATH)
+ANDROID_LOGO_B64 = _incarca_android_logo_b64(ICON_ANDROID_PATH)
 
 st.set_page_config(
     page_title="NexInd CMMS Enterprise Dashboard",
-    page_icon=page_icon,
+    page_icon=PAGE_ICON,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-if os.path.exists(icon_android_path):
-    st.logo(icon_android_path)
+if ANDROID_LOGO_B64 is not None:
+    st.logo(ICON_ANDROID_PATH)
 
 st.session_state.setdefault("is_unlocked", False)
 
@@ -56,30 +65,47 @@ st.markdown(
 )
 
 
-def seteaza_iconita_android(cale_png: str):
-    if not os.path.exists(cale_png):
-        return
-    with open(cale_png, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-    data_uri = f"data:image/png;base64,{b64}"
+def _injecteaza_script_ui_unic(b64_png: str | None) -> None:
+    icon_script = ""
+    if b64_png:
+        data_uri = f"data:image/png;base64,{b64_png}"
+        icon_script = f"""
+            const head = doc.head;
+            if (!doc.querySelector('link[data-nexind-icon="1"]')) {{
+                doc.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"]').forEach(el => el.remove());
+                ['icon', 'shortcut icon', 'apple-touch-icon'].forEach(relType => {{
+                    const link = doc.createElement('link');
+                    link.rel = relType;
+                    link.type = 'image/png';
+                    link.href = '{data_uri}';
+                    link.setAttribute('data-nexind-icon', '1');
+                    head.appendChild(link);
+                }});
+            }}
+        """
+
     components.html(
         f"""
         <script>
         (function() {{
             const doc = window.parent.document;
-            if (doc.querySelector('link[data-nexind-icon="1"]')) {{
-                return;
+            {icon_script}
+            function applyAttr() {{
+                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {{
+                    if (!inp.dataset.nexindAutofillBlocked) {{
+                        inp.dataset.nexindAutofillBlocked = "1";
+                        inp.setAttribute('autocomplete', 'off');
+                        inp.setAttribute('data-lpignore', 'true');
+                        inp.setAttribute('data-1p-ignore', 'true');
+                        inp.setAttribute('data-form-type', 'other');
+                    }}
+                }});
             }}
-            const head = doc.head;
-            doc.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"]').forEach(el => el.remove());
-            ['icon', 'shortcut icon', 'apple-touch-icon'].forEach(relType => {{
-                const link = doc.createElement('link');
-                link.rel = relType;
-                link.type = 'image/png';
-                link.href = '{data_uri}';
-                link.setAttribute('data-nexind-icon', '1');
-                head.appendChild(link);
-            }});
+            applyAttr();
+            if (!window.parent.__nexindSelectboxObserver && doc.body) {{
+                window.parent.__nexindSelectboxObserver = new MutationObserver(applyAttr);
+                window.parent.__nexindSelectboxObserver.observe(doc.body, {{ childList: true, subtree: true }});
+            }}
         }})();
         </script>
         """,
@@ -88,45 +114,16 @@ def seteaza_iconita_android(cale_png: str):
     )
 
 
-def blocheaza_autofill_selectbox():
-    components.html(
-        """
-        <script>
-        (function() {
-            const doc = window.parent.document;
-            function applyAttr() {
-                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {
-                    if (!inp.dataset.nexindAutofillBlocked) {
-                        inp.dataset.nexindAutofillBlocked = "1";
-                        inp.setAttribute('autocomplete', 'off');
-                        inp.setAttribute('data-lpignore', 'true');
-                        inp.setAttribute('data-1p-ignore', 'true');
-                        inp.setAttribute('data-form-type', 'other');
-                    }
-                });
-            }
-            applyAttr();
-            if (!window.parent.__nexindSelectboxObserver && doc.body) {
-                window.parent.__nexindSelectboxObserver = new MutationObserver(applyAttr);
-                window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
-            }
-        })();
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
 if not st.session_state.get("_nexind_ui_init_done", False):
-    seteaza_iconita_android(icon_android_path)
-    blocheaza_autofill_selectbox()
+    _injecteaza_script_ui_unic(ANDROID_LOGO_B64)
     st.session_state["_nexind_ui_init_done"] = True
 
 
 @st.cache_resource
 def _incarca_handler_pagina(module_path: str, func_name: str):
     mod = importlib.import_module(module_path)
+    if not hasattr(mod, func_name):
+        raise AttributeError(f"Modulul '{module_path}' nu definește funcția '{func_name}'.")
     return getattr(mod, func_name)
 
 
@@ -176,7 +173,6 @@ def render_deblocare():
                     st.error("❌ Parolă incorectă!")
 
 
-# Structură bară de meniu (Categorie -> Sub-meniuri: (modul, functie))
 MENIU_STRUCTURA = {
     "📈 0. DashBoard": {
         "✅ De făcut & Teren": ("pages.de_facut", "render_de_facut"),
@@ -212,24 +208,26 @@ MENIU_STRUCTURA = {
     },
 }
 
+CATEGORII_LISTA = list(MENIU_STRUCTURA.keys())
+is_unlocked = bool(st.session_state.get("is_unlocked", False))
+
 c_title, c_status = st.columns([4.2, 1.3], vertical_alignment="center")
 with c_title:
     st.title("🛠️ NexInd CMMS Dashboard & Predictive")
 with c_status:
-    if st.session_state.get("is_unlocked", False):
+    if is_unlocked:
         st.success("🔓 Sistem: DEBLOCAT")
     else:
         st.warning("🔒 Sistem: BLOCAT")
 
-categorii_lista = list(MENIU_STRUCTURA.keys())
-if st.session_state.get("nav_categorie_principala") not in categorii_lista:
-    st.session_state["nav_categorie_principala"] = categorii_lista[0]
+if st.session_state.get("nav_categorie_principala") not in CATEGORII_LISTA:
+    st.session_state["nav_categorie_principala"] = CATEGORII_LISTA[0]
 
 col_cat, col_sub = st.columns([1.3, 1.7])
 with col_cat:
     categorie_sel = st.selectbox(
         "Meniu Principal",
-        options=categorii_lista,
+        options=CATEGORII_LISTA,
         key="nav_categorie_principala",
     )
 
