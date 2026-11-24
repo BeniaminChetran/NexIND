@@ -402,6 +402,3 @@ def render_masuratori():
             st.dataframe(df_afisare, use_container_width=True)
 
     render_form_si_grafic(firma_id, masina_obj)
-```[cite: 6]
-
-După ce înlocuiești `pages/masuratori.py` cu această variantă și faci push / reboot dacă rulezi pe Streamlit Cloud, ce alt modul sau fișier vrei să optimizăm?
