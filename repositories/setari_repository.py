@@ -39,7 +39,23 @@ DEFAULTS_SETARI = {
     "adaos_comercial_implicit": 35.0,
 }
 
-
+@classmethod
+@st.cache_data(ttl=300)
+def get_setari(cls_or_self=None) -> dict:
+    cls = cls_or_self if isinstance(cls_or_self, type) else SetariRepository
+    _ensure_setari_schema_once()
+    res = cls().fetch_one("SELECT * FROM setari LIMIT 1") or {}
+    merged = dict(DEFAULTS_SETARI)
+    for key, default_val in DEFAULTS_SETARI.items():
+        val = res.get(key)
+        if val is not None and str(val).strip() != "":
+            merged[key] = val
+    for extra_key, extra_val in res.items():
+        if extra_key not in merged:
+            merged[extra_key] = extra_val
+    return merged    
+        
+        
 @st.cache_resource
 def _ensure_setari_schema_once() -> bool:
     try:
@@ -71,6 +87,7 @@ class SetariRepository(BaseRepository):
         for extra_key, extra_val in res.items():
             if extra_key not in merged:
                 merged[extra_key] = extra_val
+        cls.get_setari.clear()
         return merged
 
     @classmethod
@@ -153,3 +170,4 @@ class SetariRepository(BaseRepository):
             else:
                 cur.execute("UPDATE setari SET pass = %s", (noua_parola,))
         logger.info("Parola a fost actualizată în setări.")
+        cls.get_setari.clear()

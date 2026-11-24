@@ -49,9 +49,18 @@ except Exception:
     CereriOfertaRepository = None
     _HAS_CERERI_REPO = False
 
-def normalizeaza_status_cerere_oferta(val):
-    s = str(val or "").strip()
-    return s if s in OPTIUNI_STATUS_CERERE_OFERTA else "Trimis - aștept"
+    def normalizeaza_status_cerere_oferta(val):
+        s = str(val or "").strip()
+        return s if s in OPTIUNI_STATUS_CERERE_OFERTA else "Trimis - aștept"
+
+
+def _obtine_link_gdrive_setari() -> str:
+    try:
+        setari = SetariRepository.get_setari() or {}
+    except Exception:
+        setari = {}
+    link = str(setari.get("locatie_documentatii_gdrive") or "").strip()
+    return link if link.startswith(("http://", "https://")) else ""
 
 
 def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
@@ -88,7 +97,7 @@ def _incarca_optiuni_lookup_piese():
     return optiuni, detalii
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=180)
 def incarca_memento_intretinere(zile_inainte: int = 14):
     zile = max(0, int(zile_inainte))
     try:
@@ -135,6 +144,12 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
 def _goleste_cache_de_facut():
     incarca_memento_intretinere.clear()
     _incarca_optiuni_lookup_piese.clear()
+    _colecteaza_piese_necesare.clear()
+    if hasattr(SetariRepository.get_setari, "clear"):
+        try:
+            SetariRepository.get_setari.clear()
+        except Exception:
+            pass
     for repo in (PieseRepository, NecesarPieseRepository, TaskuriVizitaRepository, CereriOfertaRepository):
         if repo is None:
             continue
@@ -163,15 +178,9 @@ def _extrage_piese_inlocuitoare(row_dict: dict) -> str:
     return "-"
 
 
-def _extrage_link_gdrive(piesa_row: dict) -> str:
-    try:
-        setari = SetariRepository.get_setari() or {}
-    except Exception:
-        setari = {}
-
-    link_setari = str(setari.get("locatie_documentatii_gdrive") or "").strip()
-    if link_setari.startswith(("http://", "https://")):
-        return link_setari
+def _extrage_link_gdrive(piesa_row: dict, link_global: str = "") -> str:
+    if link_global and link_global.startswith(("http://", "https://")):
+        return link_global
 
     for k in ("link_gdrive", "gdrive_url", "gdrive_link", "url_documentatie", "documentatie_url", "link_doc"):
         val = str(piesa_row.get(k) or "").strip()
@@ -230,7 +239,8 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
     return modificat
 
 
-def _colecteaza_piese_necesare() -> list[dict]:
+@st.cache_data(ttl=180)
+def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
     piese_db = PieseRepository.get_all() or []
     furnizor_map = {}
     piesa_id_by_name = {}
@@ -245,7 +255,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
             furnizor_map[cheie] = _extrage_furnizor_piesa(p)
             piesa_id_by_name[cheie] = p.get("id")
             stare_catalog_by_name[cheie] = _normalizeaza_stare_comanda(p.get("stare_comandata"))
-            gdrive_by_name[cheie] = _extrage_link_gdrive(p)
+            gdrive_by_name[cheie] = _extrage_link_gdrive(p, link_gdrive_global)
             inloc_by_name[cheie] = _extrage_piese_inlocuitoare(p)
 
     randuri = []
@@ -271,7 +281,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
             cant_num = 1.0
 
         furnizor_np = str(np_row.get("furnizor_piesa") or "").strip() or furnizor_map.get(cheie, "Fără furnizor setat")
-        link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive(np_row)
+        link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive(np_row, link_gdrive_global)
         piese_inloc_np = _extrage_piese_inlocuitoare(np_row)
         if piese_inloc_np == "-":
             piese_inloc_np = inloc_by_name.get(cheie, "-")
@@ -339,7 +349,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
                 stare_curenta = "De comandat"
 
             furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
-            link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive({})
+            link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive({}, link_gdrive_global)
             piese_inloc = _extrage_piese_inlocuitoare(item)
             if piese_inloc == "-":
                 piese_inloc = inloc_by_name.get(cheie, "-")
@@ -366,7 +376,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
 
     try:
         with db_cursor() as c:
-            c.execute("SELECT * FROM reparatii_electronice ORDER BY id DESC")
+            c.execute("SELECT id, firma_nume, masina_nume, piesa_subansamblu, componente_json FROM reparatii_electronice ORDER BY id DESC")
             fise_el = [dict(row) for row in (c.fetchall() or [])]
     except Exception:
         fise_el = []
@@ -406,7 +416,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
                 else _normalizeaza_stare_comanda(stare_comp)
             )
             furnizor = furnizor_map.get(cheie, "Fără furnizor setat")
-            link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive({})
+            link_gd = gdrive_by_name.get(cheie) or _extrage_link_gdrive({}, link_gdrive_global)
             piese_inloc = _extrage_piese_inlocuitoare(comp)
             if piese_inloc == "-":
                 piese_inloc = inloc_by_name.get(cheie, "-")
@@ -450,8 +460,7 @@ def _colecteaza_piese_necesare() -> list[dict]:
     return randuri
 
 
-def render_privire_ansamblu_de_facut(piese_rows: list[dict]):
-    taskuri = TaskuriVizitaRepository.get_all() or []
+def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]):
     taskuri_urgente = [t for t in taskuri if t.get("stare") == "Urgent"]
     taskuri_active = [t for t in taskuri if t.get("stare") != "Finalizat"]
 
@@ -593,11 +602,11 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
                 st.rerun()
 
 
-def render_notite_vizita_de_facut():
-    firme_nume, nume_to_id = _obtine_harta_firme()
-    masini_all = MasiniRepository.get_all() or []
-
+def render_notite_vizita_de_facut(taskuri: list[dict]):
     with st.expander("📋 Notițe & Task-uri Vizită Client", expanded=True):
+        firme_nume, nume_to_id = _obtine_harta_firme()
+        masini_all = MasiniRepository.get_all() or []
+
         if not firme_nume:
             st.warning("⚠️ Nu există firme înregistrate în baza de date.")
         else:
@@ -671,7 +680,6 @@ def render_notite_vizita_de_facut():
                     st.error(f"⚠️ {ve}")
 
         st.markdown("---")
-        taskuri = TaskuriVizitaRepository.get_all() or []
         if not taskuri:
             st.info("Nu există notițe sau task-uri de vizită înregistrate.")
             return
@@ -786,11 +794,11 @@ def render_notite_vizita_de_facut():
 
 
 def render_notare_rapida_teren():
-    firme_nume, nume_to_id = _obtine_harta_firme()
-    masini_all = MasiniRepository.get_all() or []
-    optiuni_piese, detalii_piese = _incarca_optiuni_lookup_piese()
-
     with st.expander("📝 Notare Rapidă Piese pe Teren (Client obligatoriu • Mașină opțională)", expanded=False):
+        firme_nume, nume_to_id = _obtine_harta_firme()
+        masini_all = MasiniRepository.get_all() or []
+        optiuni_piese, detalii_piese = _incarca_optiuni_lookup_piese()
+
         if not firme_nume:
             st.warning("⚠️ Nu există firme înregistrate în baza de date.")
             return
@@ -1104,16 +1112,15 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
 
 def render_cereri_oferta_furnizori_de_facut():
     if not _HAS_CERERI_REPO or CereriOfertaRepository is None:
-        with st.expander("📨 Cereri Ofertă Furnizori (RFQ) & Analiză Prețuri", expanded=False):
-            st.info("Adaugă fișierul `repositories/cereri_oferta_repository.py` pentru a activa cererile către furnizori și analiza ofertelor primite.")
         return
 
-    firme_nume, nume_to_id = _obtine_harta_firme()
-    masini_all = MasiniRepository.get_all() or []
-    piese_catalog = PieseRepository.get_all() or []
-    necesar_rows = NecesarPieseRepository.get_all() or []
-
     with st.expander("📨 Cereri Ofertă Furnizori (RFQ) • Analiză Prețuri & Legătură Client / Mașină", expanded=False):
+        cereri_all = CereriOfertaRepository.get_cereri() or []
+        firme_nume, nume_to_id = _obtine_harta_firme()
+        masini_all = MasiniRepository.get_all() or []
+        piese_catalog = PieseRepository.get_all() or []
+        necesar_rows = NecesarPieseRepository.get_all() or []
+
         st.markdown("##### 1. Creează Cerere de Ofertă către Furnizori")
 
         if not firme_nume:
@@ -1229,7 +1236,6 @@ def render_cereri_oferta_furnizori_de_facut():
         st.markdown("---")
         st.markdown("##### 2. Tabel Cereri de Ofertă către Furnizori")
 
-        cereri_all = CereriOfertaRepository.get_cereri() or []
         if not cereri_all:
             st.info("Nu există cereri de ofertă către furnizori înregistrate.")
             return
@@ -1485,12 +1491,14 @@ def render_de_facut():
             _goleste_cache_de_facut()
             st.rerun()
 
-    piese_rows = _colecteaza_piese_necesare()
+    link_gdrive_global = _obtine_link_gdrive_setari()
+    taskuri = TaskuriVizitaRepository.get_all() or []
+    piese_rows = _colecteaza_piese_necesare(link_gdrive_global)
 
-    render_privire_ansamblu_de_facut(piese_rows)
+    render_privire_ansamblu_de_facut(piese_rows, taskuri)
 
     st.markdown("---")
-    render_notite_vizita_de_facut()
+    render_notite_vizita_de_facut(taskuri)
     render_notare_rapida_teren()
     render_tabel_piese_de_comandat(piese_rows)
     render_cereri_oferta_furnizori_de_facut()
