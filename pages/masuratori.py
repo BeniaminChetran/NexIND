@@ -402,6 +402,3 @@ def render_masuratori():
             st.dataframe(df_afisare, use_container_width=True)
 
     render_form_si_grafic(firma_id, masina_obj)
-```[cite: 6]
-
-Dacă după ce actualizezi `pages/masuratori.py` și faci push/reboot mai apare eroarea, spune-mi ce alt fișier din aplicație ai vrea să verificăm.
