@@ -190,6 +190,7 @@ def render_masuratori():
     st.markdown("---")
 
     @st.fragment
+    st.write("DEBUG masuratori v3")
     def render_form_si_grafic(firma_id_val: int, masina_obj_val: dict):
         m_id = masina_obj_val["id"]
         m_nume = masina_obj_val["denumire"]
