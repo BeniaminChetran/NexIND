@@ -49,9 +49,9 @@ except Exception:
     CereriOfertaRepository = None
     _HAS_CERERI_REPO = False
 
-    def normalizeaza_status_cerere_oferta(val):
-        s = str(val or "").strip()
-        return s if s in OPTIUNI_STATUS_CERERE_OFERTA else "Trimis - aștept"
+def normalizeaza_status_cerere_oferta(val):
+    s = str(val or "").strip()
+    return s if s in OPTIUNI_STATUS_CERERE_OFERTA else "Trimis - aștept"
 
 
 def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
