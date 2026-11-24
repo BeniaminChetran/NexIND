@@ -2,13 +2,26 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
+import datetime
 
+
+from repositories.firme_repository import FirmeRepository
+from repositories.masini_repository import MasiniRepository
+from repositories.necesar_piese_repository import NecesarPieseRepository
+from repositories.taskuri_vizita_repository import (
+    OPTIUNI_STARE_TASK_VIZITA,
+    TaskuriVizitaRepository,
+    normalizeaza_stare_task_vizita,
+)
 from repositories.piese_repository import (
     OPTIUNI_STARE_COMANDA,
     PieseRepository,
     _normalizeaza_stare_comanda,
 )
 from repositories.reparatii_repository import ReparatiiRepository
+from repositories.firme_repository import FirmeRepository
+from repositories.masini_repository import MasiniRepository
+from repositories.necesar_piese_repository import NecesarPieseRepository
 from config import db_cursor
 
 
@@ -577,11 +590,102 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 c.connection.commit()
     return modificat
 
-
 def render_piese_de_comandat_dashboard():
     st.markdown("### 🛒 Piese De Comandat / Necesare & Stare Comandă")
+
+    # --- NOTARE RAPIDĂ PIESE PE TEREN (TABEL SEPARAT `necesar_piese`) ---
+    firme_all = FirmeRepository.get_all() or []
+    masini_all = MasiniRepository.get_all() or []
+
+    firme_nume = sorted({
+        str(f.get("nume_firma") or f.get("nume") or f.get("denumire") or "").strip()
+        for f in firme_all
+        if str(f.get("nume_firma") or f.get("nume") or f.get("denumire") or "").strip()
+    })
+
+    # --- NOTARE RAPIDĂ PIESE PE TEREN (TABEL SEPARAT `necesar_piese`) ---
+    firme_nume, nume_to_id = _obtine_harta_firme()
+    masini_all = MasiniRepository.get_all() or []
+
+    with st.expander("📝 Notare Rapidă Piese pe Teren (Client obligatoriu • Mașină opțională)", expanded=False):
+        if not firme_nume:
+            st.warning("⚠️ Nu există firme înregistrate în baza de date.")
+        else:
+            firma_teren = st.selectbox(
+                "Client / Firmă *",
+                options=firme_nume,
+                key="dash_teren_firma_sel",
+            )
+            fid_teren = nume_to_id.get(firma_teren)
+            masini_firma = [
+                str(m.get("denumire") or "").strip()
+                for m in masini_all
+                if str(m.get("denumire") or "").strip()
+                and (fid_teren is None or m.get("firma_id") == fid_teren)
+            ]
+            opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
+
+            with st.form("form_notare_rapida_teren", clear_on_submit=True):
+                c_t1, c_t2 = st.columns([2.2, 2.2])
+                with c_t1:
+                    piesa_teren = st.text_input(
+                        "Denumire piesă *",
+                        placeholder="ex: Electrovana 24V / Rulment 6205",
+                    )
+                    cod_teren = st.text_input(
+                        "Cod producător (opțional)",
+                        placeholder="ex: cod reper notat la client",
+                    )
+                with c_t2:
+                    masina_teren = st.selectbox(
+                        "Mașină (opțional)",
+                        options=opt_masini_teren,
+                    )
+                    cant_teren = st.number_input(
+                        "Cantitate *",
+                        min_value=0.01,
+                        value=1.0,
+                        step=1.0,
+                        format="%.2f",
+                    )
+
+                obs_teren = st.text_input(
+                    "Observații / detalii notate la client (opțional)",
+                    placeholder="ex: cerută la vizită, verificare ofertă...",
+                )
+                st.caption(
+                    "Regulă automată: dacă piesa **nu există** în catalogul de piese → intră la **De căutat**; "
+                    "dacă **este deja** în catalog → intră la **De ofertat**."
+                )
+                salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
+
+            if salveaza_teren:
+                try:
+                    rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
+                        firma_client=firma_teren,
+                        firma_id=fid_teren,
+                        denumire_piesa=piesa_teren,
+                        cantitate=cant_teren,
+                        masina=masina_teren,
+                        cod_producator=cod_teren,
+                        observatii=obs_teren,
+                    )
+                    incarca_date_dashboard.clear()
+                    mesaj_catalog = (
+                        "era deja în catalog → trecută la **De ofertat**"
+                        if rez.get("existenta_in_catalog")
+                        else "nu era în catalog → adăugată în catalog și trecută la **De căutat**"
+                    )
+                    st.success(
+                        f"✅ Notat **{piesa_teren.strip()}** (cant. **{float(cant_teren):g}**, client **{firma_teren}**): "
+                        f"{mesaj_catalog}."
+                    )
+                    st.rerun()
+                except ValueError as ve:
+                    st.error(f"⚠️ {ve}")
+
     st.caption(
-        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `Anulată`) "
+        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
         "și apasă **💾 Actualizează Stările în Tabel**."
     )
 
@@ -600,6 +704,36 @@ def render_piese_de_comandat_dashboard():
 
     randuri = []
     idx_counter = 0
+
+    # 0. Piese notate pe teren / din tabelul `necesar_piese`
+    necesar_rows = NecesarPieseRepository.get_all() or []
+    for np_row in necesar_rows:
+        den_np = str(np_row.get("denumire_piesa") or "").strip()
+        if not den_np:
+            continue
+        cheie = " ".join(den_np.lower().split())
+        try:
+            cant_num = float(np_row.get("cantitate") or 1.0)
+        except Exception:
+            cant_num = 1.0
+
+        furnizor_np = str(np_row.get("furnizor_piesa") or "").strip() or furnizor_map.get(cheie, "Fără furnizor setat")
+        idx_counter += 1
+        randuri.append({
+            "_row_id": idx_counter,
+            "_necesar_id": np_row.get("id"),
+            "_piesa_id": np_row.get("piesa_id") or piesa_id_by_name.get(cheie),
+            "_sursa_tbl": "necesar_piese",
+            "_sursa_rec_id": np_row.get("id"),
+            "Furnizor": furnizor_np,
+            "Piesă": den_np,
+            "Cantitate": cant_num,
+            "Status Comandă": _normalizeaza_stare_comanda(np_row.get("status_comanda")),
+            "Sursă": "Teren / Necesar",
+            "Firmă": str(np_row.get("firma_client") or "").strip(),
+            "Mașină": str(np_row.get("masina") or "").strip() or "-",
+            "Raport": f"NP #{np_row.get('id')}",
+        })
 
     # 1. Piese din rapoartele de Mașini (reparatii)
     rapoarte = ReparatiiRepository.get_all() or []
@@ -660,6 +794,7 @@ def render_piese_de_comandat_dashboard():
             idx_counter += 1
             randuri.append({
                 "_row_id": idx_counter,
+                "_necesar_id": None,
                 "_piesa_id": piesa_id_by_name.get(cheie),
                 "_sursa_tbl": "reparatii",
                 "_sursa_rec_id": r.get("id"),
@@ -725,6 +860,7 @@ def render_piese_de_comandat_dashboard():
             idx_counter += 1
             randuri.append({
                 "_row_id": idx_counter,
+                "_necesar_id": None,
                 "_piesa_id": piesa_id_by_name.get(cheie),
                 "_sursa_tbl": "reparatii_electronice",
                 "_sursa_rec_id": f_el.get("id"),
@@ -739,7 +875,7 @@ def render_piese_de_comandat_dashboard():
             })
 
     if not randuri:
-        st.info("Nu există piese marcate ca necesare / de comandat în rapoartele de mașini sau reparații electronice.")
+        st.info("Nu există piese marcate ca necesare / de comandat / de căutat / de ofertat.")
         return
 
     df = pd.DataFrame(randuri)
@@ -748,7 +884,7 @@ def render_piese_de_comandat_dashboard():
     with c1:
         filtru_sursa = st.selectbox(
             "Filtrează după sursă",
-            options=["Toate", "Mașini", "Electronică"],
+            options=["Toate", "Teren / Necesar", "Mașini", "Electronică"],
             key="dash_piese_cmd_sursa",
         )
     with c2:
@@ -839,15 +975,19 @@ def render_piese_de_comandat_dashboard():
                 if 0 <= idx < len(df_final) and isinstance(changes, dict):
                     for col_name, new_val in changes.items():
                         if col_name in df_final.columns:
-                            df_final.at[idx, col_name] = _normalizeaza_stare_comanda(new_val) if col_name == "Status Comandă" else new_val
+                            df_final.at[idx, col_name] = (
+                                _normalizeaza_stare_comanda(new_val) if col_name == "Status Comandă" else new_val
+                            )
 
         meta_map = {}
         for _, r in df_f.iterrows():
             k = int(r["_row_id"])
             if k not in meta_map:
+                nid_raw = r.get("_necesar_id")
                 pid_raw = r.get("_piesa_id")
                 sid_raw = r.get("_sursa_rec_id")
                 meta_map[k] = {
+                    "_necesar_id": int(nid_raw) if pd.notna(nid_raw) and str(nid_raw).strip() != "" else None,
                     "_piesa_id": int(pid_raw) if pd.notna(pid_raw) and str(pid_raw).strip() != "" else None,
                     "_sursa_tbl": str(r.get("_sursa_tbl") or "").strip(),
                     "_sursa_rec_id": int(sid_raw) if pd.notna(sid_raw) and str(sid_raw).strip() != "" else None,
@@ -867,18 +1007,26 @@ def render_piese_de_comandat_dashboard():
             if stare_veche != stare_noua:
                 meta = meta_map.get(rid) or {}
                 salvat_ceva = False
+                sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
+
+                necesar_id = meta.get("_necesar_id")
+                if sursa_tbl == "necesar_piese" and necesar_id is not None:
+                    try:
+                        NecesarPieseRepository.update_status_comanda(int(necesar_id), stare_noua)
+                        salvat_ceva = True
+                    except Exception as e:
+                        erori_salvare.append(f"Necesar #{necesar_id} ({row.get('Piesă')}): {e}")
 
                 piesa_id = meta.get("_piesa_id")
-                if piesa_id is not None and pd.notna(piesa_id):
+                if sursa_tbl != "necesar_piese" and piesa_id is not None and pd.notna(piesa_id):
                     try:
                         PieseRepository.update_stare_comandata(int(piesa_id), stare_noua)
                         salvat_ceva = True
                     except Exception as e:
                         erori_salvare.append(f"Piesa #{piesa_id} ({row.get('Piesă')}): {e}")
 
-                sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
                 sursa_rec_id = meta.get("_sursa_rec_id")
-                if sursa_tbl and sursa_rec_id is not None and pd.notna(sursa_rec_id):
+                if sursa_tbl in ("reparatii", "reparatii_electronice") and sursa_rec_id is not None and pd.notna(sursa_rec_id):
                     try:
                         if _actualizeaza_stare_in_raport_json(
                             sursa_tbl,
@@ -912,3 +1060,178 @@ def render_piese_de_comandat_dashboard():
             .sort_values(["Status Comandă", "Furnizor", "Piesă"])
         )
         st.dataframe(df_sum, hide_index=True, use_container_width=True)
+        
+def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
+    """Returnează (lista ordonată de nume_firma, dicționar {nume_firma: id})."""
+    firme_all = FirmeRepository.get_all() or []
+    nume_to_id: dict[str, int] = {}
+    for f in firme_all:
+        nume = str(f.get("nume_firma") or "").strip()
+        fid = f.get("id")
+        if nume and fid is not None:
+            nume_to_id[nume] = int(fid)
+    return sorted(nume_to_id.keys()), nume_to_id
+
+
+def render_notite_vizita_dashboard():
+    st.markdown("### 📋 Notițe & Task-uri Vizită Client")
+
+    firme_nume, nume_to_id = _obtine_harta_firme()
+
+    with st.expander("➕ Adaugă Notiță / Task de la Client", expanded=False):
+        if not firme_nume:
+            st.warning("⚠️ Nu există firme înregistrate în baza de date.")
+        else:
+            with st.form("form_adauga_notita_vizita", clear_on_submit=True):
+                cn1, cn2 = st.columns([1.1, 1.9])
+                with cn1:
+                    data_viz = st.date_input("Data *", value=datetime.date.today())
+                    stare_viz = st.selectbox(
+                        "Stare *",
+                        options=OPTIUNI_STARE_TASK_VIZITA,
+                        index=0,
+                    )
+                with cn2:
+                    firma_viz = st.selectbox("Firmă (Client) *", options=firme_nume)
+                    note_viz = st.text_area(
+                        "Note de vizită *",
+                        placeholder="ex: De verificat senzor presiune linie 2, de proiectat suport motor, cerut ofertă...",
+                        height=95,
+                    )
+
+                salveaza_nota = st.form_submit_button("💾 Salvează Notița", type="primary")
+
+            if salveaza_nota:
+                try:
+                    TaskuriVizitaRepository.insert(
+                        data_vizita=data_viz,
+                        firma=firma_viz,
+                        firma_id=nume_to_id.get(firma_viz),
+                        note_vizita=note_viz,
+                        stare=stare_viz,
+                    )
+                    st.success(f"✅ Notiță salvată pentru **{firma_viz}** ({stare_viz}).")
+                    st.rerun()
+                except ValueError as ve:
+                    st.error(f"⚠️ {ve}")
+
+    taskuri = TaskuriVizitaRepository.get_all() or []
+    if not taskuri:
+        st.info("Nu există notițe sau task-uri de vizită înregistrate.")
+        return
+
+    df_t = pd.DataFrame(taskuri)
+    df_t["data_str"] = df_t["data_vizita"].astype(str)
+
+    ft1, ft2, ft3 = st.columns([1.3, 1.2, 1.2])
+    with ft1:
+        firme_filtrare = ["Toate firmele"] + sorted(df_t["firma"].unique().tolist())
+        sel_firma_t = st.selectbox("Firmă", options=firme_filtrare, key="dash_task_filtru_firma")
+    with ft2:
+        sel_stare_t = st.selectbox(
+            "Stare",
+            options=["Active (fără Finalizat)", "Toate stările"] + OPTIUNI_STARE_TASK_VIZITA,
+            key="dash_task_filtru_stare",
+        )
+    with ft3:
+        cautare_t = st.text_input(
+            "Caută în note",
+            placeholder="cuvânt cheie...",
+            key="dash_task_cautare",
+        ).strip().lower()
+
+    df_tf = df_t.copy()
+    if sel_firma_t != "Toate firmele":
+        df_tf = df_tf[df_tf["firma"] == sel_firma_t]
+    if sel_stare_t == "Active (fără Finalizat)":
+        df_tf = df_tf[df_tf["stare"] != "Finalizat"]
+    elif sel_stare_t != "Toate stările":
+        df_tf = df_tf[df_tf["stare"] == sel_stare_t]
+    if cautare_t:
+        df_tf = df_tf[df_tf["note_vizita"].str.lower().str.contains(cautare_t, na=False)]
+
+    if df_tf.empty:
+        st.info("Nu există notițe pentru filtrele selectate.")
+        return
+
+    df_t_init = pd.DataFrame([
+        {
+            "id": int(r["id"]),
+            "Data": str(r["data_vizita"]),
+            "Firmă": str(r["firma"]),
+            "Note de vizită": str(r["note_vizita"]),
+            "Stare": normalizeaza_stare_task_vizita(r["stare"]),
+            "Șterge": False,
+        }
+        for _, r in df_tf.iterrows()
+    ])
+
+    editor_task_key = f"dash_editor_taskuri_{sel_firma_t}_{sel_stare_t}_{len(df_t_init)}"
+    edited_t = st.data_editor(
+        df_t_init,
+        key=editor_task_key,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["id", "Data", "Firmă"],
+        column_config={
+            "id": None,
+            "Data": st.column_config.TextColumn("Data", width="small"),
+            "Firmă": st.column_config.TextColumn("Firmă", width="medium"),
+            "Note de vizită": st.column_config.TextColumn("Note de vizită", width="large", required=True),
+            "Stare": st.column_config.SelectboxColumn(
+                "Stare",
+                options=OPTIUNI_STARE_TASK_VIZITA,
+                required=True,
+                width="medium",
+            ),
+            "Șterge": st.column_config.CheckboxColumn("🗑️", default=False, width="small"),
+        },
+    )
+
+    if st.button("💾 Salvează Modificările Notițe", type="primary", key="btn_dash_save_taskuri"):
+        df_t_final = edited_t.copy()
+        state_t = st.session_state.get(editor_task_key)
+        if isinstance(state_t, dict):
+            for idx_key, changes in (state_t.get("edited_rows") or {}).items():
+                try:
+                    idx = int(idx_key)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx < len(df_t_final) and isinstance(changes, dict):
+                    for col_name, new_val in changes.items():
+                        if col_name in df_t_final.columns:
+                            df_t_final.at[idx, col_name] = new_val
+
+        orig_t_map = {int(r["id"]): r for _, r in df_t_init.iterrows()}
+        nr_mod_t = 0
+        nr_del_t = 0
+
+        for _, row in df_t_final.iterrows():
+            tid = int(row["id"])
+            if bool(row.get("Șterge", False)):
+                TaskuriVizitaRepository.delete(tid)
+                nr_del_t += 1
+                continue
+
+            orig = orig_t_map.get(tid)
+            if orig is None:
+                continue
+
+            nota_noua = str(row.get("Note de vizită") or "").strip()
+            stare_noua = normalizeaza_stare_task_vizita(row.get("Stare"))
+            if (
+                nota_noua != str(orig["Note de vizită"]).strip()
+                or stare_noua != normalizeaza_stare_task_vizita(orig["Stare"])
+            ) and nota_noua:
+                TaskuriVizitaRepository.update(tid, nota_noua, stare_noua)
+                nr_mod_t += 1
+
+        if editor_task_key in st.session_state:
+            del st.session_state[editor_task_key]
+
+        if nr_mod_t == 0 and nr_del_t == 0:
+            st.info("ℹ️ Nu există modificări nesalvate la notițe.")
+        else:
+            st.success(f"✅ Notițe actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
+            st.rerun()
