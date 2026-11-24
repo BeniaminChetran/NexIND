@@ -27,6 +27,7 @@ DEFAULTS_SETARI = {
     "smtp_user": "",
     "smtp_pass": "",
     "google_sheet_url": "",
+    "locatie_documentatii_gdrive": "",
     "email_tehnician": "",
     "cota_tva": 21.0,
     "pass": "",
@@ -48,14 +49,14 @@ def _ensure_setari_schema_once() -> bool:
             ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
             ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
             ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
-            ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT ''
+            ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT '',
+            ADD COLUMN IF NOT EXISTS locatie_documentatii_gdrive TEXT DEFAULT ''
             """
         )
         return True
     except Exception as exc:
-        logger.warning(f"Verificarea coloanelor de contact pe 'setari' a întâmpinat o eroare: {exc}")
+        logger.warning(f"Verificarea coloanelor pe 'setari' a întâmpinat o eroare: {exc}")
         return False
-
 
 class SetariRepository(BaseRepository):
     @classmethod
@@ -78,7 +79,7 @@ class SetariRepository(BaseRepository):
         existing = cls.get_setari()
         merged = {**existing, **(data or {})}
 
-        for contact_key in ("telefon_1", "telefon_2", "email_1", "email_2"):
+        for contact_key in ("telefon_1", "telefon_2", "email_1", "email_2", "locatie_documentatii_gdrive"):
             merged[contact_key] = str(merged.get(contact_key) or "").strip()
 
         if merged.get("clauze_subsol_implicite") is None:
@@ -106,6 +107,7 @@ class SetariRepository(BaseRepository):
             merged.get("smtp_user"),
             merged.get("smtp_pass"),
             merged.get("google_sheet_url"),
+            merged.get("locatie_documentatii_gdrive"),
             merged.get("email_tehnician"),
             merged.get("cota_tva"),
             merged.get("pass"),
@@ -129,12 +131,12 @@ class SetariRepository(BaseRepository):
                     nume_firma_mea, cui_mea, reg_com_mea, adresa_mea, banca_mea,
                     iban_mea, swep_mea, telefon_1, telefon_2, email_1, email_2,
                     smtp_server, smtp_port, smtp_user, smtp_pass, google_sheet_url,
-                    email_tehnician, cota_tva, pass,
+                    locatie_documentatii_gdrive, email_tehnician, cota_tva, pass,
                     valabilitate_implicita, termeni_plata_impliciti,
                     intocmit_de_implicit, tehnician_implicit, clauze_subsol_implicite,
                     adaos_comercial_implicit
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 params,
             )
