@@ -665,63 +665,136 @@ def genereaza_pdf_oferta(data):
         Paragraph("<b>Termen<br/>livrare</b>", ParagraphStyle('C', parent=s_bold, alignment=TA_CENTER))
     ]]
 
-    subtotal = 0.0
+   subtotal_brut = 0.0
+    discount_reper_total = 0.0
+    tip_discount = str(data.get("tip_discount") or "Fără discount").strip()
+    val_disc_input = float(data.get("valoare_discount_input") or data.get("valoare_discount_total") or 0.0)
+
     col_pret_cheie = f"Pret Unitar ({moneda})"
-    curs_conv = float(data.get('curs_valutar') or 1.0)
+    curs_conv = float(data.get("curs_valutar") or 1.0)
+
     for idx, art in enumerate(articole, 1):
-        cant = float(art.get('Cantitate') or 1.0)
+        cant = float(art.get("Cantitate") or 1.0)
         if art.get(col_pret_cheie) is not None:
             pret = float(art.get(col_pret_cheie))
-        elif art.get('Pret Unitar (RON)') is not None:
-            pret_ron = float(art.get('Pret Unitar (RON)'))
+        elif art.get("Pret Unitar (RON)") is not None:
+            pret_ron = float(art.get("Pret Unitar (RON)"))
             pret = round(pret_ron / curs_conv, 2) if (moneda == "EUR" and curs_conv > 0) else pret_ron
-        elif art.get('Pret Unitar (EUR)') is not None:
-            pret_eur = float(art.get('Pret Unitar (EUR)'))
+        elif art.get("Pret Unitar (EUR)") is not None:
+            pret_eur = float(art.get("Pret Unitar (EUR)"))
             pret = round(pret_eur * curs_conv, 2) if (moneda == "RON" and curs_conv > 0) else pret_eur
         else:
             pret = 0.0
 
-        valoare = round(cant * pret, 2)
-        subtotal += valoare
-        termen_livrare = str(art.get('Termen livrare', '') or '')
+        valoare_bruta_linie = round(cant * pret, 2)
+        disc_rep_pct = float(art.get("Discount (%)") or 0.0)
+        disc_rep_pct = max(0.0, min(100.0, disc_rep_pct))
+        disc_linie = round(valoare_bruta_linie * (disc_rep_pct / 100.0), 2) if tip_discount == "Discount pe reper (%)" else 0.0
+        valoare_neta_linie = round(max(0.0, valoare_bruta_linie - disc_linie), 2)
+
+        subtotal_brut += valoare_bruta_linie
+        discount_reper_total += disc_linie
+
+        desc_txt = str(art.get("Descriere", ""))
+        if tip_discount == "Discount pe reper (%)" and disc_rep_pct > 0:
+            desc_txt = f"{desc_txt} <i>(Discount: -{formateaza_numar_ro(disc_rep_pct)}%)</i>"
+
+        termen_livrare = str(art.get("Termen livrare", "") or "")
 
         t_rows.append([
             Paragraph(str(idx), s_normal),
-            Paragraph(str(art.get('Descriere', '')), s_normal),
-            Paragraph(str(art.get('UM', 'buc')), s_normal),
+            Paragraph(desc_txt, s_normal),
+            Paragraph(str(art.get("UM", "buc")), s_normal),
             Paragraph(formateaza_numar_ro(cant), s_normal),
-            Paragraph(formateaza_numar_ro(pret), ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT)),
-            Paragraph(formateaza_numar_ro(valoare), ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT)),
-            Paragraph(termen_livrare, ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))
+            Paragraph(formateaza_numar_ro(pret), ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+            Paragraph(formateaza_numar_ro(valoare_neta_linie), ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+            Paragraph(termen_livrare, ParagraphStyle("C", parent=s_normal, alignment=TA_CENTER))
         ])
 
     t_articole = Table(t_rows, colWidths=[28, 222, 35, 42, 72, 78, 58])
     t_articole.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('PADDING', (0,0), (-1,-1), 4),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("PADDING", (0, 0), (-1, -1), 4),
     ]))
     elements.append(t_articole)
     elements.append(Spacer(1, 8))
 
+    subtotal_brut = round(subtotal_brut, 2)
+    discount_reper_total = round(discount_reper_total, 2)
+
+    if data.get("valoare_discount") is not None:
+        discount_valoare = round(float(data.get("valoare_discount") or 0.0), 2)
+    elif tip_discount == "Discount pe reper (%)":
+        discount_valoare = discount_reper_total
+    elif tip_discount == "Discount pe total (%)":
+        pct_tot = max(0.0, min(100.0, val_disc_input))
+        discount_valoare = round(subtotal_brut * (pct_tot / 100.0), 2)
+    elif tip_discount == "Discount fix":
+        discount_valoare = round(max(0.0, min(subtotal_brut, val_disc_input)), 2)
+    else:
+        discount_valoare = 0.0
+
+    subtotal = round(max(0.0, subtotal_brut - discount_valoare), 2)
     cota_tva_procent = float(
-        data.get('cota_tva')
-        if data.get('cota_tva') is not None
-        else (setari.get('cota_tva') if setari.get('cota_tva') is not None else 21.0)
+        data.get("cota_tva")
+        if data.get("cota_tva") is not None
+        else (setari.get("cota_tva") if setari.get("cota_tva") is not None else 21.0)
     )
     tva = round(subtotal * (cota_tva_procent / 100.0), 2)
     total_general = round(subtotal + tva, 2)
 
-    t_totaluri = Table([
-        ["", Paragraph("<b>Subtotal fără TVA:</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(subtotal)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT))],
-        ["", Paragraph(f"<b>TVA ({formateaza_numar_ro(cota_tva_procent)}%):</b>", s_normal), Paragraph(f"<b>{formateaza_numar_ro(tva)} {moneda}</b>", ParagraphStyle('R', parent=s_normal, alignment=TA_RIGHT))],
-        ["", Paragraph("<b>TOTAL GENERAL:</b>", ParagraphStyle('Big', parent=s_bold, fontSize=10)), Paragraph(f"<b>{formateaza_numar_ro(total_general)} {moneda}</b>", ParagraphStyle('BigR', parent=s_bold, fontSize=10, alignment=TA_RIGHT))]
-    ], colWidths=[260, 155, 120])
+    rows_totaluri = []
+    if discount_valoare > 0:
+        if tip_discount == "Discount pe total (%)" and val_disc_input > 0:
+            eticheta_disc = f"Discount ({formateaza_numar_ro(val_disc_input)}% pe total):"
+        elif tip_discount == "Discount fix":
+            eticheta_disc = "Discount fix:"
+        elif tip_discount == "Discount pe reper (%)":
+            eticheta_disc = "Discount (pe reper):"
+        else:
+            eticheta_disc = "Discount:"
+
+        rows_totaluri.append([
+            "",
+            Paragraph("<b>Subtotal brut (fără TVA):</b>", s_normal),
+            Paragraph(f"<b>{formateaza_numar_ro(subtotal_brut)} {moneda}</b>", ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+        ])
+        rows_totaluri.append([
+            "",
+            Paragraph(f"<b>{eticheta_disc}</b>", s_normal),
+            Paragraph(f"<b>-{formateaza_numar_ro(discount_valoare)} {moneda}</b>", ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+        ])
+        rows_totaluri.append([
+            "",
+            Paragraph("<b>Subtotal net (fără TVA):</b>", s_normal),
+            Paragraph(f"<b>{formateaza_numar_ro(subtotal)} {moneda}</b>", ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+        ])
+    else:
+        rows_totaluri.append([
+            "",
+            Paragraph("<b>Subtotal fără TVA:</b>", s_normal),
+            Paragraph(f"<b>{formateaza_numar_ro(subtotal)} {moneda}</b>", ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+        ])
+
+    rows_totaluri.append([
+        "",
+        Paragraph(f"<b>TVA ({formateaza_numar_ro(cota_tva_procent)}%):</b>", s_normal),
+        Paragraph(f"<b>{formateaza_numar_ro(tva)} {moneda}</b>", ParagraphStyle("R", parent=s_normal, alignment=TA_RIGHT)),
+    ])
+    rows_totaluri.append([
+        "",
+        Paragraph("<b>TOTAL GENERAL:</b>", ParagraphStyle("Big", parent=s_bold, fontSize=10)),
+        Paragraph(f"<b>{formateaza_numar_ro(total_general)} {moneda}</b>", ParagraphStyle("BigR", parent=s_bold, fontSize=10, alignment=TA_RIGHT)),
+    ])
+
+    idx_ultima = len(rows_totaluri) - 1
+    t_totaluri = Table(rows_totaluri, colWidths=[260, 155, 120])
     t_totaluri.setStyle(TableStyle([
-        ('LINEABOVE', (1,2), (2,2), 1, colors.HexColor("#1E293B")),
-        ('BACKGROUND', (1,2), (2,2), colors.HexColor("#F1F5F9")),
-        ('PADDING', (0,0), (-1,-1), 4),
+        ("LINEABOVE", (1, idx_ultima), (2, idx_ultima), 1, colors.HexColor("#1E293B")),
+        ("BACKGROUND", (1, idx_ultima), (2, idx_ultima), colors.HexColor("#F1F5F9")),
+        ("PADDING", (0, 0), (-1, -1), 4),
     ]))
     elements.append(t_totaluri)
     elements.append(Spacer(1, 10))

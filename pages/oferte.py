@@ -262,6 +262,8 @@ def _defaults_oferta(
         "ultima_firma_pers": "-- Alege firma --",
         "ultima_masina_selectata": "-- Fără utilaj / Introducere manuală --",
         "ultima_moneda_fraze": moneda,
+        "tip_discount": "Fără discount",
+        "valoare_discount_total": 0.0,
     }
 
 
@@ -846,6 +848,56 @@ def render_oferte():
             )
 
     _fragment_adaugare_rapida_si_tabel()
+    
+    st.markdown("##### 🎯 Discount Ofertă")
+    k_td, v_td = lega_camp("oferta_draft", "tip_discount", "Fără discount", "ofs", "ofs_cnt")
+    k_vd, v_vd = lega_camp(
+        "oferta_draft",
+        "valoare_discount_total",
+        0.0,
+        "ofs",
+        "ofs_cnt",
+        transform=lambda x: float(x or 0.0),
+    )
+
+    cd1, cd2 = st.columns([2, 1.5], vertical_alignment="bottom")
+    with cd1:
+        tip_discount = st.selectbox(
+            "Tip discount",
+            options=["Fără discount", "Discount pe reper (%)", "Discount pe total (%)", "Discount fix"],
+            key=k_td,
+            on_change=sync_camp,
+            args=("oferta_draft", k_td, "tip_discount"),
+        )
+    with cd2:
+        if tip_discount == "Discount pe total (%)":
+            valoare_discount_total = st.number_input(
+                "Discount total (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                format="%.2f",
+                key=k_vd,
+                on_change=sync_camp,
+                args=("oferta_draft", k_vd, "valoare_discount_total"),
+            )
+        elif tip_discount == "Discount fix":
+            valoare_discount_total = st.number_input(
+                f"Discount fix ({moneda_oferta})",
+                min_value=0.0,
+                step=10.0,
+                format="%.2f",
+                key=k_vd,
+                on_change=sync_camp,
+                args=("oferta_draft", k_vd, "valoare_discount_total"),
+            )
+        elif tip_discount == "Discount pe reper (%)":
+            valoare_discount_total = 0.0
+            st.caption("Completează **Discount (%)** direct pe reperul dorit în tabelul de poziții.")
+        else:
+            valoare_discount_total = 0.0
+            st.caption("Niciun discount aplicat.")
+    
 
     st.markdown("##### 💬 Mențiuni / Clauze Subsol Ofertă")
 
@@ -967,6 +1019,17 @@ def render_oferte():
                 "status": "Emisă",
                 "este_revizuita": False,
                 "actiune_registru": "Emisă",
+                "tip_discount": tip_discount,
+                "valoare_discount": calc_res["discount_valoare"],
+                "subtotal_brut": calc_res["subtotal_brut"],
+                "tip_discount": tip_discount,
+                "valoare_discount_input": float(valoare_discount_total or 0.0),
+                "valoare_discount": calc_res["discount_valoare"],
+                "subtotal_brut": calc_res["subtotal_brut"],
+                "subtotal": calc_res["subtotal"],
+                "tva": calc_res["tva"],
+                "total_general": calc_res["total_general"],
+                "articole": calc_res["linii"],
             }
 
             id_generat = OferteRepository.insert(date_oferta_db)
@@ -1418,3 +1481,70 @@ def render_oferte():
                     )
     else:
         st.info("Nu există oferte care să corespundă filtrelor selectate.")
+        
+        
+def _calculeaza_totaluri_cu_discount(
+    df_valid: pd.DataFrame,
+    moneda_oferta: str,
+    curs_valutar: float,
+    cota_tva_procent: float,
+    tip_discount: str,
+    valoare_discount_total: float,
+) -> dict:
+    subtotal_brut = 0.0
+    discount_reper_total = 0.0
+    linii = []
+
+    for _, r in df_valid.iterrows():
+        cant_item = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 1.0)
+        pret_sursa = float(pd.to_numeric(r.get("Pret Unitar"), errors="coerce") or 0.0)
+        moneda_sursa = str(r.get("Moneda") or "RON").strip().upper()
+        disc_rep_pct = float(pd.to_numeric(r.get("Discount (%)"), errors="coerce") or 0.0)
+        disc_rep_pct = max(0.0, min(100.0, disc_rep_pct))
+
+        pret_unitar_conv = converteste_in_moneda_oferta(pret_sursa, moneda_sursa, moneda_oferta, curs_valutar)
+        val_bruta_linie = round(cant_item * pret_unitar_conv, 2)
+        disc_linie = round(val_bruta_linie * (disc_rep_pct / 100.0), 2) if tip_discount == "Discount pe reper (%)" else 0.0
+        val_neta_linie = round(max(0.0, val_bruta_linie - disc_linie), 2)
+
+        subtotal_brut += val_bruta_linie
+        discount_reper_total += disc_linie
+
+        col_pret_final = f"Pret Unitar ({moneda_oferta})"
+        linii.append({
+            "Descriere": str(r.get("Descriere", "")).strip(),
+            "UM": str(r.get("UM") or "buc"),
+            "Cantitate": cant_item,
+            "Pret Sursa": round(pret_sursa, 2),
+            "Moneda Sursa": moneda_sursa,
+            "Discount (%)": disc_rep_pct if tip_discount == "Discount pe reper (%)" else 0.0,
+            col_pret_final: pret_unitar_conv,
+            "Valoare Linie": val_neta_linie,
+            "Termen livrare": str(r.get("Termen livrare", "") or ""),
+        })
+
+    subtotal_brut = round(subtotal_brut, 2)
+    discount_reper_total = round(discount_reper_total, 2)
+
+    if tip_discount == "Discount pe reper (%)":
+        discount_valoare = discount_reper_total
+    elif tip_discount == "Discount pe total (%)":
+        pct_tot = max(0.0, min(100.0, float(valoare_discount_total or 0.0)))
+        discount_valoare = round(subtotal_brut * (pct_tot / 100.0), 2)
+    elif tip_discount == "Discount fix":
+        discount_valoare = round(max(0.0, min(subtotal_brut, float(valoare_discount_total or 0.0))), 2)
+    else:
+        discount_valoare = 0.0
+
+    subtotal_net = round(max(0.0, subtotal_brut - discount_valoare), 2)
+    tva = round(subtotal_net * (cota_tva_procent / 100.0), 2)
+    total_general = round(subtotal_net + tva, 2)
+
+    return {
+        "linii": linii,
+        "subtotal_brut": subtotal_brut,
+        "discount_valoare": discount_valoare,
+        "subtotal": subtotal_net,
+        "tva": tva,
+        "total_general": total_general,
+    }
