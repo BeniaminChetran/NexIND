@@ -429,7 +429,6 @@ def _aplica_sugestie_piesa_teren(optiune_key: str, den_key: str, cod_key: str, m
         if cod_p:
             st.session_state[cod_key] = cod_p
 
-
 def render_notare_rapida_teren():
     firme_nume, nume_to_id = _obtine_harta_firme()
     masini_all = MasiniRepository.get_all() or []
@@ -454,111 +453,53 @@ def render_notare_rapida_teren():
         ]
         opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
 
-        st.session_state.setdefault("dash_teren_den_piesa", "")
-        st.session_state.setdefault("dash_teren_cod_prod", "")
-
-        c_d1, c_d2 = st.columns([2.2, 2.2])
-        with c_d1:
-            piesa_teren = st.text_input(
-                "Denumire piesă * (filtrează din DB pe măsură ce scrii)",
-                key="dash_teren_den_piesa",
-                placeholder="tastează denumirea sau codul piesei...",
-            )
-        with c_d2:
-            masina_teren = st.selectbox(
-                "Mașină (opțional)",
-                options=opt_masini_teren,
-                key="dash_teren_masina_sel",
-            )
-
-        # Filtrare sugestii din DB după textul introdus
-        txt_filtru = " ".join(str(piesa_teren or "").strip().lower().split())
-        sugestii_potrivite = []
-        if txt_filtru:
-            cuvinte = [c for c in txt_filtru.split() if c]
-            for p in piese_catalog:
-                den_p = str(p.get("denumire") or "").strip()
-                cod_p = str(p.get("cod_producator") or "").strip()
-                cod_c = str(p.get("cod_comercial") or "").strip()
-                if not den_p:
-                    continue
-                haystack = f"{den_p} {cod_p} {cod_c}".lower()
-                if all(cuv in haystack for cuv in cuvinte):
-                    sugestii_potrivite.append(p)
-
-        if txt_filtru:
-            if sugestii_potrivite:
-                mapa_sugestii: dict[str, dict] = {}
-                optiuni_sug: list[str] = []
-                for p in sugestii_potrivite[:25]:
-                    den_p = str(p.get("denumire") or "").strip()
-                    cod_p = str(p.get("cod_producator") or "").strip()
-                    mas_p = str(p.get("masina_montaj") or "General").strip()
-                    eticheta = f"{den_p}" + (f" [{cod_p}]" if cod_p else "") + f" — {mas_p}"
-                    if eticheta not in mapa_sugestii:
-                        mapa_sugestii[eticheta] = p
-                        optiuni_sug.append(eticheta)
-
-                st.caption(f"🔎 Găsite în DB: **{len(sugestii_potrivite)}** repere (afișate max. 25)")
-                st.selectbox(
-                    "Potriviri din baza de date (selectează pentru a prelua denumirea și codul):",
-                    options=["-- Alege o potrivire din DB --"] + optiuni_sug,
-                    key="dash_teren_sugestie_sel",
-                    on_change=_aplica_sugestie_piesa_teren,
-                    args=(
-                        "dash_teren_sugestie_sel",
-                        "dash_teren_den_piesa",
-                        "dash_teren_cod_prod",
-                        mapa_sugestii,
-                    ),
-                )
-            else:
-                st.caption("ℹ️ Nicio piesă găsită în DB pentru acest text — se va crea o piesă nouă în catalog la salvare.")
-
-        with st.form("form_notare_rapida_teren", clear_on_submit=False):
-            c_t1, c_t2, c_t3 = st.columns([1.8, 1.2, 1.4])
+        with st.form("form_notare_rapida_teren", clear_on_submit=True):
+            c_t1, c_t2 = st.columns([2.4, 1.8])
             with c_t1:
-                cod_teren = st.text_input(
-                    "Cod producător (opțional)",
-                    key="dash_teren_cod_prod",
-                    placeholder="ex: cod reper notat la client",
+                piesa_teren = st.text_input(
+                    "Denumire piesă *",
+                    placeholder="ex: Electrovana 24V / Rulment 6205",
                 )
             with c_t2:
+                masina_teren = st.selectbox(
+                    "Mașină (opțional)",
+                    options=opt_masini_teren,
+                )
+
+            c_t3, c_t4, c_t5 = st.columns([1.6, 1.1, 1.4])
+            with c_t3:
+                cod_teren = st.text_input(
+                    "Cod producător (opțional)",
+                    placeholder="ex: cod reper notat la client",
+                )
+            with c_t4:
                 cant_teren = st.number_input(
                     "Cantitate *",
                     min_value=0.01,
                     value=1.0,
                     step=1.0,
                     format="%.2f",
-                    key="dash_teren_cant_num",
                 )
-            with c_t3:
+            with c_t5:
                 prioritate_teren = st.selectbox(
                     "Stare piesă *",
                     options=OPTIUNI_PRIORITATE_PIESA,
                     index=0,
-                    key="dash_teren_prioritate_sel",
                 )
 
             obs_teren = st.text_area(
                 "Observații / detalii notate la client (opțional)",
                 placeholder="ex: cerută la vizită, verificare ofertă, detalii montaj...",
                 height=90,
-                key="dash_teren_obs_txt",
-            )
-            st.caption(
-                "**Stare piesă** (`Normal` / `Urgent`) indică urgența cererii; "
-                "**Status Comandă** (`De căutat` dacă nu e în catalog / `De ofertat` dacă e deja în catalog) se setează automat."
             )
             salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
 
         if salveaza_teren:
             try:
-                den_trimisa = str(st.session_state.get("dash_teren_den_piesa") or "").strip()
                 rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
                     firma_client=firma_teren,
                     firma_id=fid_teren,
-                    denumire_piesa=den_trimisa,
+                    denumire_piesa=piesa_teren,
                     cantitate=cant_teren,
                     masina=masina_teren,
                     cod_producator=cod_teren,
@@ -566,26 +507,23 @@ def render_notare_rapida_teren():
                     observatii=obs_teren,
                 )
                 _goleste_toate_cache_dashboard()
-                st.session_state["dash_teren_den_piesa"] = ""
-                st.session_state["dash_teren_cod_prod"] = ""
-                st.session_state["dash_teren_obs_txt"] = ""
-                st.session_state["dash_teren_cant_num"] = 1.0
-                st.session_state["dash_teren_prioritate_sel"] = "Normal"
-                if "dash_teren_sugestie_sel" in st.session_state:
-                    st.session_state["dash_teren_sugestie_sel"] = "-- Alege o potrivire din DB --"
-
                 mesaj_catalog = (
                     "era deja în catalog → Status Comandă: **De ofertat**"
                     if rez.get("existenta_in_catalog")
                     else "nu era în catalog → adăugată în catalog și Status Comandă: **De căutat**"
                 )
                 st.success(
-                    f"✅ Notat **{den_trimisa}** (cant. **{float(cant_teren):g}**, stare piesă: **{prioritate_teren}**, "
+                    f"✅ Notat **{piesa_teren.strip()}** (cant. **{float(cant_teren):g}**, stare piesă: **{prioritate_teren}**, "
                     f"client **{firma_teren}**): {mesaj_catalog}."
                 )
                 st.rerun()
             except ValueError as ve:
                 st.error(f"⚠️ {ve}")
+
+        # Indicii scurte din DB doar dacă vrei să vezi ce există deja (fără câmp extra de selecție)
+        txt_cautat = " ".join(str(st.session_state.get("form_notare_rapida_teren", "") or "").strip().lower().split())
+        if not txt_cautat and piese_catalog:
+            st.caption("💡 În DB există deja repere în catalogul `piese`[cite: 5, 6] — dacă piesa există, intră automat la **De ofertat**; dacă nu există, se adaugă o singură dată în catalog și intră la **De căutat**.")
 
 def render_notite_vizita_dashboard():
     firme_nume, nume_to_id = _obtine_harta_firme()
