@@ -10,6 +10,15 @@ from repositories.piese_repository import PieseRepository, _normalizeaza_stare_c
 
 logger = logging.getLogger("NexIndCMMS.NecesarPieseRepository")
 
+OPTIUNI_PRIORITATE_PIESA = ["Normal", "Urgent"]
+
+
+def normalizeaza_prioritate_piesa(val: Any) -> str:
+    s = str(val or "").strip().lower()
+    if s in ("urgent", "urgentă", "urgenta", "ridicată", "ridicata", "high"):
+        return "Urgent"
+    return "Normal"
+
 
 class NecesarPieseRepository(BaseRepository):
     _tabela_asigurata = False
@@ -28,16 +37,21 @@ class NecesarPieseRepository(BaseRepository):
                 firma_id INTEGER NULL,
                 firma_client VARCHAR(255) NOT NULL,
                 masina VARCHAR(255) DEFAULT '',
+                prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal',
                 observatii TEXT DEFAULT '',
                 status_comanda VARCHAR(50) NOT NULL DEFAULT 'De căutat',
                 data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """
         cls().execute(ddl)
-        try:
-            cls().execute("ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS firma_id INTEGER NULL")
-        except Exception:
-            pass
+        for alter_sql in (
+            "ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS firma_id INTEGER NULL",
+            "ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal'",
+        ):
+            try:
+                cls().execute(alter_sql)
+            except Exception:
+                pass
         cls._tabela_asigurata = True
 
     @classmethod
@@ -65,6 +79,7 @@ class NecesarPieseRepository(BaseRepository):
         firma_id: Optional[int] = None,
         masina: str = "",
         cod_producator: str = "",
+        prioritate_piesa: str = "Normal",
         observatii: str = "",
     ) -> Dict[str, Any]:
         cls._asigura_tabela()
@@ -85,6 +100,7 @@ class NecesarPieseRepository(BaseRepository):
         masina_curata = str(masina or "").strip()
         if masina_curata.startswith("--"):
             masina_curata = ""
+        prio_norm = normalizeaza_prioritate_piesa(prioritate_piesa)
         obs_curata = str(observatii or "").strip()
         fid_val = int(firma_id) if firma_id is not None else None
 
@@ -93,11 +109,13 @@ class NecesarPieseRepository(BaseRepository):
 
         if existenta_in_catalog:
             piesa_id = piesa_catalog.get("id")
+            if not cod_curat:
+                cod_curat = str(piesa_catalog.get("cod_producator") or "").strip()
             status_auto = "De ofertat"
         else:
             PieseRepository._asigura_coloane_piese()
             masina_catalog = masina_curata or "General"
-            obs_catalog = f"Notat pe teren | Client: {firma_curata}"
+            obs_catalog = f"Notat pe teren | Client: {firma_curata} | Stare piesă: {prio_norm}"
             if obs_curata:
                 obs_catalog = f"{obs_catalog} | {obs_curata}"
 
@@ -133,9 +151,9 @@ class NecesarPieseRepository(BaseRepository):
             """
             INSERT INTO necesar_piese (
                 piesa_id, denumire_piesa, cod_producator, cantitate,
-                firma_id, firma_client, masina, observatii, status_comanda
+                firma_id, firma_client, masina, prioritate_piesa, observatii, status_comanda
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -146,6 +164,7 @@ class NecesarPieseRepository(BaseRepository):
                 fid_val,
                 firma_curata,
                 masina_curata,
+                prio_norm,
                 obs_curata,
                 status_auto,
             ),
@@ -155,6 +174,7 @@ class NecesarPieseRepository(BaseRepository):
         return {
             "record": dict(row_necesar) if row_necesar else {},
             "existenta_in_catalog": existenta_in_catalog,
+            "prioritate_piesa": prio_norm,
             "status_comanda": status_auto,
             "piesa_id": piesa_id,
         }
@@ -175,19 +195,24 @@ class NecesarPieseRepository(BaseRepository):
                 np.firma_id,
                 COALESCE(np.firma_client, '') AS firma_client,
                 COALESCE(np.masina, '') AS masina,
+                COALESCE(NULLIF(TRIM(np.prioritate_piesa), ''), 'Normal') AS prioritate_piesa,
                 COALESCE(np.observatii, '') AS observatii,
                 COALESCE(NULLIF(TRIM(np.status_comanda), ''), 'De căutat') AS status_comanda,
                 np.data_creare,
                 p.link_furnizor AS furnizor_piesa
             FROM necesar_piese np
             LEFT JOIN piese p ON p.id = np.piesa_id
-            ORDER BY np.data_creare DESC, np.id DESC
+            ORDER BY
+                CASE WHEN LOWER(TRIM(COALESCE(np.prioritate_piesa, 'Normal'))) = 'urgent' THEN 0 ELSE 1 END,
+                np.data_creare DESC,
+                np.id DESC
             """
         ) or []
 
         rez: List[Dict[str, Any]] = []
         for r in rows:
             d = dict(r)
+            d["prioritate_piesa"] = normalizeaza_prioritate_piesa(d.get("prioritate_piesa"))
             d["status_comanda"] = _normalizeaza_stare_comanda(d.get("status_comanda"))
             rez.append(d)
         return rez
@@ -199,5 +224,15 @@ class NecesarPieseRepository(BaseRepository):
         cls().execute(
             "UPDATE necesar_piese SET status_comanda = %s WHERE id = %s",
             (stare_norm, int(necesar_id)),
+        )
+        cls.get_all.clear()
+
+    @classmethod
+    def update_prioritate_piesa(cls, necesar_id: int, prioritate_noua: str) -> None:
+        cls._asigura_tabela()
+        prio_norm = normalizeaza_prioritate_piesa(prioritate_noua)
+        cls().execute(
+            "UPDATE necesar_piese SET prioritate_piesa = %s WHERE id = %s",
+            (prio_norm, int(necesar_id)),
         )
         cls.get_all.clear()
