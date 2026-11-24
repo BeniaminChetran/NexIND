@@ -6,6 +6,7 @@ import datetime
 import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
+from config import db_cursor
 from repositories.base_repository import BaseRepository
 
 logger = logging.getLogger("NexIndCMMS.TaskuriVizitaRepository")
@@ -58,38 +59,36 @@ def formateaza_termen_complet(data_val: Any, ora_val: Any = "") -> str:
     return f"{d_str} {o_str}".strip() if o_str else d_str
 
 
-class TaskuriVizitaRepository(BaseRepository):
-    _tabela_asigurata = False
+@st.cache_resource
+def _asigura_tabela_taskuri_once() -> bool:
+    ddl_si_indexuri = """
+        CREATE TABLE IF NOT EXISTS taskuri_vizita (
+            id SERIAL PRIMARY KEY,
+            data_vizita DATE NOT NULL DEFAULT CURRENT_DATE,
+            de_facut_pana_la DATE NULL,
+            ora_limita VARCHAR(5) NULL,
+            firma_id INTEGER NULL,
+            firma VARCHAR(255) NOT NULL,
+            masina VARCHAR(255) DEFAULT '',
+            note_vizita TEXT NOT NULL,
+            stare VARCHAR(60) NOT NULL DEFAULT 'Urgent',
+            data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS de_facut_pana_la DATE NULL;
+        ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS ora_limita VARCHAR(5) NULL;
+        ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS masina VARCHAR(255) DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_taskuri_vizita_stare ON taskuri_vizita (stare);
+        CREATE INDEX IF NOT EXISTS idx_taskuri_vizita_termen ON taskuri_vizita (de_facut_pana_la);
+    """
+    with db_cursor() as cur:
+        cur.execute(ddl_si_indexuri)
+    return True
 
+
+class TaskuriVizitaRepository(BaseRepository):
     @classmethod
     def _asigura_tabela(cls) -> None:
-        if cls._tabela_asigurata:
-            return
-        ddl = """
-            CREATE TABLE IF NOT EXISTS taskuri_vizita (
-                id SERIAL PRIMARY KEY,
-                data_vizita DATE NOT NULL DEFAULT CURRENT_DATE,
-                de_facut_pana_la DATE NULL,
-                ora_limita VARCHAR(5) NULL,
-                firma_id INTEGER NULL,
-                firma VARCHAR(255) NOT NULL,
-                masina VARCHAR(255) DEFAULT '',
-                note_vizita TEXT NOT NULL,
-                stare VARCHAR(60) NOT NULL DEFAULT 'Urgent',
-                data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """
-        cls().execute(ddl)
-        for alter_sql in (
-            "ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS de_facut_pana_la DATE NULL",
-            "ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS ora_limita VARCHAR(5) NULL",
-            "ALTER TABLE taskuri_vizita ADD COLUMN IF NOT EXISTS masina VARCHAR(255) DEFAULT ''",
-        ):
-            try:
-                cls().execute(alter_sql)
-            except Exception:
-                pass
-        cls._tabela_asigurata = True
+        _asigura_tabela_taskuri_once()
 
     @classmethod
     def insert(
