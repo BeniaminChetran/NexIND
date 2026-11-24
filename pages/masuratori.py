@@ -199,7 +199,6 @@ def render_masuratori():
 
         st.markdown(f"### ➕ Introducere Măsurătoare Nouă ({m_nume})")
 
-        # 1. Selectare măsurătoare deja în derulare
         op_derulare = ["➕ Măsurătoare nouă"] + [s["eticheta"] for s in sesiuni_derulare]
         sel_derulare = st.selectbox(
             "Măsurători deja în derulare (pentru această mașină)",
@@ -218,7 +217,6 @@ def render_masuratori():
                     f"({match_ses['nr_citiri']} citiri înregistrate)."
                 )
 
-        # 2. Pregătirea valorii selectate ÎNAINTE de instanțierea selectbox-ului
         if sub_din_derulare and st.session_state.get(last_derulare_key) != sel_derulare:
             st.session_state[last_derulare_key] = sel_derulare
             if sub_din_derulare in subansambluri_existente:
