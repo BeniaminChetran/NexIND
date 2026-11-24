@@ -418,7 +418,11 @@ def render_piese():
         firme_all = FirmeRepository.get_all() or []
         masini_all = MasiniRepository.get_all() or []
 
-        firme_by_nume = {str(f.get("nume_firma") or "").strip(): f for f in firme_all if str(f.get("nume_firma") or "").strip()}
+        firme_by_nume = {
+            str(f.get("nume_firma") or "").strip(): f
+            for f in firme_all
+            if str(f.get("nume_firma") or "").strip()
+        }
         firme_by_id = {f.get("id"): f for f in firme_all if f.get("id") is not None}
 
         opt_firme_p = ["-- Alege firma --", "Toate firmele"] + sorted(firme_by_nume.keys())
@@ -493,7 +497,6 @@ def render_piese():
             st.session_state["calc_nou_rezultat"] = None
         if "calc_nou_eroare" not in st.session_state:
             st.session_state["calc_nou_eroare"] = None
-
         if "calc_nou_deschis" not in st.session_state:
             st.session_state["calc_nou_deschis"] = False
 
@@ -611,7 +614,7 @@ def render_piese():
                             (Stare: <strong>{stare_cmd_noua}</strong> | Preț: <strong>{pret_calculat:.2f} {valuta_noua}</strong> | Termen: {termen_livrare_nou})
                             </div>""",
                             unsafe_allow_html=True,
-        )
+                        )
                         st.rerun()
 
         # Bloc import & comasare piese din rapoartele electronice (o singură dată per mașină)
@@ -804,10 +807,9 @@ def render_piese():
             f"(Firmă: **{sel_firma_p}** | Mașină: **{sel_m}**)."
         )
 
-        # Control de editare directă a tabelului (inclusiv rubrica Stare comandă)
         st.markdown("##### ✏️ Tabel Editabil Piese & Stare Comandă")
         st.caption(
-            "Schimbă direct în tabel coloana **Stare comandă** (`De căutat`, `De comandat`, `Comandată`, `Anulată`) "
+            "Schimbă direct în tabel coloana **Stare comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
             "pentru unul sau mai multe repere, apoi apasă **💾 Actualizează Stările în Tabel**."
         )
 
@@ -916,7 +918,7 @@ def render_piese():
                 f"🔩 {p['denumire']}{cod_antet}{param_scurt} "
                 f"({masina_eticheta} | Stare: {stare_cmd_val} | Termen: {termen_val}){pret_antet}"
             )
-            with st.expander(expander_title, expanded=(len(piese_filtrate) == 1)):
+            with st.expander(expander_title, expanded=False):
                 if acces_permis and p.get("link_furnizor"):
                     st.markdown(f"🔗 **Link Furnizor:** [{p['link_furnizor']}]({p['link_furnizor']})")
 

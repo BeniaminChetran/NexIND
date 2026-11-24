@@ -71,6 +71,7 @@ from pages.setari import render_setari
 from pages.documentatie_gdrive import render_documentatie_gdrive
 from pages.asistent_defecte import render_page as render_asistent_defecte
 from pages.fise_mentenanta import render_fise_mentenanta
+from pages.comenzi import render_comenzi
 
 
 def seteaza_iconita_android(cale_png: str):
@@ -207,6 +208,7 @@ MENIU_STRUCTURA = {
     "💼 3. Oferte & Comercial": {
         "💼 Oferte de preț": render_oferte,
         "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
+        "📦 Comenzi (Furnizori & Clienți)": render_comenzi,
     },
     "📦 4. Nomenclatoare & Stocuri": {
         "📦 Piese": render_piese,

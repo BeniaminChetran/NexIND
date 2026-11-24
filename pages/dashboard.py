@@ -1,28 +1,62 @@
-import streamlit as st
+
+
+# ------------------------------------------------
+# --- pages/dashboard.py ------------------------
+# ------------------------------------------------
+
+import datetime
+import json
 import pandas as pd
 import plotly.express as px
-import json
-import datetime
+import streamlit as st
 
-
+from config import db_cursor
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.necesar_piese_repository import NecesarPieseRepository
-from repositories.taskuri_vizita_repository import (
-    OPTIUNI_STARE_TASK_VIZITA,
-    TaskuriVizitaRepository,
-    normalizeaza_stare_task_vizita,
-)
 from repositories.piese_repository import (
     OPTIUNI_STARE_COMANDA,
     PieseRepository,
     _normalizeaza_stare_comanda,
 )
 from repositories.reparatii_repository import ReparatiiRepository
-from repositories.firme_repository import FirmeRepository
-from repositories.masini_repository import MasiniRepository
-from repositories.necesar_piese_repository import NecesarPieseRepository
-from config import db_cursor
+from repositories.taskuri_vizita_repository import (
+    OPTIUNI_STARE_TASK_VIZITA,
+    TaskuriVizitaRepository,
+    normalizeaza_stare_task_vizita,
+)
+
+
+def _goleste_toate_cache_dashboard():
+    incarca_date_dashboard.clear()
+    incarca_memento_intretinere.clear()
+    incarca_defecte_recurente.clear()
+    incarca_utilaje_dupa_stare.clear()
+    incarca_clienti_inactivi.clear()
+    try:
+        PieseRepository.get_all.clear()
+    except Exception:
+        pass
+    try:
+        NecesarPieseRepository.get_all.clear()
+    except Exception:
+        pass
+    try:
+        TaskuriVizitaRepository.get_all.clear()
+    except Exception:
+        pass
+
+
+def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
+    """Returnează (lista ordonată de nume_firma, dicționar {nume_firma: id})."""
+    firme_all = FirmeRepository.get_all() or []
+    nume_to_id: dict[str, int] = {}
+    for f in firme_all:
+        nume = str(f.get("nume_firma") or "").strip()
+        fid = f.get("id")
+        if nume and fid is not None:
+            nume_to_id[nume] = int(fid)
+    return sorted(nume_to_id.keys()), nume_to_id
 
 
 @st.cache_data(ttl=120)
@@ -41,7 +75,6 @@ def incarca_date_dashboard():
         """)
         kpi_res = c.fetchone()
 
-        # Reparații la mașini (din tabela reparatii): reușite vs total
         c.execute("""
             SELECT
                 COUNT(*) AS total_masini_rep,
@@ -53,7 +86,6 @@ def incarca_date_dashboard():
         """)
         masini_rep_res = c.fetchone() or {}
 
-        # Reparații electronice: reușite vs total
         try:
             c.execute("""
                 SELECT
@@ -112,12 +144,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
             c.execute("""
                 SELECT
                     m.id,
-                    COALESCE(
-                        NULLIF(TRIM(to_jsonb(f)->>'nume_firma'), ''),
-                        NULLIF(TRIM(to_jsonb(f)->>'nume'), ''),
-                        NULLIF(TRIM(to_jsonb(f)->>'denumire'), ''),
-                        'Fără firmă'
-                    ) AS firma,
+                    COALESCE(NULLIF(TRIM(f.nume_firma), ''), 'Fără firmă') AS firma,
                     m.denumire AS utilaj,
                     CAST(m.data_intretinere AS DATE) AS data_scadenta,
                     (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
@@ -137,14 +164,15 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                     'Fără firmă' AS firma,
                     denumire AS utilaj,
                     CAST(data_intretinere AS DATE) AS data_scadenta,
-                    (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
-                FROM masini m
-                WHERE COALESCE(m.fara_intretinere, FALSE) = FALSE
-                  AND m.data_intretinere IS NOT NULL
-                  AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY CAST(m.data_intretinere AS DATE) ASC, m.denumire ASC
+                    (CAST(data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
+                FROM masini
+                WHERE COALESCE(fara_intretinere, FALSE) = FALSE
+                  AND data_intretinere IS NOT NULL
+                  AND CAST(data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
+                ORDER BY CAST(data_intretinere AS DATE) ASC, denumire ASC
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
+
 
 @st.cache_data(ttl=120)
 def incarca_defecte_recurente(zile_inainte: int = 180):
@@ -168,6 +196,7 @@ def incarca_defecte_recurente(zile_inainte: int = 180):
             (zile,),
         )
         return [dict(r) for r in (c.fetchall() or [])]
+
 
 def render_memento_intretinere_dashboard():
     st.markdown("### 🔔 Memento Scadențe Întreținere")
@@ -207,13 +236,9 @@ def render_memento_intretinere_dashboard():
         df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
         st.dataframe(df_m, hide_index=True, use_container_width=True)
 
+
 @st.cache_data(ttl=120)
 def incarca_utilaje_dupa_stare(mod: str):
-    """
-    mod:
-      - 'oprite' -> utilaje oprite
-      - 'supraveghere' -> utilaje în stare 'Funcțională sub supraveghere'
-    """
     with db_cursor() as c:
         if mod == "supraveghere":
             c.execute("""
@@ -267,21 +292,20 @@ def actualizeaza_stare_reparatie(reparatie_id: int, stare_noua: str):
 
 @st.cache_data(ttl=120)
 def incarca_clienti_inactivi(zile_inactivitate: int = 90):
-    """Returnează doar clienții inactivi (fără activitate în ultimele N zile)."""
     zile = int(zile_inactivitate)
 
     try:
         with db_cursor() as c:
             c.execute("""
                 SELECT
-                    f.nume AS "Client / Firmă",
+                    f.nume_firma AS "Client / Firmă",
                     TO_CHAR(MAX(r.data_creare), 'YYYY-MM-DD') AS "Ultima intervenție"
                 FROM firme f
-                LEFT JOIN reparatii r ON LOWER(TRIM(r.firma)) = LOWER(TRIM(f.nume))
-                GROUP BY f.id, f.nume
+                LEFT JOIN reparatii r ON LOWER(TRIM(r.firma)) = LOWER(TRIM(f.nume_firma))
+                GROUP BY f.id, f.nume_firma
                 HAVING MAX(r.data_creare) IS NULL
                     OR MAX(r.data_creare) < (CURRENT_DATE - make_interval(days => %s))::timestamp
-                ORDER BY f.nume ASC
+                ORDER BY f.nume_firma ASC
             """, (zile,))
             rows = c.fetchall() or []
             if rows:
@@ -335,204 +359,6 @@ def _randare_lista_utilaje_stare(items: list[dict], este_supraveghere: bool):
 def mod_key(este_supraveghere: bool) -> str:
     return "supr" if este_supraveghere else "oprit"
 
-
-def render_dashboard():
-    col_title, col_refresh = st.columns([5, 1])
-    with col_title:
-        st.title("📈 Dashboard CMMS")
-    with col_refresh:
-        if st.button("🔄 Actualizează", use_container_width=True):
-            incarca_date_dashboard.clear()
-            incarca_utilaje_dupa_stare.clear()
-            incarca_clienti_inactivi.clear()
-            st.rerun()
-
-    kpi_res, masini_rep_res, el_rep_res, top_def, top_cli, top_ut, def_rec, mas_scad = incarca_date_dashboard()
-
-    interventii_luna = kpi_res["interventii"] if kpi_res else 0
-    ore_lucrate = round(kpi_res["minute"] / 60, 1) if kpi_res else 0
-    clienti_activi = kpi_res["clienti"] if kpi_res else 0
-    utilaje_active = kpi_res["utilaje"] if kpi_res else 0
-    utilaje_oprite = kpi_res["utilaje_oprite"] if kpi_res else 0
-    utilaje_supr = kpi_res["utilaje_supraveghere"] if kpi_res else 0
-
-    reusite_masini = int(masini_rep_res.get("reusite_masini_rep") or 0)
-    total_masini = int(masini_rep_res.get("total_masini_rep") or 0)
-    pct_masini = f"{round((reusite_masini / total_masini) * 100)}%" if total_masini > 0 else "0%"
-
-    reusite_el = int(el_rep_res.get("reusite_el_rep") or 0)
-    total_el = int(el_rep_res.get("total_el_rep") or 0)
-    pct_el = f"{round((reusite_el / total_el) * 100)}%" if total_el > 0 else "0%"
-
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("🔧 Intervenții luna curentă", interventii_luna)
-    c2.metric("⏱ Ore lucrate", ore_lucrate)
-    c3.metric("🏢 Clienți activi", clienti_activi)
-    c4.metric("⚙️ Utilaje active", utilaje_active)
-    c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
-    c6.metric("👀 Sub supraveghere", utilaje_supr)
-
-    # -------Afisare piese de comandat-----------
-    st.markdown("---")
-    with st.expander("🛒 Piese De Comandat / Necesare & Furnizori", expanded=True):
-        render_piese_de_comandat_dashboard()
-    # -------end Afisare piese de comandat-----------
-
-    m_r1, m_r2 = st.columns(2)
-    m_r1.metric("⚙️ Reparații Mașini Reușite", f"{reusite_masini} / {total_masini}", delta=pct_masini)
-    m_r2.metric("⚡ Reparații Electronice Reușite", f"{reusite_el} / {total_el}", delta=pct_el)
-
-    st.session_state.setdefault("dash_sectiune_activa", None)
-
-    b1, b2, b3, b4 = st.columns([1.5, 1.7, 1.5, 1.0])
-    with b1:
-        if st.button(
-            "🛑 Utilaje oprite",
-            use_container_width=True,
-            type="primary" if st.session_state["dash_sectiune_activa"] == "utilaje_oprite" else "secondary",
-            key="btn_dash_utilaje_oprite"
-        ):
-            st.session_state["dash_sectiune_activa"] = (
-                None if st.session_state["dash_sectiune_activa"] == "utilaje_oprite" else "utilaje_oprite"
-            )
-    with b2:
-        if st.button(
-            "👀 Sub supraveghere",
-            use_container_width=True,
-            type="primary" if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "secondary",
-            key="btn_dash_sub_supraveghere"
-        ):
-            st.session_state["dash_sectiune_activa"] = (
-                None if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "sub_supraveghere"
-            )
-    with b3:
-        if st.button(
-            "💤 Clienți inactivi",
-            use_container_width=True,
-            type="primary" if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "secondary",
-            key="btn_dash_clienti_inactivi"
-        ):
-            st.session_state["dash_sectiune_activa"] = (
-                None if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "clienti_inactivi"
-            )
-    with b4:
-        if st.session_state["dash_sectiune_activa"] is not None and st.button("✖ Ascunde", use_container_width=True, key="btn_dash_ascunde"):
-            st.session_state["dash_sectiune_activa"] = None
-
-    sectiune_activa = st.session_state.get("dash_sectiune_activa")
-
-    if sectiune_activa == "utilaje_oprite":
-        st.markdown("---")
-        st.markdown("#### 🛑 Utilaje Oprite — Motiv & Firmă")
-        date_oprite = incarca_utilaje_dupa_stare("oprite")
-        if date_oprite:
-            _randare_lista_utilaje_stare(date_oprite, este_supraveghere=False)
-        else:
-            st.info("Nu există utilaje oprite în acest moment.")
-        return
-
-    if sectiune_activa == "sub_supraveghere":
-        st.markdown("---")
-        st.markdown("#### 👀 Funcțională sub supraveghere")
-        date_supr = incarca_utilaje_dupa_stare("supraveghere")
-        if date_supr:
-            _randare_lista_utilaje_stare(date_supr, este_supraveghere=True)
-        else:
-            st.info("Nu există utilaje în starea «Funcțională sub supraveghere».")
-        return
-
-    if sectiune_activa == "clienti_inactivi":
-        st.markdown("---")
-        st.markdown("#### 💤 Clienți Inactivi")
-        zile_prag = st.selectbox(
-            "Fără intervenții de cel puțin:",
-            options=[30, 60, 90, 180],
-            index=2,
-            format_func=lambda x: f"{x} zile",
-            key="sel_zile_clienti_inactivi"
-        )
-        date_inactivi = incarca_clienti_inactivi(zile_prag)
-        if date_inactivi:
-            st.dataframe(pd.DataFrame(date_inactivi), use_container_width=True, hide_index=True)
-        else:
-            st.info(f"Nu există clienți inactivi în ultimele {zile_prag} de zile.")
-        return
-
-
-
-    st.markdown("---")
-
-    # 1. ÎNTREȚINERI SCADENTE
-    st.subheader("📅 Întrețineri Scadente")
-    render_memento_intretinere_dashboard()
-
-    st.markdown("---")
-
-    # 2. DEFECTE RECURENTE
-    st.subheader("⚠️ Defecte Recurente")
-    f_col1, f_col2, f_col3 = st.columns(3)
-    with f_col1:
-        zile_defecte = st.selectbox(
-            "Perioadă analizată:",
-            options=[30, 60, 90, 180, 365, 730,1095],
-            index=3,
-            format_func=lambda x: f"Ultimele {x} zile",
-            key="dash_defecte_recurente_zile",
-        )
-
-    def_rec_toate = incarca_defecte_recurente(zile_defecte)
-    firme_disp = ["Toate firmele"] + sorted({d["firma"] for d in def_rec_toate if d.get("firma")})
-    with f_col2:
-        firma_sel = st.selectbox("Firmă:", options=firme_disp, key="dash_defecte_recurente_firma")
-
-    masini_disp = ["Toate mașinile"] + sorted({
-        d["masina"] for d in def_rec_toate
-        if d.get("masina") and (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
-    })
-    with f_col3:
-        masina_sel = st.selectbox("Mașină:", options=masini_disp, key="dash_defecte_recurente_masina")
-
-    def_rec_filtrate = [
-        d for d in def_rec_toate
-        if (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
-        and (masina_sel == "Toate mașinile" or d.get("masina") == masina_sel)
-    ]
-
-    if def_rec_filtrate:
-        for d in def_rec_filtrate:
-            st.warning(
-                f"⚠️ **{d['firma']} — {d['masina']}**\n"
-                f"Defect: {d['defect']}\n"
-                f"Număr apariții: {d['repetitii']}"
-            )
-    else:
-        st.success(f"Nu există defecte recurente identificate pentru filtrele selectate (ultimele {zile_defecte} zile).")
-        
-    with col_refresh:
-        if st.button("🔄 Actualizează", use_container_width=True, key="btn_dash_refresh_top"):
-            incarca_date_dashboard.clear()
-            incarca_memento_intretinere.clear()
-            incarca_defecte_recurente.clear()
-            incarca_utilaje_dupa_stare.clear()
-            incarca_clienti_inactivi.clear()
-            st.rerun()
-
-    # 3. GRAFICELE (Top 10 Defecte, Top Clienți, Top Utilaje)
-    if top_def:
-        fig_defecte = px.bar(pd.DataFrame(top_def), x="aparitii", y="defect", orientation="h", title="Top 10 Defecte")
-        st.plotly_chart(fig_defecte, use_container_width=True, key="grafic_top_defecte_dashboard")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("🏢 Top Clienți")
-        if top_cli:
-            fig_clienti = px.bar(pd.DataFrame(top_cli), x="interventii", y="firma", orientation="h", title="Top Clienți după număr intervenții")
-            st.plotly_chart(fig_clienti, use_container_width=True, key="grafic_top_clienti_dashboard")
-    with col2:
-        st.subheader("⚙️ Top Utilaje")
-        if top_ut:
-            fig_utilaje = px.bar(pd.DataFrame(top_ut), x="masina", y="interventii", title="Top Utilaje după număr intervenții")
-            st.plotly_chart(fig_utilaje, use_container_width=True, key="grafic_top_utilaje_dashboard")
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:
     for k in ("furnizor", "nume_furnizor", "furnizor_principal", "supplier", "link_furnizor"):
@@ -590,100 +416,253 @@ def _actualizeaza_stare_in_raport_json(tabela: str, record_id: int, den_piesa: s
                 c.connection.commit()
     return modificat
 
-def render_piese_de_comandat_dashboard():
-    st.markdown("### 🛒 Piese De Comandat / Necesare & Stare Comandă")
 
-    # --- NOTARE RAPIDĂ PIESE PE TEREN (TABEL SEPARAT `necesar_piese`) ---
-    firme_all = FirmeRepository.get_all() or []
-    masini_all = MasiniRepository.get_all() or []
-
-    firme_nume = sorted({
-        str(f.get("nume_firma") or f.get("nume") or f.get("denumire") or "").strip()
-        for f in firme_all
-        if str(f.get("nume_firma") or f.get("nume") or f.get("denumire") or "").strip()
-    })
-
-    # --- NOTARE RAPIDĂ PIESE PE TEREN (TABEL SEPARAT `necesar_piese`) ---
+def render_notare_rapida_teren():
     firme_nume, nume_to_id = _obtine_harta_firme()
     masini_all = MasiniRepository.get_all() or []
 
     with st.expander("📝 Notare Rapidă Piese pe Teren (Client obligatoriu • Mașină opțională)", expanded=False):
         if not firme_nume:
             st.warning("⚠️ Nu există firme înregistrate în baza de date.")
-        else:
-            firma_teren = st.selectbox(
-                "Client / Firmă *",
-                options=firme_nume,
-                key="dash_teren_firma_sel",
+            return
+
+        firma_teren = st.selectbox(
+            "Client / Firmă *",
+            options=firme_nume,
+            key="dash_teren_firma_sel",
+        )
+        fid_teren = nume_to_id.get(firma_teren)
+        masini_firma = [
+            str(m.get("denumire") or "").strip()
+            for m in masini_all
+            if str(m.get("denumire") or "").strip()
+            and (fid_teren is None or m.get("firma_id") == fid_teren)
+        ]
+        opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
+
+        with st.form("form_notare_rapida_teren", clear_on_submit=True):
+            c_t1, c_t2 = st.columns([2.2, 2.2])
+            with c_t1:
+                piesa_teren = st.text_input(
+                    "Denumire piesă *",
+                    placeholder="ex: Electrovana 24V / Rulment 6205",
+                )
+                cod_teren = st.text_input(
+                    "Cod producător (opțional)",
+                    placeholder="ex: cod reper notat la client",
+                )
+            with c_t2:
+                masina_teren = st.selectbox(
+                    "Mașină (opțional)",
+                    options=opt_masini_teren,
+                )
+                cant_teren = st.number_input(
+                    "Cantitate *",
+                    min_value=0.01,
+                    value=1.0,
+                    step=1.0,
+                    format="%.2f",
+                )
+
+            obs_teren = st.text_area(
+                "Observații / detalii notate la client (opțional)",
+                placeholder="ex: cerută la vizită, verificare ofertă, detalii montaj...",
+                height=90,
             )
-            fid_teren = nume_to_id.get(firma_teren)
-            masini_firma = [
-                str(m.get("denumire") or "").strip()
-                for m in masini_all
-                if str(m.get("denumire") or "").strip()
-                and (fid_teren is None or m.get("firma_id") == fid_teren)
-            ]
-            opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
+            st.caption(
+                "Dacă piesa **nu există** în catalogul de piese → intră la **De căutat**; "
+                "dacă **există deja** în catalog → intră la **De ofertat**."
+            )
+            salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
 
-            with st.form("form_notare_rapida_teren", clear_on_submit=True):
-                c_t1, c_t2 = st.columns([2.2, 2.2])
-                with c_t1:
-                    piesa_teren = st.text_input(
-                        "Denumire piesă *",
-                        placeholder="ex: Electrovana 24V / Rulment 6205",
-                    )
-                    cod_teren = st.text_input(
-                        "Cod producător (opțional)",
-                        placeholder="ex: cod reper notat la client",
-                    )
-                with c_t2:
-                    masina_teren = st.selectbox(
-                        "Mașină (opțional)",
-                        options=opt_masini_teren,
-                    )
-                    cant_teren = st.number_input(
-                        "Cantitate *",
-                        min_value=0.01,
-                        value=1.0,
-                        step=1.0,
-                        format="%.2f",
-                    )
-
-                obs_teren = st.text_input(
-                    "Observații / detalii notate la client (opțional)",
-                    placeholder="ex: cerută la vizită, verificare ofertă...",
+        if salveaza_teren:
+            try:
+                rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
+                    firma_client=firma_teren,
+                    firma_id=fid_teren,
+                    denumire_piesa=piesa_teren,
+                    cantitate=cant_teren,
+                    masina=masina_teren,
+                    cod_producator=cod_teren,
+                    observatii=obs_teren,
                 )
-                st.caption(
-                    "Regulă automată: dacă piesa **nu există** în catalogul de piese → intră la **De căutat**; "
-                    "dacă **este deja** în catalog → intră la **De ofertat**."
+                _goleste_toate_cache_dashboard()
+                mesaj_catalog = (
+                    "era deja în catalog → trecută la **De ofertat**"
+                    if rez.get("existenta_in_catalog")
+                    else "nu era în catalog → adăugată în catalog și trecută la **De căutat**"
                 )
-                salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
+                st.success(
+                    f"✅ Notat **{piesa_teren.strip()}** (cant. **{float(cant_teren):g}**, client **{firma_teren}**): "
+                    f"{mesaj_catalog}."
+                )
+                st.rerun()
+            except ValueError as ve:
+                st.error(f"⚠️ {ve}")
 
-            if salveaza_teren:
+
+def render_notite_vizita_dashboard():
+    firme_nume, nume_to_id = _obtine_harta_firme()
+
+    with st.expander("➕ Adaugă Notiță / Task de la Client", expanded=False):
+        if not firme_nume:
+            st.warning("⚠️ Nu există firme înregistrate în baza de date.")
+        else:
+            with st.form("form_adauga_notita_vizita", clear_on_submit=True):
+                cn1, cn2 = st.columns([1.1, 1.9])
+                with cn1:
+                    data_viz = st.date_input("Data *", value=datetime.date.today())
+                    stare_viz = st.selectbox(
+                        "Stare *",
+                        options=OPTIUNI_STARE_TASK_VIZITA,
+                        index=0,
+                    )
+                with cn2:
+                    firma_viz = st.selectbox("Firmă (Client) *", options=firme_nume)
+                    note_viz = st.text_area(
+                        "Note de vizită *",
+                        placeholder="ex: De verificat senzor presiune linie 2, de proiectat suport motor...",
+                        height=90,
+                    )
+
+                salveaza_nota = st.form_submit_button("💾 Salvează Notița", type="primary")
+
+            if salveaza_nota:
                 try:
-                    rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
-                        firma_client=firma_teren,
-                        firma_id=fid_teren,
-                        denumire_piesa=piesa_teren,
-                        cantitate=cant_teren,
-                        masina=masina_teren,
-                        cod_producator=cod_teren,
-                        observatii=obs_teren,
+                    TaskuriVizitaRepository.insert(
+                        data_vizita=data_viz,
+                        firma=firma_viz,
+                        firma_id=nume_to_id.get(firma_viz),
+                        note_vizita=note_viz,
+                        stare=stare_viz,
                     )
-                    incarca_date_dashboard.clear()
-                    mesaj_catalog = (
-                        "era deja în catalog → trecută la **De ofertat**"
-                        if rez.get("existenta_in_catalog")
-                        else "nu era în catalog → adăugată în catalog și trecută la **De căutat**"
-                    )
-                    st.success(
-                        f"✅ Notat **{piesa_teren.strip()}** (cant. **{float(cant_teren):g}**, client **{firma_teren}**): "
-                        f"{mesaj_catalog}."
-                    )
+                    st.success(f"✅ Notiță salvată pentru **{firma_viz}** ({stare_viz}).")
                     st.rerun()
                 except ValueError as ve:
                     st.error(f"⚠️ {ve}")
 
+    taskuri = TaskuriVizitaRepository.get_all() or []
+    if not taskuri:
+        st.info("Nu există notițe sau task-uri de vizită înregistrate.")
+        return
+
+    df_t = pd.DataFrame(taskuri)
+
+    ft1, ft2, ft3 = st.columns([1.3, 1.2, 1.2])
+    with ft1:
+        firme_filtrare = ["Toate firmele"] + sorted(df_t["firma"].unique().tolist())
+        sel_firma_t = st.selectbox("Firmă", options=firme_filtrare, key="dash_task_filtru_firma")
+    with ft2:
+        sel_stare_t = st.selectbox(
+            "Stare",
+            options=["Active (fără Finalizat)", "Toate stările"] + OPTIUNI_STARE_TASK_VIZITA,
+            key="dash_task_filtru_stare",
+        )
+    with ft3:
+        cautare_t = st.text_input(
+            "Caută în note",
+            placeholder="cuvânt cheie...",
+            key="dash_task_cautare",
+        ).strip().lower()
+
+    df_tf = df_t.copy()
+    if sel_firma_t != "Toate firmele":
+        df_tf = df_tf[df_tf["firma"] == sel_firma_t]
+    if sel_stare_t == "Active (fără Finalizat)":
+        df_tf = df_tf[df_tf["stare"] != "Finalizat"]
+    elif sel_stare_t != "Toate stările":
+        df_tf = df_tf[df_tf["stare"] == sel_stare_t]
+    if cautare_t:
+        df_tf = df_tf[df_tf["note_vizita"].str.lower().str.contains(cautare_t, na=False)]
+
+    if df_tf.empty:
+        st.info("Nu există notițe pentru filtrele selectate.")
+        return
+
+    df_t_init = pd.DataFrame([
+        {
+            "id": int(r["id"]),
+            "Data": str(r["data_vizita"]),
+            "Firmă": str(r["firma"]),
+            "Note de vizită": str(r["note_vizita"]),
+            "Stare": normalizeaza_stare_task_vizita(r["stare"]),
+            "Șterge": False,
+        }
+        for _, r in df_tf.iterrows()
+    ])
+
+    editor_task_key = f"dash_editor_taskuri_{sel_firma_t}_{sel_stare_t}_{len(df_t_init)}"
+    edited_t = st.data_editor(
+        df_t_init,
+        key=editor_task_key,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["id", "Data", "Firmă"],
+        column_config={
+            "id": None,
+            "Data": st.column_config.TextColumn("Data", width="small"),
+            "Firmă": st.column_config.TextColumn("Firmă", width="medium"),
+            "Note de vizită": st.column_config.TextColumn("Note de vizită", width="large", required=True),
+            "Stare": st.column_config.SelectboxColumn(
+                "Stare",
+                options=OPTIUNI_STARE_TASK_VIZITA,
+                required=True,
+                width="medium",
+            ),
+            "Șterge": st.column_config.CheckboxColumn("🗑️", default=False, width="small"),
+        },
+    )
+
+    if st.button("💾 Salvează Modificările Notițe", type="primary", key="btn_dash_save_taskuri"):
+        df_t_final = edited_t.copy()
+        state_t = st.session_state.get(editor_task_key)
+        if isinstance(state_t, dict):
+            for idx_key, changes in (state_t.get("edited_rows") or {}).items():
+                try:
+                    idx = int(idx_key)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx < len(df_t_final) and isinstance(changes, dict):
+                    for col_name, new_val in changes.items():
+                        if col_name in df_t_final.columns:
+                            df_t_final.at[idx, col_name] = new_val
+
+        orig_t_map = {int(r["id"]): r for _, r in df_t_init.iterrows()}
+        nr_mod_t = 0
+        nr_del_t = 0
+
+        for _, row in df_t_final.iterrows():
+            tid = int(row["id"])
+            if bool(row.get("Șterge", False)):
+                TaskuriVizitaRepository.delete(tid)
+                nr_del_t += 1
+                continue
+
+            orig = orig_t_map.get(tid)
+            if orig is None:
+                continue
+
+            nota_noua = str(row.get("Note de vizită") or "").strip()
+            stare_noua = normalizeaza_stare_task_vizita(row.get("Stare"))
+            if (
+                nota_noua != str(orig["Note de vizită"]).strip()
+                or stare_noua != normalizeaza_stare_task_vizita(orig["Stare"])
+            ) and nota_noua:
+                TaskuriVizitaRepository.update(tid, nota_noua, stare_noua)
+                nr_mod_t += 1
+
+        if editor_task_key in st.session_state:
+            del st.session_state[editor_task_key]
+
+        if nr_mod_t == 0 and nr_del_t == 0:
+            st.info("ℹ️ Nu există modificări nesalvate la notițe.")
+        else:
+            st.success(f"✅ Notițe actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
+            st.rerun()
+
+
+def render_piese_de_comandat_dashboard():
     st.caption(
         "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
         "și apasă **💾 Actualizează Stările în Tabel**."
@@ -705,7 +684,6 @@ def render_piese_de_comandat_dashboard():
     randuri = []
     idx_counter = 0
 
-    # 0. Piese notate pe teren / din tabelul `necesar_piese`
     necesar_rows = NecesarPieseRepository.get_all() or []
     for np_row in necesar_rows:
         den_np = str(np_row.get("denumire_piesa") or "").strip()
@@ -735,7 +713,6 @@ def render_piese_de_comandat_dashboard():
             "Raport": f"NP #{np_row.get('id')}",
         })
 
-    # 1. Piese din rapoartele de Mașini (reparatii)
     rapoarte = ReparatiiRepository.get_all() or []
     for r in rapoarte:
         piese_raw = r.get("piese_valide")
@@ -808,7 +785,6 @@ def render_piese_de_comandat_dashboard():
                 "Raport": f"#{r.get('id')}",
             })
 
-    # 2. Piese din rapoartele de Reparații Electronice (reparatii_electronice)
     try:
         with db_cursor() as c:
             c.execute("SELECT * FROM reparatii_electronice ORDER BY id DESC")
@@ -1044,7 +1020,7 @@ def render_piese_de_comandat_dashboard():
         if editor_dash_key in st.session_state:
             del st.session_state[editor_dash_key]
 
-        incarca_date_dashboard.clear()
+        _goleste_toate_cache_dashboard()
         if erori_salvare:
             st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_salvare))
         elif nr_mod == 0:
@@ -1053,185 +1029,195 @@ def render_piese_de_comandat_dashboard():
             st.success(f"✅ Stările au fost actualizate în baza de date pentru **{nr_mod}** poziții.")
             st.rerun()
 
-    with st.expander("📦 Centralizator cantități pe Status Comandă, Furnizor & Piesă", expanded=False):
-        df_sum = (
-            df_f.groupby(["Status Comandă", "Furnizor", "Piesă"], as_index=False)["Cantitate"]
-            .sum()
-            .sort_values(["Status Comandă", "Furnizor", "Piesă"])
-        )
-        st.dataframe(df_sum, hide_index=True, use_container_width=True)
-        
-def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
-    """Returnează (lista ordonată de nume_firma, dicționar {nume_firma: id})."""
-    firme_all = FirmeRepository.get_all() or []
-    nume_to_id: dict[str, int] = {}
-    for f in firme_all:
-        nume = str(f.get("nume_firma") or "").strip()
-        fid = f.get("id")
-        if nume and fid is not None:
-            nume_to_id[nume] = int(fid)
-    return sorted(nume_to_id.keys()), nume_to_id
 
-
-def render_notite_vizita_dashboard():
-    st.markdown("### 📋 Notițe & Task-uri Vizită Client")
-
-    firme_nume, nume_to_id = _obtine_harta_firme()
-
-    with st.expander("➕ Adaugă Notiță / Task de la Client", expanded=False):
-        if not firme_nume:
-            st.warning("⚠️ Nu există firme înregistrate în baza de date.")
-        else:
-            with st.form("form_adauga_notita_vizita", clear_on_submit=True):
-                cn1, cn2 = st.columns([1.1, 1.9])
-                with cn1:
-                    data_viz = st.date_input("Data *", value=datetime.date.today())
-                    stare_viz = st.selectbox(
-                        "Stare *",
-                        options=OPTIUNI_STARE_TASK_VIZITA,
-                        index=0,
-                    )
-                with cn2:
-                    firma_viz = st.selectbox("Firmă (Client) *", options=firme_nume)
-                    note_viz = st.text_area(
-                        "Note de vizită *",
-                        placeholder="ex: De verificat senzor presiune linie 2, de proiectat suport motor, cerut ofertă...",
-                        height=95,
-                    )
-
-                salveaza_nota = st.form_submit_button("💾 Salvează Notița", type="primary")
-
-            if salveaza_nota:
-                try:
-                    TaskuriVizitaRepository.insert(
-                        data_vizita=data_viz,
-                        firma=firma_viz,
-                        firma_id=nume_to_id.get(firma_viz),
-                        note_vizita=note_viz,
-                        stare=stare_viz,
-                    )
-                    st.success(f"✅ Notiță salvată pentru **{firma_viz}** ({stare_viz}).")
-                    st.rerun()
-                except ValueError as ve:
-                    st.error(f"⚠️ {ve}")
-
-    taskuri = TaskuriVizitaRepository.get_all() or []
-    if not taskuri:
-        st.info("Nu există notițe sau task-uri de vizită înregistrate.")
-        return
-
-    df_t = pd.DataFrame(taskuri)
-    df_t["data_str"] = df_t["data_vizita"].astype(str)
-
-    ft1, ft2, ft3 = st.columns([1.3, 1.2, 1.2])
-    with ft1:
-        firme_filtrare = ["Toate firmele"] + sorted(df_t["firma"].unique().tolist())
-        sel_firma_t = st.selectbox("Firmă", options=firme_filtrare, key="dash_task_filtru_firma")
-    with ft2:
-        sel_stare_t = st.selectbox(
-            "Stare",
-            options=["Active (fără Finalizat)", "Toate stările"] + OPTIUNI_STARE_TASK_VIZITA,
-            key="dash_task_filtru_stare",
-        )
-    with ft3:
-        cautare_t = st.text_input(
-            "Caută în note",
-            placeholder="cuvânt cheie...",
-            key="dash_task_cautare",
-        ).strip().lower()
-
-    df_tf = df_t.copy()
-    if sel_firma_t != "Toate firmele":
-        df_tf = df_tf[df_tf["firma"] == sel_firma_t]
-    if sel_stare_t == "Active (fără Finalizat)":
-        df_tf = df_tf[df_tf["stare"] != "Finalizat"]
-    elif sel_stare_t != "Toate stările":
-        df_tf = df_tf[df_tf["stare"] == sel_stare_t]
-    if cautare_t:
-        df_tf = df_tf[df_tf["note_vizita"].str.lower().str.contains(cautare_t, na=False)]
-
-    if df_tf.empty:
-        st.info("Nu există notițe pentru filtrele selectate.")
-        return
-
-    df_t_init = pd.DataFrame([
-        {
-            "id": int(r["id"]),
-            "Data": str(r["data_vizita"]),
-            "Firmă": str(r["firma"]),
-            "Note de vizită": str(r["note_vizita"]),
-            "Stare": normalizeaza_stare_task_vizita(r["stare"]),
-            "Șterge": False,
-        }
-        for _, r in df_tf.iterrows()
-    ])
-
-    editor_task_key = f"dash_editor_taskuri_{sel_firma_t}_{sel_stare_t}_{len(df_t_init)}"
-    edited_t = st.data_editor(
-        df_t_init,
-        key=editor_task_key,
-        hide_index=True,
-        num_rows="fixed",
-        use_container_width=True,
-        disabled=["id", "Data", "Firmă"],
-        column_config={
-            "id": None,
-            "Data": st.column_config.TextColumn("Data", width="small"),
-            "Firmă": st.column_config.TextColumn("Firmă", width="medium"),
-            "Note de vizită": st.column_config.TextColumn("Note de vizită", width="large", required=True),
-            "Stare": st.column_config.SelectboxColumn(
-                "Stare",
-                options=OPTIUNI_STARE_TASK_VIZITA,
-                required=True,
-                width="medium",
-            ),
-            "Șterge": st.column_config.CheckboxColumn("🗑️", default=False, width="small"),
-        },
-    )
-
-    if st.button("💾 Salvează Modificările Notițe", type="primary", key="btn_dash_save_taskuri"):
-        df_t_final = edited_t.copy()
-        state_t = st.session_state.get(editor_task_key)
-        if isinstance(state_t, dict):
-            for idx_key, changes in (state_t.get("edited_rows") or {}).items():
-                try:
-                    idx = int(idx_key)
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= idx < len(df_t_final) and isinstance(changes, dict):
-                    for col_name, new_val in changes.items():
-                        if col_name in df_t_final.columns:
-                            df_t_final.at[idx, col_name] = new_val
-
-        orig_t_map = {int(r["id"]): r for _, r in df_t_init.iterrows()}
-        nr_mod_t = 0
-        nr_del_t = 0
-
-        for _, row in df_t_final.iterrows():
-            tid = int(row["id"])
-            if bool(row.get("Șterge", False)):
-                TaskuriVizitaRepository.delete(tid)
-                nr_del_t += 1
-                continue
-
-            orig = orig_t_map.get(tid)
-            if orig is None:
-                continue
-
-            nota_noua = str(row.get("Note de vizită") or "").strip()
-            stare_noua = normalizeaza_stare_task_vizita(row.get("Stare"))
-            if (
-                nota_noua != str(orig["Note de vizită"]).strip()
-                or stare_noua != normalizeaza_stare_task_vizita(orig["Stare"])
-            ) and nota_noua:
-                TaskuriVizitaRepository.update(tid, nota_noua, stare_noua)
-                nr_mod_t += 1
-
-        if editor_task_key in st.session_state:
-            del st.session_state[editor_task_key]
-
-        if nr_mod_t == 0 and nr_del_t == 0:
-            st.info("ℹ️ Nu există modificări nesalvate la notițe.")
-        else:
-            st.success(f"✅ Notițe actualizate: **{nr_mod_t}** modificate, **{nr_del_t}** șterse.")
+def render_dashboard():
+    col_title, col_refresh = st.columns([5, 1])
+    with col_title:
+        st.title("📈 Dashboard CMMS")
+    with col_refresh:
+        if st.button("🔄 Actualizează", use_container_width=True, key="btn_dash_refresh_unic"):
+            _goleste_toate_cache_dashboard()
             st.rerun()
+
+    kpi_res, masini_rep_res, el_rep_res, top_def, top_cli, top_ut, def_rec, mas_scad = incarca_date_dashboard()
+
+    interventii_luna = kpi_res["interventii"] if kpi_res else 0
+    ore_lucrate = round(kpi_res["minute"] / 60, 1) if kpi_res else 0
+    clienti_activi = kpi_res["clienti"] if kpi_res else 0
+    utilaje_active = kpi_res["utilaje"] if kpi_res else 0
+    utilaje_oprite = kpi_res["utilaje_oprite"] if kpi_res else 0
+    utilaje_supr = kpi_res["utilaje_supraveghere"] if kpi_res else 0
+
+    reusite_masini = int(masini_rep_res.get("reusite_masini_rep") or 0)
+    total_masini = int(masini_rep_res.get("total_masini_rep") or 0)
+    pct_masini = f"{round((reusite_masini / total_masini) * 100)}%" if total_masini > 0 else "0%"
+
+    reusite_el = int(el_rep_res.get("reusite_el_rep") or 0)
+    total_el = int(el_rep_res.get("total_el_rep") or 0)
+    pct_el = f"{round((reusite_el / total_el) * 100)}%" if total_el > 0 else "0%"
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("🔧 Intervenții luna curentă", interventii_luna)
+    c2.metric("⏱ Ore lucrate", ore_lucrate)
+    c3.metric("🏢 Clienți activi", clienti_activi)
+    c4.metric("⚙️ Utilaje active", utilaje_active)
+    c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
+    c6.metric("👀 Sub supraveghere", utilaje_supr)
+
+    # Notare rapidă piese pe teren (expander propriu, închis la pornire)
+    render_notare_rapida_teren()
+
+    # Piese de comandat & Notițe vizită client (expander-e închise la pornire)
+    st.markdown("---")
+    col_dash_piese, col_dash_note = st.columns([1.35, 1.0], gap="medium")
+    with col_dash_piese:
+        with st.expander("🛒 Piese De Comandat / Necesare & Furnizori", expanded=False):
+            render_piese_de_comandat_dashboard()
+    with col_dash_note:
+        with st.expander("📋 Notițe & Task-uri Vizită Client", expanded=False):
+            render_notite_vizita_dashboard()
+
+    m_r1, m_r2 = st.columns(2)
+    m_r1.metric("⚙️ Reparații Mașini Reușite", f"{reusite_masini} / {total_masini}", delta=pct_masini)
+    m_r2.metric("⚡ Reparații Electronice Reușite", f"{reusite_el} / {total_el}", delta=pct_el)
+
+    st.session_state.setdefault("dash_sectiune_activa", None)
+
+    b1, b2, b3, b4 = st.columns([1.5, 1.7, 1.5, 1.0])
+    with b1:
+        if st.button(
+            "🛑 Utilaje oprite",
+            use_container_width=True,
+            type="primary" if st.session_state["dash_sectiune_activa"] == "utilaje_oprite" else "secondary",
+            key="btn_dash_utilaje_oprite",
+        ):
+            st.session_state["dash_sectiune_activa"] = (
+                None if st.session_state["dash_sectiune_activa"] == "utilaje_oprite" else "utilaje_oprite"
+            )
+    with b2:
+        if st.button(
+            "👀 Sub supraveghere",
+            use_container_width=True,
+            type="primary" if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "secondary",
+            key="btn_dash_sub_supraveghere",
+        ):
+            st.session_state["dash_sectiune_activa"] = (
+                None if st.session_state["dash_sectiune_activa"] == "sub_supraveghere" else "sub_supraveghere"
+            )
+    with b3:
+        if st.button(
+            "💤 Clienți inactivi",
+            use_container_width=True,
+            type="primary" if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "secondary",
+            key="btn_dash_clienti_inactivi",
+        ):
+            st.session_state["dash_sectiune_activa"] = (
+                None if st.session_state["dash_sectiune_activa"] == "clienti_inactivi" else "clienti_inactivi"
+            )
+    with b4:
+        if st.session_state["dash_sectiune_activa"] is not None and st.button("✖ Ascunde", use_container_width=True, key="btn_dash_ascunde"):
+            st.session_state["dash_sectiune_activa"] = None
+
+    sectiune_activa = st.session_state.get("dash_sectiune_activa")
+
+    if sectiune_activa == "utilaje_oprite":
+        st.markdown("---")
+        st.markdown("#### 🛑 Utilaje Oprite — Motiv & Firmă")
+        date_oprite = incarca_utilaje_dupa_stare("oprite")
+        if date_oprite:
+            _randare_lista_utilaje_stare(date_oprite, este_supraveghere=False)
+        else:
+            st.info("Nu există utilaje oprite în acest moment.")
+        return
+
+    if sectiune_activa == "sub_supraveghere":
+        st.markdown("---")
+        st.markdown("#### 👀 Funcțională sub supraveghere")
+        date_supr = incarca_utilaje_dupa_stare("supraveghere")
+        if date_supr:
+            _randare_lista_utilaje_stare(date_supr, este_supraveghere=True)
+        else:
+            st.info("Nu există utilaje în starea «Funcțională sub supraveghere».")
+        return
+
+    if sectiune_activa == "clienti_inactivi":
+        st.markdown("---")
+        st.markdown("#### 💤 Clienți Inactivi")
+        zile_prag = st.selectbox(
+            "Fără intervenții de cel puțin:",
+            options=[30, 60, 90, 180],
+            index=2,
+            format_func=lambda x: f"{x} zile",
+            key="sel_zile_clienti_inactivi",
+        )
+        date_inactivi = incarca_clienti_inactivi(zile_prag)
+        if date_inactivi:
+            st.dataframe(pd.DataFrame(date_inactivi), use_container_width=True, hide_index=True)
+        else:
+            st.info(f"Nu există clienți inactivi în ultimele {zile_prag} de zile.")
+        return
+
+    st.markdown("---")
+
+    # 1. ÎNTREȚINERI SCADENTE
+    st.subheader("📅 Întrețineri Scadente")
+    render_memento_intretinere_dashboard()
+
+    st.markdown("---")
+
+    # 2. DEFECTE RECURENTE
+    st.subheader("⚠️ Defecte Recurente")
+    f_col1, f_col2, f_col3 = st.columns(3)
+    with f_col1:
+        zile_defecte = st.selectbox(
+            "Perioadă analizată:",
+            options=[30, 60, 90, 180, 365, 730, 1095],
+            index=3,
+            format_func=lambda x: f"Ultimele {x} zile",
+            key="dash_defecte_recurente_zile",
+        )
+
+    def_rec_toate = incarca_defecte_recurente(zile_defecte)
+    firme_disp = ["Toate firmele"] + sorted({d["firma"] for d in def_rec_toate if d.get("firma")})
+    with f_col2:
+        firma_sel = st.selectbox("Firmă:", options=firme_disp, key="dash_defecte_recurente_firma")
+
+    masini_disp = ["Toate mașinile"] + sorted({
+        d["masina"] for d in def_rec_toate
+        if d.get("masina") and (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
+    })
+    with f_col3:
+        masina_sel = st.selectbox("Mașină:", options=masini_disp, key="dash_defecte_recurente_masina")
+
+    def_rec_filtrate = [
+        d for d in def_rec_toate
+        if (firma_sel == "Toate firmele" or d.get("firma") == firma_sel)
+        and (masina_sel == "Toate mașinile" or d.get("masina") == masina_sel)
+    ]
+
+    if def_rec_filtrate:
+        for d in def_rec_filtrate:
+            st.warning(
+                f"⚠️ **{d['firma']} — {d['masina']}**\n"
+                f"Defect: {d['defect']}\n"
+                f"Număr apariții: {d['repetitii']}"
+            )
+    else:
+        st.success(f"Nu există defecte recurente identificate pentru filtrele selectate (ultimele {zile_defecte} zile).")
+
+    # 3. GRAFICELE (Top 10 Defecte, Top Clienți, Top Utilaje)
+    if top_def:
+        fig_defecte = px.bar(pd.DataFrame(top_def), x="aparitii", y="defect", orientation="h", title="Top 10 Defecte")
+        st.plotly_chart(fig_defecte, use_container_width=True, key="grafic_top_defecte_dashboard")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🏢 Top Clienți")
+        if top_cli:
+            fig_clienti = px.bar(pd.DataFrame(top_cli), x="interventii", y="firma", orientation="h", title="Top Clienți după număr intervenții")
+            st.plotly_chart(fig_clienti, use_container_width=True, key="grafic_top_clienti_dashboard")
+    with col2:
+        st.subheader("⚙️ Top Utilaje")
+        if top_ut:
+            fig_utilaje = px.bar(pd.DataFrame(top_ut), x="masina", y="interventii", title="Top Utilaje după număr intervenții")
+            st.plotly_chart(fig_utilaje, use_container_width=True, key="grafic_top_utilaje_dashboard")
