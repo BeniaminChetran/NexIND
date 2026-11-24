@@ -40,6 +40,10 @@ def _invalideaza_cache_masuratori() -> None:
 
 
 def _construieste_masuratori_in_derulare(masuratori_db: list[dict]) -> list[dict]:
+    """
+    Grupează măsurătorile existente ale mașinii în sesiuni/serii în derulare
+    (pe subansamblu și dată) astfel încât utilizatorul să poată selecta ușor o măsurătoare începută.
+    """
     if not masuratori_db:
         return []
 
@@ -207,6 +211,7 @@ def render_masuratori():
 
         st.markdown(f"### ➕ Introducere Măsurătoare Nouă ({m_nume})")
 
+        # 1. Selectare măsurătoare deja în derulare
         op_derulare = ["➕ Măsurătoare nouă"] + [s["eticheta"] for s in sesiuni_derulare]
         sel_derulare = st.selectbox(
             "Măsurători deja în derulare (pentru această mașină)",
@@ -236,6 +241,7 @@ def render_masuratori():
 
         idx_sub = opt_sub.index(st.session_state[sub_state_key])
 
+        # 2. Selectare sau creare subansamblu nou de măsurat
         c_sub1, c_sub2, c_sub3 = st.columns([2.2, 2.0, 1.1], vertical_alignment="bottom")
         with c_sub1:
             subansamblu_ales = st.selectbox(
@@ -252,7 +258,7 @@ def render_masuratori():
                 key=sub_nou_key,
             ).strip()
         with c_sub3:
-            if st.button("➕ Creează subansamblu", key=f"btn_creeaza_sub_{m_id}", width="stretch"):
+            if st.button("➕ Creează subansamblu", key=f"btn_creeaza_sub_{m_id}", use_container_width=True):
                 if not subansamblu_nou:
                     st.warning("Introdu numele subansamblului nou.")
                 else:
@@ -387,13 +393,15 @@ def render_masuratori():
                 height=450,
             )
 
-            st.plotly_chart(fig, width="stretch", key=f"grafic_masuratori_{m_id}")
+            st.plotly_chart(fig, use_container_width=True, key=f"grafic_masuratori_{m_id}")
 
             st.markdown("#### 📋 Tabel Istoric Măsurători")
             df_afisare = df_filtrat[["data_masurare", "subansamblu", "parametru", "valoare", "unitate_masura"]].copy()
             df_afisare.columns = ["Data & Ora", "Subansamblu", "Parametru", "Valoare Măsurată", "Unitate"]
             df_afisare["Valoare Măsurată"] = df_afisare["Valoare Măsurată"].map("{:+.3f}".format)
-            st.dataframe(df_afisare, width="stretch")
+            st.dataframe(df_afisare, use_container_width=True)
 
     render_form_si_grafic(firma_id, masina_obj)
-```[cite: 4, 5]
+```[cite: 6]
+
+După ce înlocuiești `pages/masuratori.py` cu această variantă și faci push / reboot dacă rulezi pe Streamlit Cloud, ce alt modul sau fișier vrei să optimizăm?
