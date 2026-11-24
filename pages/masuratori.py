@@ -29,7 +29,6 @@ _UNITATI_MASURA = [
     "Altul",
 ]
 
-# Paletă cu culori distincte pentru a separa clar parametrii pe grafic
 _PALETA_CULORI_PARAMETRI = [
     "#00E5FF",  # cyan electric
     "#FF5252",  # roșu coral
@@ -134,10 +133,6 @@ def _colecteaza_parametri(
     masuratori_db: list[dict],
     subansamblu_filtru: str | None = None,
 ) -> list[str]:
-    """
-    Returnează parametrii existenți (prioritizând pe cei asociați subansamblului curent,
-    apoi restul parametrilor înregistrați pe mașină), fără duplicate case-insensitive.
-    """
     prioritari: list[str] = []
     alti: list[str] = []
     vazute: set[str] = set()
@@ -241,8 +236,9 @@ def render_masuratori():
         sel_derulare_key = f"mas_sel_derulare_{m_id}"
         last_derulare_key = f"_mas_last_derulare_{m_id}"
         sub_widget_key = f"mas_sub_box_{m_id}"
-        param_widget_key = f"mas_param_box_{m_id}"
-        param_nou_key = f"mas_nou_param_{m_id}"
+        param_dropdown_key = f"mas_param_dd_{m_id}"
+        last_param_dd_key = f"_mas_last_param_dd_{m_id}"
+        param_edit_key = f"mas_param_edit_{m_id}"
 
         masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
         sesiuni_derulare = _construieste_masuratori_in_derulare(masuratori_db)
@@ -321,37 +317,26 @@ def render_masuratori():
 
         sub_activ_implicit = subansamblu_nou or subansamblu_ales
 
-        # 3. Selectare parametru existent din dropdown sau introducere parametru nou
+        # 3. Dropdown parametru existent (scrie direct în editbox-ul din formular când îl alegi)
         parametri_existenti = _colecteaza_parametri(
             masuratori_db=masuratori_db,
             subansamblu_filtru=sub_activ_implicit,
         )
-        opt_parametri = (
-            ["— Alege parametru existent —"] + parametri_existenti
-            if parametri_existenti
-            else ["— Parametru nou —"]
+        opt_parametri = ["— Alege parametru existent —"] + parametri_existenti
+
+        parametru_dd = st.selectbox(
+            "Parametru existent (opțional — sau scrie direct mai jos)",
+            options=opt_parametri,
+            key=param_dropdown_key,
         )
 
-        c_p1, c_p2 = st.columns([2.2, 2.2], vertical_alignment="bottom")
-        with c_p1:
-            parametru_ales_dropdown = st.selectbox(
-                "Parametru măsurat existent",
-                options=opt_parametri,
-                key=param_widget_key,
-                help="Alege un parametru deja înregistrat sau lasă pe prima opțiune și scrie unul nou în dreapta.",
-            )
-        with c_p2:
-            parametru_nou_input = st.text_input(
-                "Sau introdu parametru nou",
-                placeholder="ex: Temperatură, Joc axial, Presiune, Vibrații",
-                key=param_nou_key,
-            ).strip()
+        # Actualizăm editbox-ul DOAR când se schimbă selecția în dropdown, înainte ca st.text_input să fie creat
+        if parametru_dd != st.session_state.get(last_param_dd_key):
+            st.session_state[last_param_dd_key] = parametru_dd
+            if not parametru_dd.startswith("—"):
+                st.session_state[param_edit_key] = parametru_dd
 
-        parametru_implicit = parametru_nou_input or (
-            parametru_ales_dropdown
-            if not parametru_ales_dropdown.startswith("—")
-            else ""
-        )
+        st.session_state.setdefault(param_edit_key, "")
 
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
             f_col1, f_col2 = st.columns(2)
@@ -363,9 +348,8 @@ def render_masuratori():
                     help="Poți ajusta direct sau folosi subansamblul selectat / creat mai sus.",
                 )
                 parametru_input = st.text_input(
-                    "Parametru activ pentru măsurătoare",
-                    value=parametru_implicit,
-                    help="Preluat automat din dropdown sau din câmpul de parametru nou; îl poți modifica oricând.",
+                    "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)",
+                    key=param_edit_key,
                 )
 
             with f_col2:
@@ -385,8 +369,10 @@ def render_masuratori():
             btn_salveaza = st.form_submit_button("💾 Salvează Măsurătoarea", type="primary")
 
             if btn_salveaza:
-                if not subansamblu_input.strip() or not parametru_input.strip():
-                    st.error("Te rugăm să completezi subansamblul și denumirea parametrului.")
+                if not subansamblu_input.strip():
+                    st.error("Te rugăm să selectezi sau să completezi subansamblul.")
+                elif not parametru_input.strip():
+                    st.warning("⚠️ Nu ai selectat și nici nu ai completat parametrul măsurat.")
                 else:
                     sub_curat = subansamblu_input.strip()
                     param_curat = parametru_input.strip()
@@ -414,7 +400,6 @@ def render_masuratori():
                     _invalideaza_cache_masuratori()
                     st.session_state[sub_state_key] = sub_curat
                     st.session_state.pop(sub_widget_key, None)
-                    st.session_state.pop(param_widget_key, None)
                     masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
                     st.success(
                         f"Măsurătoarea pentru '{param_curat}' ({valoare_input:+.3f} {unitate_input}) "
@@ -453,7 +438,6 @@ def render_masuratori():
                 .sort_values("data_masurare")
             )
 
-            # Mapăm explicit culori distincte pe fiecare parametru unic din grafic
             color_map = {
                 param_lbl: _PALETA_CULORI_PARAMETRI[i % len(_PALETA_CULORI_PARAMETRI)]
                 for i, param_lbl in enumerate(parametri_unic)
