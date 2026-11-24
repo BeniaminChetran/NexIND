@@ -1479,3 +1479,62 @@ def render_de_facut():
             f"Întrețineri: {(ts_e - ts_d):.2f}s | "
             f"Total: {(ts_e - t0):.2f}s"
         )
+        
+        
+def _goleste_cache_taskuri():
+    _obtine_taskuri_cached.clear()
+    _colecteaza_piese_necesare.clear()
+    if hasattr(TaskuriVizitaRepository, "get_all") and hasattr(TaskuriVizitaRepository.get_all, "clear"):
+        try:
+            TaskuriVizitaRepository.get_all.clear()
+        except Exception:
+            pass
+
+
+def _goleste_cache_piese_si_rfq():
+    _colecteaza_piese_necesare.clear()
+    _incarca_optiuni_lookup_piese.clear()
+    for repo in (PieseRepository, NecesarPieseRepository, ReparatiiRepository, CereriOfertaRepository):
+        if repo is None:
+            continue
+        for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
+            fn = getattr(repo, method_name, None)
+            if fn is not None and hasattr(fn, "clear"):
+                try:
+                    fn.clear()
+                except Exception:
+                    pass
+
+
+def _goleste_cache_de_facut():
+    incarca_memento_intretinere.clear()
+    _incarca_optiuni_lookup_piese.clear()
+    _colecteaza_piese_necesare.clear()
+    _obtine_harta_firme_cached.clear()
+    _obtine_masini_cached.clear()
+    _obtine_taskuri_cached.clear()
+
+    if hasattr(SetariRepository.get_setari, "clear"):
+        try:
+            SetariRepository.get_setari.clear()
+        except Exception:
+            pass
+
+    for repo in (
+        PieseRepository,
+        NecesarPieseRepository,
+        ReparatiiRepository,
+        TaskuriVizitaRepository,
+        CereriOfertaRepository,
+        FirmeRepository,
+        MasiniRepository,
+    ):
+        if repo is None:
+            continue
+        for method_name in ("get_all", "get_cereri", "get_linii_by_cerere"):
+            fn = getattr(repo, method_name, None)
+            if fn is not None and hasattr(fn, "clear"):
+                try:
+                    fn.clear()
+                except Exception:
+                    pass
