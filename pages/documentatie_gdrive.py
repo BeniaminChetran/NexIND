@@ -1,5 +1,5 @@
 #----------------------------------------------
-#--- TAB NOU IN ARHIVA&DOCS: INDEX GDRIVE -----
+#--- pages/documentatie_gdrive.py -----
 #----------------------------------------------
 
 import pandas as pd
