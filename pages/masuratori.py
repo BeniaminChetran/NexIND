@@ -1,5 +1,5 @@
 # ----------------------------------
-# -------masuratori.py--------------
+# -------pages/masuratori.py--------
 # ----------------------------------
 
 from datetime import datetime
@@ -88,7 +88,11 @@ def _construieste_masuratori_in_derulare(masuratori_db: list[dict]) -> list[dict
     return rezultat
 
 
-def _colecteaza_subansambluri(masina_obj_val: dict, masuratori_db: list[dict], extra_list: list[str]) -> list[str]:
+def _colecteaza_subansambluri(
+    masina_obj_val: dict,
+    masuratori_db: list[dict],
+    extra_list: list[str],
+) -> list[str]:
     subansambluri: list[str] = []
     vazute: set[str] = set()
 
@@ -114,7 +118,12 @@ def _colecteaza_subansambluri(masina_obj_val: dict, masuratori_db: list[dict], e
     return subansambluri
 
 
-def _persista_subansamblu_pe_masina(masina_obj_val: dict, subansambluri: list[str], extra_key: str, sub_nou: str) -> None:
+def _persista_subansamblu_pe_masina(
+    masina_obj_val: dict,
+    subansambluri: list[str],
+    extra_key: str,
+    sub_nou: str,
+) -> None:
     lista_noua_str = ", ".join(subansambluri)
     with db_cursor() as c:
         c.execute(
@@ -224,6 +233,7 @@ def render_masuratori():
 
         opt_sub = subansambluri_existente if subansambluri_existente else ["General"]
 
+        # Aplicăm valoarea pregătită ÎNAINTE de instanțierea widget-ului `sub_select_key`
         pending_sub = st.session_state.pop(pending_sub_key, None)
         if pending_sub and pending_sub in opt_sub:
             st.session_state[sub_select_key] = pending_sub

@@ -2,15 +2,16 @@
 # -------pages/oferte.py------------
 # ----------------------------------
 
+from datetime import date
 import json
 import re
 import ssl
 import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import date
 import pandas as pd
 import streamlit as st
+
 from repositories.firme_repository import FirmeRepository
 from repositories.fraze_repository import FrazeRepository
 from repositories.masini_repository import MasiniRepository
@@ -33,6 +34,29 @@ COLOANE_OFERTA_EDITOR = [
     "Moneda",
     "Termen livrare",
 ]
+
+_MAPARE_UM = {
+    "ora": "ore",
+    "oră": "ore",
+    "ore": "ore",
+    "buc": "buc",
+    "bucata": "buc",
+    "bucăți": "buc",
+    "km": "km",
+    "set": "set",
+    "ml": "ml",
+    "kg": "kg",
+}
+
+_CHEI_PERSOANA_CONTACT = (
+    "nume_persoana",
+    "persoana_contact",
+    "pers_contact",
+    "persoana",
+    "contact",
+    "reprezentant",
+    "nume_contact",
+)
 
 
 def _df_oferta_gol() -> pd.DataFrame:
@@ -65,9 +89,12 @@ def _asigura_df_oferta_editor() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def obtine_curs_bnr():
+def obtine_curs_bnr() -> float:
     headers_browser = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
         "Accept": "application/xml,text/xml,text/html,*/*;q=0.8",
         "Accept-Language": "ro-RO,ro;q=0.9,en;q=0.8",
     }
@@ -76,8 +103,7 @@ def obtine_curs_bnr():
     try:
         req = urllib.request.Request("https://www.bnr.ro/nbrfxrates.xml", headers=headers_browser)
         with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
-            xml_data = response.read()
-            root = ET.fromstring(xml_data)
+            root = ET.fromstring(response.read())
             for cube in root.iter("{http://www.bnr.ro/xsd}Cube"):
                 if cube.get("date"):
                     for rate in cube.findall("{http://www.bnr.ro/xsd}Rate"):
@@ -136,19 +162,7 @@ def _valideaza_si_plafoneaza_ore_transport(
 
 def normalizeaza_um(um_brut: str) -> str:
     um_curat = um_brut.replace("Eur/", "").replace("EUR/", "").replace("RON/", "").strip().lower()
-    mapare_um = {
-        "ora": "ore",
-        "oră": "ore",
-        "ore": "ore",
-        "buc": "buc",
-        "bucata": "buc",
-        "bucăți": "buc",
-        "km": "km",
-        "set": "set",
-        "ml": "ml",
-        "kg": "kg",
-    }
-    return mapare_um.get(um_curat, "buc")
+    return _MAPARE_UM.get(um_curat, "buc")
 
 
 def converteste_in_moneda_oferta(pret_unitar: float, moneda_linie: str, moneda_tinta: str, curs_bnr: float) -> float:
@@ -164,7 +178,7 @@ def converteste_in_moneda_oferta(pret_unitar: float, moneda_linie: str, moneda_t
     return round(val, 2)
 
 
-def get_text_clauze_implicite(moneda: str, setari_firma: dict = None) -> str:
+def get_text_clauze_implicite(moneda: str, setari_firma: dict | None = None) -> str:
     fallback = (
         "Oferta de preț este exprimată în {MONEDA}, nu conține piese de schimb și este valabilă 15 zile.\n"
         "Costul pieselor de schimb se va transmite după constatare/diagnosticare.\n"
@@ -184,19 +198,10 @@ def get_text_clauze_implicite(moneda: str, setari_firma: dict = None) -> str:
     return rezultat
 
 
-def extrage_nume_persoana_firma(client_obj: dict) -> str:
+def extrage_nume_persoana_firma(client_obj: dict | None) -> str:
     if not client_obj:
         return ""
-    chei_posibile = [
-        "nume_persoana",
-        "persoana_contact",
-        "pers_contact",
-        "persoana",
-        "contact",
-        "reprezentant",
-        "nume_contact",
-    ]
-    for k in chei_posibile:
+    for k in _CHEI_PERSOANA_CONTACT:
         val = client_obj.get(k)
         if val and str(val).strip():
             return str(val).strip()
@@ -206,7 +211,7 @@ def extrage_nume_persoana_firma(client_obj: dict) -> str:
     return ""
 
 
-def _sincronizeaza_editor_inainte_de_adaugare():
+def _sincronizeaza_editor_inainte_de_adaugare() -> pd.DataFrame:
     counter = st.session_state.get("editor_reset_counter", 0)
     w_key = f"editor_linii_oferta_unic_{counter}"
     base_df = _asigura_df_oferta_editor()
@@ -238,12 +243,14 @@ def _defaults_oferta(
     termeni_plata_def: str,
     intocmit_de_def: str,
     moneda: str = "EUR",
-    setari_firma: dict = None,
+    setari_firma: dict | None = None,
+    curs_implicit: float | None = None,
 ) -> dict:
+    curs_val = float(curs_implicit) if curs_implicit is not None else obtine_curs_bnr()
     return {
         "sel_firma": "-- Alege firma --",
         "moneda": moneda,
-        "curs_valutar": obtine_curs_bnr(),
+        "curs_valutar": curs_val,
         "numar_manual": OferteRepository.get_next_numar_oferta(),
         "data": date.today(),
         "titlu": "Ofertă de preț",
@@ -272,40 +279,108 @@ def _init_sau_reseteaza_draft_oferta(
     termeni_plata_def: str,
     intocmit_de_def: str,
     moneda: str = "EUR",
-    setari_firma: dict = None,
-):
+    setari_firma: dict | None = None,
+    curs_implicit: float | None = None,
+) -> None:
     reset_draft(
         "oferta_draft",
-        _defaults_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, moneda, setari_firma),
+        _defaults_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, moneda, setari_firma, curs_implicit),
         "ofs_cnt",
     )
     st.session_state["df_oferta_editor"] = _df_oferta_gol()
     st.session_state["editor_reset_counter"] = st.session_state.get("editor_reset_counter", 0) + 1
 
 
+def _calculeaza_totaluri_cu_discount(
+    df_valid: pd.DataFrame,
+    moneda_oferta: str,
+    curs_valutar: float,
+    cota_tva_procent: float,
+    tip_discount: str,
+    valoare_discount_total: float,
+) -> dict:
+    subtotal_brut = 0.0
+    discount_reper_total = 0.0
+    linii = []
+    col_pret_final = f"Pret Unitar ({moneda_oferta})"
+
+    for _, r in df_valid.iterrows():
+        cant_item = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 1.0)
+        pret_sursa = float(pd.to_numeric(r.get("Pret Unitar"), errors="coerce") or 0.0)
+        moneda_sursa = str(r.get("Moneda") or "RON").strip().upper()
+        disc_rep_pct = float(pd.to_numeric(r.get("Discount (%)"), errors="coerce") or 0.0)
+        disc_rep_pct = max(0.0, min(100.0, disc_rep_pct))
+
+        pret_unitar_conv = converteste_in_moneda_oferta(pret_sursa, moneda_sursa, moneda_oferta, curs_valutar)
+        val_bruta_linie = round(cant_item * pret_unitar_conv, 2)
+        disc_linie = round(val_bruta_linie * (disc_rep_pct / 100.0), 2) if tip_discount == "Discount pe reper (%)" else 0.0
+        val_neta_linie = round(max(0.0, val_bruta_linie - disc_linie), 2)
+
+        subtotal_brut += val_bruta_linie
+        discount_reper_total += disc_linie
+
+        linii.append({
+            "Descriere": str(r.get("Descriere", "")).strip(),
+            "UM": str(r.get("UM") or "buc"),
+            "Cantitate": cant_item,
+            "Pret Sursa": round(pret_sursa, 2),
+            "Moneda Sursa": moneda_sursa,
+            "Discount (%)": disc_rep_pct if tip_discount == "Discount pe reper (%)" else 0.0,
+            col_pret_final: pret_unitar_conv,
+            "Valoare Linie": val_neta_linie,
+            "Termen livrare": str(r.get("Termen livrare", "") or ""),
+        })
+
+    subtotal_brut = round(subtotal_brut, 2)
+    discount_reper_total = round(discount_reper_total, 2)
+
+    if tip_discount == "Discount pe reper (%)":
+        discount_valoare = discount_reper_total
+    elif tip_discount == "Discount pe total (%)":
+        pct_tot = max(0.0, min(100.0, float(valoare_discount_total or 0.0)))
+        discount_valoare = round(subtotal_brut * (pct_tot / 100.0), 2)
+    elif tip_discount == "Discount fix":
+        discount_valoare = round(max(0.0, min(subtotal_brut, float(valoare_discount_total or 0.0))), 2)
+    else:
+        discount_valoare = 0.0
+
+    subtotal_net = round(max(0.0, subtotal_brut - discount_valoare), 2)
+    tva = round(subtotal_net * (cota_tva_procent / 100.0), 2)
+    total_general = round(subtotal_net + tva, 2)
+
+    return {
+        "linii": linii,
+        "subtotal_brut": subtotal_brut,
+        "discount_valoare": discount_valoare,
+        "subtotal": subtotal_net,
+        "tva": tva,
+        "total_general": total_general,
+    }
+
+
 def render_oferte():
     st.subheader("💼 Generare & Gestiune Oferte de Preț")
 
-    firme_list = FirmeRepository.get_all()
+    firme_list = FirmeRepository.get_all() or []
     if not firme_list:
         st.warning("⚠️ Adăugați cel puțin o firmă în Tabul de Firme înainte de a crea o ofertă.")
         return
 
     firme_dict = {f["nume_firma"]: f for f in firme_list}
-    piese_catalog = PieseRepository.get_all()
-    setari_firma = SetariRepository.get_setari()
+    piese_catalog = PieseRepository.get_all() or []
+    setari_firma = SetariRepository.get_setari() or {}
+    curs_bnr_curent = obtine_curs_bnr()
 
     cota_tva_procent = float(setari_firma.get("cota_tva") if setari_firma.get("cota_tva") is not None else 21.0)
     valabilitate_def = str(setari_firma.get("valabilitate_implicita") or "15 zile")
     termeni_plata_def = str(setari_firma.get("termeni_plata_impliciti") or "5 zile de la emiterea facturii")
     intocmit_de_def = str(setari_firma.get("intocmit_de_implicit") or "Echipa Nexus Industrial")
 
-    if "editor_reset_counter" not in st.session_state:
-        st.session_state["editor_reset_counter"] = 0
+    st.session_state.setdefault("editor_reset_counter", 0)
 
     init_draft(
         "oferta_draft",
-        _defaults_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, "EUR", setari_firma),
+        _defaults_oferta(valabilitate_def, termeni_plata_def, intocmit_de_def, "EUR", setari_firma, curs_bnr_curent),
         "ofs_cnt",
     )
     _asigura_df_oferta_editor()
@@ -320,7 +395,12 @@ def render_oferte():
     with top_c2:
         if st.button("❌ Anulare Ofertă", key="btn_anulare_oferta_top", type="secondary", use_container_width=True):
             _init_sau_reseteaza_draft_oferta(
-                valabilitate_def, termeni_plata_def, intocmit_de_def, draft.get("moneda", "EUR"), setari_firma
+                valabilitate_def,
+                termeni_plata_def,
+                intocmit_de_def,
+                draft.get("moneda", "EUR"),
+                setari_firma,
+                float(draft.get("curs_valutar") or curs_bnr_curent),
             )
             st.session_state["ultima_oferta_salvata_msg"] = ""
             st.session_state["pdf_oferta_bytes"] = None
@@ -351,7 +431,7 @@ def render_oferte():
             client_obj = firme_dict[sel_firma]
             adaos_client = float(client_obj.get("adaos_comercial", 20.0) or 20.0)
             nume_persoana_db = extrage_nume_persoana_firma(client_obj)
-            masini_firma = MasiniRepository.get_by_firma(client_obj["id"])
+            masini_firma = MasiniRepository.get_by_firma(client_obj["id"]) or []
             st.caption(f"👤 Persoană de contact: **{nume_persoana_db or 'Nespecificată'}** | Adaos client: **{adaos_client:g}%**")
 
     with col_s2:
@@ -370,7 +450,12 @@ def render_oferte():
         )
 
         k_curs, _ = lega_camp(
-            "oferta_draft", "curs_valutar", obtine_curs_bnr(), "ofs", "ofs_cnt", transform=lambda x: float(x or obtine_curs_bnr())
+            "oferta_draft",
+            "curs_valutar",
+            curs_bnr_curent,
+            "ofs",
+            "ofs_cnt",
+            transform=lambda x: float(x or curs_bnr_curent),
         )
         c_curs1, c_curs2 = st.columns([3, 1], vertical_alignment="bottom")
         with c_curs1:
@@ -392,7 +477,11 @@ def render_oferte():
 
     if draft.get("ultima_firma_pers") != sel_firma:
         draft["ultima_firma_pers"] = sel_firma
-        nou_atentie = f"În atenția {nume_persoana_db}" if (sel_firma != "-- Alege firma --" and nume_persoana_db) else "În atenția "
+        nou_atentie = (
+            f"În atenția {nume_persoana_db}"
+            if (sel_firma != "-- Alege firma --" and nume_persoana_db)
+            else "În atenția "
+        )
         nou_acceptat = nume_persoana_db if (sel_firma != "-- Alege firma --" and nume_persoana_db) else ""
         draft["in_atentia"] = nou_atentie
         draft["acceptat_de"] = nou_acceptat
@@ -498,7 +587,9 @@ def render_oferte():
     with st.expander("🔧 Detalii Utilaj / Echipament (din lista de mașini a firmei)", expanded=True):
         masini_dict = {m["denumire"]: m for m in masini_firma}
         optiuni_masini = ["-- Fără utilaj / Introducere manuală --"] + list(masini_dict.keys())
-        k_mof, v_mof = lega_camp("oferta_draft", "sel_masina", "-- Fără utilaj / Introducere manuală --", "ofs", "ofs_cnt")
+        k_mof, v_mof = lega_camp(
+            "oferta_draft", "sel_masina", "-- Fără utilaj / Introducere manuală --", "ofs", "ofs_cnt"
+        )
         if v_mof not in optiuni_masini:
             st.session_state[k_mof] = "-- Fără utilaj / Introducere manuală --"
             draft["sel_masina"] = "-- Fără utilaj / Introducere manuală --"
@@ -581,10 +672,13 @@ def render_oferte():
         val_p = str(p.get("valuta_achizitie") or "RON").strip().upper()
         if val_p not in ("RON", "EUR"):
             val_p = "RON"
-        label_p = f"{p['denumire']} (Achiziție: {float(p.get('pret_achizitie') or 0):.2f} {val_p} | Termen: {p.get('termen_livrare') or '1'})"
+        label_p = (
+            f"{p['denumire']} (Achiziție: {float(p.get('pret_achizitie') or 0):.2f} {val_p} | "
+            f"Termen: {p.get('termen_livrare') or '1'})"
+        )
         piese_dict[label_p] = p
 
-    tarife_disponibile = TarifeRepository.get_all()
+    tarife_disponibile = TarifeRepository.get_all() or []
 
     @st.fragment
     def _fragment_adaugare_rapida_si_tabel():
@@ -597,8 +691,7 @@ def render_oferte():
             else:
                 st.session_state["termen_cat_piesa"] = "1"
 
-        if "termen_cat_piesa" not in st.session_state:
-            st.session_state["termen_cat_piesa"] = "1"
+        st.session_state.setdefault("termen_cat_piesa", "1")
 
         col_p1, col_p2, col_p3, col_p4 = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
         with col_p1:
@@ -673,8 +766,7 @@ def render_oferte():
                     if desc_norm.startswith("ora de") or desc_norm.startswith("ore de") or este_ore_transport(desc_norm):
                         st.session_state["cant_tarif_std"] = None
 
-            if "cant_tarif_std" not in st.session_state:
-                st.session_state["cant_tarif_std"] = 1.0
+            st.session_state.setdefault("cant_tarif_std", 1.0)
 
             col_srv1, col_srv2, col_srv3, col_srv4 = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
             with col_srv1:
@@ -848,10 +940,10 @@ def render_oferte():
             )
 
     _fragment_adaugare_rapida_si_tabel()
-    
+
     st.markdown("##### 🎯 Discount Ofertă")
-    k_td, v_td = lega_camp("oferta_draft", "tip_discount", "Fără discount", "ofs", "ofs_cnt")
-    k_vd, v_vd = lega_camp(
+    k_td, _ = lega_camp("oferta_draft", "tip_discount", "Fără discount", "ofs", "ofs_cnt")
+    k_vd, _ = lega_camp(
         "oferta_draft",
         "valoare_discount_total",
         0.0,
@@ -897,11 +989,12 @@ def render_oferte():
         else:
             valoare_discount_total = 0.0
             st.caption("Niciun discount aplicat.")
-    
 
     st.markdown("##### 💬 Mențiuni / Clauze Subsol Ofertă")
 
-    k_obs, v_obs = lega_camp("oferta_draft", "observatii", get_text_clauze_implicite(moneda_oferta, setari_firma), "ofs", "ofs_cnt")
+    k_obs, v_obs = lega_camp(
+        "oferta_draft", "observatii", get_text_clauze_implicite(moneda_oferta, setari_firma), "ofs", "ofs_cnt"
+    )
 
     if draft.get("ultima_moneda_fraze") != moneda_oferta:
         moneda_veche = draft.get("ultima_moneda_fraze", "EUR")
@@ -910,7 +1003,7 @@ def render_oferte():
         draft["ultima_moneda_fraze"] = moneda_oferta
         st.session_state[k_obs] = obs_actualizat
 
-    fraze_db = FrazeRepository.get_all()
+    fraze_db = FrazeRepository.get_all() or []
     lista_continut_fraze = [f["continut"] for f in fraze_db if f.get("continut")]
 
     col_fr1, col_fr2 = st.columns([4, 1], vertical_alignment="bottom")
@@ -944,9 +1037,7 @@ def render_oferte():
                 st.error("⚠️ Vă rugăm să selectați o firmă client înainte de a salva oferta!")
                 return
 
-            edited_oferta_df = st.session_state.get(
-                "_snapshot_edited_oferta_df", _asigura_df_oferta_editor()
-            )
+            edited_oferta_df = st.session_state.get("_snapshot_edited_oferta_df", _asigura_df_oferta_editor())
             df_valid = edited_oferta_df[edited_oferta_df["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
             if df_valid.empty:
                 st.error("Adăugați cel puțin un articol în tabel.")
@@ -957,37 +1048,24 @@ def render_oferte():
                     r_chk.get("Descriere"), float(r_chk.get("Cantitate", 0))
                 )
                 if plafonat_chk:
-                    st.error(f"⚠️ Activitatea **{r_chk.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!")
+                    st.error(
+                        f"⚠️ Activitatea **{r_chk.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!"
+                    )
                     return
 
             if "Ordine" in df_valid.columns:
                 df_valid["Ordine"] = pd.to_numeric(df_valid["Ordine"], errors="coerce").fillna(999)
                 df_valid = df_valid.sort_values(by="Ordine", kind="mergesort")
 
-            linii_valide = []
-            col_pret_final = f"Pret Unitar ({moneda_oferta})"
-            subtotal = 0.0
+            calc_res = _calculeaza_totaluri_cu_discount(
+                df_valid=df_valid,
+                moneda_oferta=moneda_oferta,
+                curs_valutar=float(curs_valutar),
+                cota_tva_procent=cota_tva_procent,
+                tip_discount=tip_discount,
+                valoare_discount_total=float(valoare_discount_total or 0.0),
+            )
 
-            for _, r in df_valid.iterrows():
-                cant_item = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 1.0)
-                pret_sursa = float(pd.to_numeric(r.get("Pret Unitar"), errors="coerce") or 0.0)
-                moneda_sursa = str(r.get("Moneda") or "RON").strip().upper()
-                pret_unitar_final = converteste_in_moneda_oferta(pret_sursa, moneda_sursa, moneda_oferta, curs_valutar)
-
-                subtotal += round(cant_item * pret_unitar_final, 2)
-                linii_valide.append({
-                    "Descriere": str(r.get("Descriere", "")).strip(),
-                    "UM": str(r.get("UM") or "buc"),
-                    "Cantitate": cant_item,
-                    "Pret Sursa": round(pret_sursa, 2),
-                    "Moneda Sursa": moneda_sursa,
-                    col_pret_final: pret_unitar_final,
-                    "Termen livrare": str(r.get("Termen livrare", "") or ""),
-                })
-
-            subtotal = round(subtotal, 2)
-            tva = round(subtotal * (cota_tva_procent / 100.0), 2)
-            total_general = round(subtotal + tva, 2)
             nr_oferta = nr_oferta_input.strip() or OferteRepository.get_next_numar_oferta()
 
             date_oferta_db = {
@@ -1010,26 +1088,19 @@ def render_oferte():
                 "utilaj_an": utilaj_an,
                 "observatii": observatii,
                 "moneda": moneda_oferta,
-                "curs_valutar": curs_valutar,
-                "cota_tva": cota_tva_procent,
-                "articole": linii_valide,
-                "subtotal": subtotal,
-                "tva": tva,
-                "total_general": total_general,
-                "status": "Emisă",
-                "este_revizuita": False,
-                "actiune_registru": "Emisă",
-                "tip_discount": tip_discount,
-                "valoare_discount": calc_res["discount_valoare"],
+                "curs_valutar": float(curs_valutar),
+                "cota_tva": float(cota_tva_procent),
+                "articole": calc_res["linii"],
                 "subtotal_brut": calc_res["subtotal_brut"],
                 "tip_discount": tip_discount,
                 "valoare_discount_input": float(valoare_discount_total or 0.0),
                 "valoare_discount": calc_res["discount_valoare"],
-                "subtotal_brut": calc_res["subtotal_brut"],
                 "subtotal": calc_res["subtotal"],
                 "tva": calc_res["tva"],
                 "total_general": calc_res["total_general"],
-                "articole": calc_res["linii"],
+                "status": "Emisă",
+                "este_revizuita": False,
+                "actiune_registru": "Emisă",
             }
 
             id_generat = OferteRepository.insert(date_oferta_db)
@@ -1042,19 +1113,29 @@ def render_oferte():
             st.session_state["pdf_oferta_bytes"] = genereaza_pdf_oferta(date_oferta_db)
             st.session_state["pdf_oferta_nume"] = f"Oferta_{nr_final_pdf}_{sel_firma.replace(' ', '_')}.pdf"
             st.session_state["ultima_oferta_salvata_msg"] = (
-                f"✅ Oferta #{nr_final_pdf} a fost salvată ({total_general:,.2f} {moneda_oferta})! "
+                f"✅ Oferta #{nr_final_pdf} a fost salvată ({calc_res['total_general']:,.2f} {moneda_oferta})! "
                 f"Formularul este pregătit pentru o ofertă nouă."
             )
 
             _init_sau_reseteaza_draft_oferta(
-                valabilitate_def, termeni_plata_def, intocmit_de_def, moneda_oferta, setari_firma
+                valabilitate_def,
+                termeni_plata_def,
+                intocmit_de_def,
+                moneda_oferta,
+                setari_firma,
+                float(curs_valutar),
             )
             st.rerun()
 
     with col_act2:
         if st.button("❌ Anulare Ofertă", key="btn_anulare_oferta_jos", use_container_width=True):
             _init_sau_reseteaza_draft_oferta(
-                valabilitate_def, termeni_plata_def, intocmit_de_def, moneda_oferta, setari_firma
+                valabilitate_def,
+                termeni_plata_def,
+                intocmit_de_def,
+                moneda_oferta,
+                setari_firma,
+                float(curs_valutar),
             )
             st.session_state["ultima_oferta_salvata_msg"] = ""
             st.session_state["pdf_oferta_bytes"] = None
@@ -1063,7 +1144,7 @@ def render_oferte():
     if st.session_state.get("ultima_oferta_salvata_msg"):
         st.success(st.session_state["ultima_oferta_salvata_msg"])
 
-    if "pdf_oferta_bytes" in st.session_state and st.session_state["pdf_oferta_bytes"]:
+    if st.session_state.get("pdf_oferta_bytes"):
         nume_fisier_dl = st.session_state.get("pdf_oferta_nume", "Oferta_Pret.pdf")
         st.download_button(
             label="📥 Descarcă PDF Ofertă de Preț",
@@ -1091,460 +1172,407 @@ def render_oferte():
             key="filtru_oferte_status",
         )
 
-    oferte_salvate = OferteRepository.get_all()
+    oferte_salvate = OferteRepository.get_all() or []
+    txt_search = str(filtru_text or "").strip().lower()
 
-    oferte_filtrate = []
-    for of in oferte_salvate:
-        match_firma = (filtru_firma == "Toate firmele") or (of["firma"] == filtru_firma)
-        match_status = (filtru_status == "Toate") or (of["status"] == filtru_status)
-        txt_search = filtru_text.lower()
-        match_text = (
-            not filtru_text
+    oferte_filtrate = [
+        of
+        for of in oferte_salvate
+        if ((filtru_firma == "Toate firmele") or (of["firma"] == filtru_firma))
+        and ((filtru_status == "Toate") or (of["status"] == filtru_status))
+        and (
+            not txt_search
             or txt_search in str(of["numar_oferta"]).lower()
             or txt_search in str(of["titlu"]).lower()
             or txt_search in str(of["firma"]).lower()
         )
-        if match_firma and match_status and match_text:
-            oferte_filtrate.append(of)
+    ]
 
-    if oferte_filtrate:
-        st.info(f"S-au găsit **{len(oferte_filtrate)}** oferte care corespund filtrelor.")
-
-        for of in oferte_filtrate:
-            oid = of["id"]
-            nr_of = of["numar_oferta"]
-            data_of = str(of["data_emitere"])[:10]
-            moneda_of = of.get("moneda") or "EUR"
-            curs_of = float(of.get("curs_valutar") or curs_valutar or 1.0)
-            firma_hist_obj = firme_dict.get(of["firma"], {})
-            total_afisat = float(of.get("total_general") or 0.0)
-
-            with st.expander(
-                f"📄 Ofertă #{nr_of} | {of['firma']} | {of['titlu']} — Total: {total_afisat:,.2f} {moneda_of} ({of['status']})"
-            ):
-                col_det1, col_det2, col_det3 = st.columns([2, 1, 1], vertical_alignment="bottom")
-                with col_det1:
-                    st.write(f"**Data emiterii:** {data_of} | **Curs BNR:** {curs_of:.4f} RON/EUR")
-                    st.write(f"**Valabilitate:** {of.get('valabilitate') or valabilitate_def}")
-                    st.write(f"**Termeni plată:** {of.get('termeni_plata') or termeni_plata_def}")
-                with col_det2:
-                    lista_statusuri = ["Emisă", "Revizuită", "Acceptată", "Respinsă", "Facturată"]
-                    idx_st = lista_statusuri.index(of["status"]) if of["status"] in lista_statusuri else 0
-                    nou_status = st.selectbox("Status Ofertă", lista_statusuri, index=idx_st, key=f"status_of_hist_{oid}")
-                    if st.button("Actualizează Status", key=f"upd_status_{oid}", use_container_width=True):
-                        OferteRepository.update_status(oid, nou_status)
-                        sync_oferta_in_fundal({
-                            "id": nr_of,
-                            "numar_oferta": nr_of,
-                            "data": of["data_emitere"],
-                            "client": of["firma"],
-                            "titlu": of["titlu"],
-                            "moneda": moneda_of,
-                            "curs_valutar": curs_of,
-                            "total_general": total_afisat,
-                            "status": nou_status,
-                            "actiune_registru": f"Status -> {nou_status}",
-                            "observatii": f"Status ofertă #{nr_of} actualizat la: {nou_status}",
-                        })
-                        st.success("Status actualizat și sincronizat în Registru activități!")
-                        st.rerun()
-                with col_det3:
-                    if st.button("🗑️ Șterge Ofertă", key=f"del_of_{oid}", type="secondary", use_container_width=True):
-                        sync_oferta_in_fundal({
-                            "id": nr_of,
-                            "numar_oferta": nr_of,
-                            "data": of["data_emitere"],
-                            "client": of["firma"],
-                            "titlu": of["titlu"],
-                            "moneda": moneda_of,
-                            "curs_valutar": curs_of,
-                            "subtotal": round(total_afisat / (1.0 + cota_tva_procent / 100.0), 2),
-                            "tva": round(total_afisat - (total_afisat / (1.0 + cota_tva_procent / 100.0)), 2),
-                            "total_general": 0.0,
-                            "valoare_anterioara": total_afisat,
-                            "status": "Ștearsă",
-                            "este_stearsa": True,
-                            "actiune_registru": "Ștearsă",
-                            "observatii": f"Ofertă #{nr_of} ȘTEARSĂ (valoare anterioară: {total_afisat:,.2f} {moneda_of})",
-                        })
-                        OferteRepository.delete(oid)
-                        st.success("Oferta a fost ștearsă și înregistrată în Registru activități!")
-                        st.rerun()
-
-                articole_salvate = of.get("articole_json", [])
-                if isinstance(articole_salvate, str):
-                    try:
-                        articole_salvate = json.loads(articole_salvate)
-                    except Exception:
-                        articole_salvate = []
-
-                col_pret_hist = f"Pret Unitar ({moneda_of})"
-                hist_state_key = f"df_hist_state_{oid}"
-                hist_counter_key = f"hist_editor_counter_{oid}"
-                if hist_counter_key not in st.session_state:
-                    st.session_state[hist_counter_key] = 0
-
-                if hist_state_key not in st.session_state:
-                    df_art_vechi = (
-                        pd.DataFrame(articole_salvate)
-                        if articole_salvate
-                        else pd.DataFrame(
-                            columns=["Ordine", "Descriere", "UM", "Cantitate", "Pret Sursa", "Moneda Sursa", col_pret_hist, "Termen livrare"]
-                        )
-                    )
-                    for c_name in list(df_art_vechi.columns):
-                        if "Pret Unitar" in c_name and c_name != col_pret_hist:
-                            if col_pret_hist not in df_art_vechi.columns:
-                                df_art_vechi = df_art_vechi.rename(columns={c_name: col_pret_hist})
-                            else:
-                                df_art_vechi = df_art_vechi.drop(columns=[c_name])
-                    if col_pret_hist not in df_art_vechi.columns:
-                        df_art_vechi[col_pret_hist] = 0.0
-                    if "Pret Sursa" not in df_art_vechi.columns:
-                        df_art_vechi["Pret Sursa"] = pd.to_numeric(df_art_vechi[col_pret_hist], errors="coerce").fillna(0.0)
-                    if "Moneda Sursa" not in df_art_vechi.columns:
-                        df_art_vechi["Moneda Sursa"] = moneda_of
-                    if "Termen livrare" not in df_art_vechi.columns:
-                        df_art_vechi["Termen livrare"] = ""
-                    df_art_vechi = df_art_vechi.reset_index(drop=True)
-                    if "Ordine" not in df_art_vechi.columns:
-                        df_art_vechi.insert(0, "Ordine", range(1, len(df_art_vechi) + 1))
-                    else:
-                        df_art_vechi["Ordine"] = range(1, len(df_art_vechi) + 1)
-
-                    coloane_ordonate_h = ["Ordine", "Descriere", "UM", "Cantitate", "Pret Sursa", "Moneda Sursa", col_pret_hist, "Termen livrare"]
-                    alte_col_h = [c for c in df_art_vechi.columns if c not in coloane_ordonate_h]
-                    st.session_state[hist_state_key] = df_art_vechi[coloane_ordonate_h + alte_col_h]
-
-                st.markdown("##### ✏️ Editare & Reordonare Poziții / Prețuri (pentru Revizuire Ofertă):")
-                st.caption(
-                    f"💡 Modifică **Preț Sursa** și **Moneda Sursa** — coloana **{col_pret_hist}** și totalul PDF se recalculează automat folosind cursul BNR (**{curs_of:.4f}**)."
-                )
-                df_hist_curent = st.session_state[hist_state_key].reset_index(drop=True)
-                df_art_editat_hist = st.data_editor(
-                    df_hist_curent,
-                    num_rows="dynamic",
-                    hide_index=True,
-                    column_config={
-                        "Ordine": st.column_config.NumberColumn(
-                            "Ordine", min_value=1, step=1, format="%d", default=len(df_hist_curent) + 1, width="small"
-                        ),
-                        "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False, width="large"),
-                        "UM": st.column_config.SelectboxColumn(
-                            "UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"
-                        ),
-                        "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
-                        "Pret Sursa": st.column_config.NumberColumn("Preț Sursa", min_value=0.0, format="%.2f", default=0.0, width="small"),
-                        "Moneda Sursa": st.column_config.SelectboxColumn("Moneda Sursa", options=["RON", "EUR"], default=moneda_of, width="small"),
-                        col_pret_hist: st.column_config.NumberColumn(
-                            f"Preț ({moneda_of}) [Auto]", min_value=0.0, format="%.2f", default=0.0, disabled=True, width="small"
-                        ),
-                        "Termen livrare": st.column_config.TextColumn("Termen livrare", default="1", width="small"),
-                    },
-                    key=f"hist_editor_{oid}_{st.session_state[hist_counter_key]}",
-                    use_container_width=True,
-                )
-
-                if not df_art_editat_hist.empty:
-                    df_art_editat_hist = df_art_editat_hist.copy()
-                    for idx_h, r_h in df_art_editat_hist.iterrows():
-                        p_src_val = float(pd.to_numeric(r_h.get("Pret Sursa"), errors="coerce") or 0.0)
-                        m_src_val = str(r_h.get("Moneda Sursa") or moneda_of).strip().upper()
-                        df_art_editat_hist.at[idx_h, col_pret_hist] = converteste_in_moneda_oferta(
-                            p_src_val, m_src_val, moneda_of, curs_of
-                        )
-
-                if not df_art_editat_hist.empty:
-                    df_h_calc = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
-                    cant_ser = pd.to_numeric(df_h_calc["Cantitate"], errors="coerce").fillna(0.0)
-                    pret_ser = pd.to_numeric(df_h_calc[col_pret_hist], errors="coerce").fillna(0.0)
-                    sub_hist_prev = round(float((cant_ser * pret_ser).sum()), 2)
-                    tva_hist_prev = round(sub_hist_prev * (cota_tva_procent / 100.0), 2)
-                    tot_hist_prev = round(sub_hist_prev + tva_hist_prev, 2)
-
-                    st.info(
-                        f"🧮 **Total Recalculat (Previzualizare Live — {moneda_of}):** "
-                        f"**{sub_hist_prev:,.2f} {moneda_of}** fără TVA | "
-                        f"TVA ({cota_tva_procent:g}%): **{tva_hist_prev:,.2f} {moneda_of}** | "
-                        f"**TOTAL GENERAL: {tot_hist_prev:,.2f} {moneda_of}**"
-                    )
-
-                if not df_art_editat_hist.empty:
-                    ch_ord1, ch_ins_pos, ch_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
-                    if ch_ord1.button("🔄 Aplică Ordinea & Renumerotează", key=f"btn_ord_hist_{oid}", use_container_width=True):
-                        df_h_sort = df_art_editat_hist[
-                            df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
-                        ].copy()
-                        df_h_sort["Ordine"] = pd.to_numeric(df_h_sort["Ordine"], errors="coerce").fillna(999)
-                        df_h_sort = df_h_sort.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
-                        df_h_sort["Ordine"] = range(1, len(df_h_sort) + 1)
-                        st.session_state[hist_state_key] = df_h_sort
-                        st.session_state[hist_counter_key] += 1
-                        st.rerun()
-
-                    nr_h_cur = len(df_art_editat_hist)
-                    poz_h_ins = ch_ins_pos.number_input(
-                        "La poziția (Nr.)",
-                        min_value=1,
-                        max_value=nr_h_cur + 1,
-                        value=min(2, nr_h_cur + 1),
-                        step=1,
-                        key=f"num_poz_ins_hist_{oid}",
-                    )
-                    if ch_ins_btn.button("➕ Inserează rând gol la mijloc", key=f"btn_ins_mid_hist_{oid}", use_container_width=True):
-                        df_h_c = df_art_editat_hist.reset_index(drop=True)
-                        idx_h_sp = int(poz_h_ins) - 1
-                        rand_h_gol = pd.DataFrame([{
-                            "Ordine": int(poz_h_ins),
-                            "Descriere": "",
-                            "UM": "buc",
-                            "Cantitate": 1.0,
-                            "Pret Sursa": 0.0,
-                            "Moneda Sursa": moneda_of,
-                            col_pret_hist: 0.0,
-                            "Termen livrare": "1",
-                        }])
-                        df_h_nou = pd.concat([df_h_c.iloc[:idx_h_sp], rand_h_gol, df_h_c.iloc[idx_h_sp:]], ignore_index=True)
-                        df_h_nou["Ordine"] = range(1, len(df_h_nou) + 1)
-                        st.session_state[hist_state_key] = df_h_nou
-                        st.session_state[hist_counter_key] += 1
-                        st.rerun()
-
-                obs_hist_editat = st.text_area(
-                    "Mențiuni subsol ofertă",
-                    value=str(of.get("observatii") or ""),
-                    height=95,
-                    key=f"hist_obs_{oid}",
-                )
-
-                c_hbtn1, c_hbtn2 = st.columns(2)
-                with c_hbtn1:
-                    if st.button(
-                        f"🔄 Salvează Revizia & Generează PDF Revizuit #{nr_of}",
-                        type="primary",
-                        key=f"rev_pdf_hist_{oid}",
-                        use_container_width=True,
-                    ):
-                        df_h_val = df_art_editat_hist[
-                            df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
-                        ].copy()
-                        if "Ordine" in df_h_val.columns:
-                            df_h_val["Ordine"] = pd.to_numeric(df_h_val["Ordine"], errors="coerce").fillna(999)
-                            df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
-
-                        df_h_val["Cantitate"] = pd.to_numeric(df_h_val["Cantitate"], errors="coerce").fillna(0.0)
-                        df_h_val["Pret Sursa"] = pd.to_numeric(df_h_val["Pret Sursa"], errors="coerce").fillna(0.0)
-                        df_h_val["Moneda Sursa"] = (
-                            df_h_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
-                        )
-                        df_h_val[col_pret_hist] = [
-                            converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
-                            for p_s, m_s in zip(df_h_val["Pret Sursa"], df_h_val["Moneda Sursa"])
-                        ]
-
-                        df_h_sync = df_h_val.copy()
-                        df_h_sync["Ordine"] = range(1, len(df_h_sync) + 1)
-                        st.session_state[hist_state_key] = df_h_sync
-                        st.session_state[hist_counter_key] += 1
-
-                        linii_rev = df_h_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
-                        for l_r in linii_rev:
-                            _, plafonat_r = _valideaza_si_plafoneaza_ore_transport(
-                                l_r.get("Descriere"), float(l_r.get("Cantitate", 0))
-                            )
-                            if plafonat_r:
-                                st.error(
-                                    f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!"
-                                )
-                                st.stop()
-
-                        sub_rev = round(
-                            sum(round(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)), 2) for l in linii_rev), 2
-                        )
-                        tva_rev = round(sub_rev * (cota_tva_procent / 100.0), 2)
-                        tot_rev = round(sub_rev + tva_rev, 2)
-
-                        OferteRepository.update_oferta_revizuita(oid, linii_rev, tot_rev, obs_hist_editat)
-
-                        pers_hist = extrage_nume_persoana_firma(firma_hist_obj)
-                        date_pdf_rev = {
-                            "id": nr_of,
-                            "numar_oferta": nr_of,
-                            "data": of["data_emitere"],
-                            "client": of["firma"],
-                            "cui_client": firma_hist_obj.get("cui", ""),
-                            "reg_com_client": firma_hist_obj.get("reg_com", "") or firma_hist_obj.get("nr_reg_com", ""),
-                            "adresa_client": firma_hist_obj.get("adresa", ""),
-                            "in_atentia": f"În atenția {pers_hist}" if pers_hist else "",
-                            "titlu": of["titlu"],
-                            "valabilitate": of.get("valabilitate") or valabilitate_def,
-                            "termeni_plata": of.get("termeni_plata") or termeni_plata_def,
-                            "intocmit_de": intocmit_de_def,
-                            "acceptat_de": pers_hist,
-                            "observatii": obs_hist_editat,
-                            "moneda": moneda_of,
-                            "curs_valutar": curs_of,
-                            "cota_tva": float(cota_tva_procent),
-                            "articole": linii_rev,
-                            "subtotal": sub_rev,
-                            "tva": tva_rev,
-                            "total_general": tot_rev,
-                            "valoare_anterioara": total_afisat,
-                            "status": "Revizuită",
-                            "este_revizuita": True,
-                            "actiune_registru": "Revizuită",
-                        }
-                        sync_oferta_in_fundal(date_pdf_rev)
-
-                        st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf_rev)
-                        st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}_REVIZUITA.pdf"
-                        st.session_state[f"msg_rev_ok_{oid}"] = (
-                            f"✅ Oferta #{nr_of} a fost recalculată ({tot_rev:,.2f} {moneda_of}), "
-                            f"salvată ca REVIZUITĂ și trimisă în Registru activități!"
-                        )
-                        st.rerun()
-
-                with c_hbtn2:
-                    if st.button(f"📥 Generează PDF Ofertă #{nr_of} (forma curentă)", key=f"dl_pdf_hist_{oid}", use_container_width=True):
-                        df_h_cur_val = df_art_editat_hist[
-                            df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
-                        ].copy()
-                        if "Ordine" in df_h_cur_val.columns:
-                            df_h_cur_val["Ordine"] = pd.to_numeric(df_h_cur_val["Ordine"], errors="coerce").fillna(999)
-                            df_h_cur_val = df_h_cur_val.sort_values(by="Ordine", kind="mergesort")
-                        df_h_cur_val["Cantitate"] = pd.to_numeric(df_h_cur_val["Cantitate"], errors="coerce").fillna(0.0)
-                        df_h_cur_val["Pret Sursa"] = pd.to_numeric(df_h_cur_val["Pret Sursa"], errors="coerce").fillna(0.0)
-                        df_h_cur_val["Moneda Sursa"] = (
-                            df_h_cur_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
-                        )
-                        df_h_cur_val[col_pret_hist] = [
-                            converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
-                            for p_s, m_s in zip(df_h_cur_val["Pret Sursa"], df_h_cur_val["Moneda Sursa"])
-                        ]
-                        linii_cur = df_h_cur_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
-                        for l_c in linii_cur:
-                            _, plafonat_c = _valideaza_si_plafoneaza_ore_transport(
-                                l_c.get("Descriere"), float(l_c.get("Cantitate", 0))
-                            )
-                            if plafonat_c:
-                                st.error(
-                                    f"⚠️ Activitatea **{l_c.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!"
-                                )
-                                st.stop()
-
-                        sub_cur = sum(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)) for l in linii_cur)
-                        tva_cur = round(sub_cur * (cota_tva_procent / 100.0), 2)
-                        tot_cur = round(sub_cur + tva_cur, 2)
-                        este_rev = of.get("status") == "Revizuită"
-
-                        pers_hist = extrage_nume_persoana_firma(firma_hist_obj)
-                        date_pdf = {
-                            "id": nr_of,
-                            "numar_oferta": nr_of,
-                            "data": of["data_emitere"],
-                            "client": of["firma"],
-                            "cui_client": firma_hist_obj.get("cui", ""),
-                            "reg_com_client": firma_hist_obj.get("reg_com", "") or firma_hist_obj.get("nr_reg_com", ""),
-                            "adresa_client": firma_hist_obj.get("adresa", ""),
-                            "in_atentia": f"În atenția {pers_hist}" if pers_hist else "",
-                            "titlu": of["titlu"],
-                            "valabilitate": of.get("valabilitate") or valabilitate_def,
-                            "termeni_plata": of.get("termeni_plata") or termeni_plata_def,
-                            "intocmit_de": intocmit_de_def,
-                            "acceptat_de": pers_hist,
-                            "observatii": obs_hist_editat,
-                            "moneda": moneda_of,
-                            "curs_valutar": curs_of,
-                            "cota_tva": float(cota_tva_procent),
-                            "articole": linii_cur,
-                            "subtotal": round(sub_cur, 2),
-                            "tva": tva_cur,
-                            "total_general": tot_cur,
-                            "este_revizuita": este_rev,
-                        }
-                        st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf)
-                        sufix = "_REVIZUITA" if este_rev else ""
-                        st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}{sufix}.pdf"
-
-                if st.session_state.get(f"msg_rev_ok_{oid}"):
-                    st.success(st.session_state[f"msg_rev_ok_{oid}"])
-
-                if st.session_state.get(f"pdf_hist_bytes_{oid}"):
-                    nume_hist_dl = st.session_state[f"pdf_hist_nume_{oid}"]
-                    st.download_button(
-                        label=f"⬇️ Descarcă {nume_hist_dl}",
-                        data=st.session_state[f"pdf_hist_bytes_{oid}"],
-                        file_name=nume_hist_dl,
-                        mime="application/pdf",
-                        type="primary",
-                        key=f"btn_dl_real_{oid}",
-                    )
-    else:
+    if not oferte_filtrate:
         st.info("Nu există oferte care să corespundă filtrelor selectate.")
-        
-        
-def _calculeaza_totaluri_cu_discount(
-    df_valid: pd.DataFrame,
-    moneda_oferta: str,
-    curs_valutar: float,
-    cota_tva_procent: float,
-    tip_discount: str,
-    valoare_discount_total: float,
-) -> dict:
-    subtotal_brut = 0.0
-    discount_reper_total = 0.0
-    linii = []
+        return
 
-    for _, r in df_valid.iterrows():
-        cant_item = float(pd.to_numeric(r.get("Cantitate"), errors="coerce") or 1.0)
-        pret_sursa = float(pd.to_numeric(r.get("Pret Unitar"), errors="coerce") or 0.0)
-        moneda_sursa = str(r.get("Moneda") or "RON").strip().upper()
-        disc_rep_pct = float(pd.to_numeric(r.get("Discount (%)"), errors="coerce") or 0.0)
-        disc_rep_pct = max(0.0, min(100.0, disc_rep_pct))
+    st.info(f"S-au găsit **{len(oferte_filtrate)}** oferte care corespund filtrelor.")
 
-        pret_unitar_conv = converteste_in_moneda_oferta(pret_sursa, moneda_sursa, moneda_oferta, curs_valutar)
-        val_bruta_linie = round(cant_item * pret_unitar_conv, 2)
-        disc_linie = round(val_bruta_linie * (disc_rep_pct / 100.0), 2) if tip_discount == "Discount pe reper (%)" else 0.0
-        val_neta_linie = round(max(0.0, val_bruta_linie - disc_linie), 2)
+    for of in oferte_filtrate:
+        oid = of["id"]
+        nr_of = of["numar_oferta"]
+        data_of = str(of["data_emitere"])[:10]
+        moneda_of = of.get("moneda") or "EUR"
+        curs_of = float(of.get("curs_valutar") or curs_valutar or 1.0)
+        firma_hist_obj = firme_dict.get(of["firma"], {})
+        total_afisat = float(of.get("total_general") or 0.0)
 
-        subtotal_brut += val_bruta_linie
-        discount_reper_total += disc_linie
+        with st.expander(
+            f"📄 Ofertă #{nr_of} | {of['firma']} | {of['titlu']} — Total: {total_afisat:,.2f} {moneda_of} ({of['status']})"
+        ):
+            col_det1, col_det2, col_det3 = st.columns([2, 1, 1], vertical_alignment="bottom")
+            with col_det1:
+                st.write(f"**Data emiterii:** {data_of} | **Curs BNR:** {curs_of:.4f} RON/EUR")
+                st.write(f"**Valabilitate:** {of.get('valabilitate') or valabilitate_def}")
+                st.write(f"**Termeni plată:** {of.get('termeni_plata') or termeni_plata_def}")
+            with col_det2:
+                lista_statusuri = ["Emisă", "Revizuită", "Acceptată", "Respinsă", "Facturată"]
+                idx_st = lista_statusuri.index(of["status"]) if of["status"] in lista_statusuri else 0
+                nou_status = st.selectbox("Status Ofertă", lista_statusuri, index=idx_st, key=f"status_of_hist_{oid}")
+                if st.button("Actualizează Status", key=f"upd_status_{oid}", use_container_width=True):
+                    OferteRepository.update_status(oid, nou_status)
+                    sync_oferta_in_fundal({
+                        "id": nr_of,
+                        "numar_oferta": nr_of,
+                        "data": of["data_emitere"],
+                        "client": of["firma"],
+                        "titlu": of["titlu"],
+                        "moneda": moneda_of,
+                        "curs_valutar": curs_of,
+                        "total_general": total_afisat,
+                        "status": nou_status,
+                        "actiune_registru": f"Status -> {nou_status}",
+                        "observatii": f"Status ofertă #{nr_of} actualizat la: {nou_status}",
+                    })
+                    st.success("Status actualizat și sincronizat în Registru activități!")
+                    st.rerun()
+            with col_det3:
+                if st.button("🗑️ Șterge Ofertă", key=f"del_of_{oid}", type="secondary", use_container_width=True):
+                    sub_ant = round(total_afisat / (1.0 + cota_tva_procent / 100.0), 2)
+                    sync_oferta_in_fundal({
+                        "id": nr_of,
+                        "numar_oferta": nr_of,
+                        "data": of["data_emitere"],
+                        "client": of["firma"],
+                        "titlu": of["titlu"],
+                        "moneda": moneda_of,
+                        "curs_valutar": curs_of,
+                        "subtotal": sub_ant,
+                        "tva": round(total_afisat - sub_ant, 2),
+                        "total_general": 0.0,
+                        "valoare_anterioara": total_afisat,
+                        "status": "Ștearsă",
+                        "este_stearsa": True,
+                        "actiune_registru": "Ștearsă",
+                        "observatii": f"Ofertă #{nr_of} ȘTEARSĂ (valoare anterioară: {total_afisat:,.2f} {moneda_of})",
+                    })
+                    OferteRepository.delete(oid)
+                    st.success("Oferta a fost ștearsă și înregistrată în Registru activități!")
+                    st.rerun()
 
-        col_pret_final = f"Pret Unitar ({moneda_oferta})"
-        linii.append({
-            "Descriere": str(r.get("Descriere", "")).strip(),
-            "UM": str(r.get("UM") or "buc"),
-            "Cantitate": cant_item,
-            "Pret Sursa": round(pret_sursa, 2),
-            "Moneda Sursa": moneda_sursa,
-            "Discount (%)": disc_rep_pct if tip_discount == "Discount pe reper (%)" else 0.0,
-            col_pret_final: pret_unitar_conv,
-            "Valoare Linie": val_neta_linie,
-            "Termen livrare": str(r.get("Termen livrare", "") or ""),
-        })
+            articole_salvate = of.get("articole_json", [])
+            if isinstance(articole_salvate, str):
+                try:
+                    articole_salvate = json.loads(articole_salvate)
+                except Exception:
+                    articole_salvate = []
 
-    subtotal_brut = round(subtotal_brut, 2)
-    discount_reper_total = round(discount_reper_total, 2)
+            col_pret_hist = f"Pret Unitar ({moneda_of})"
+            hist_state_key = f"df_hist_state_{oid}"
+            hist_counter_key = f"hist_editor_counter_{oid}"
+            st.session_state.setdefault(hist_counter_key, 0)
 
-    if tip_discount == "Discount pe reper (%)":
-        discount_valoare = discount_reper_total
-    elif tip_discount == "Discount pe total (%)":
-        pct_tot = max(0.0, min(100.0, float(valoare_discount_total or 0.0)))
-        discount_valoare = round(subtotal_brut * (pct_tot / 100.0), 2)
-    elif tip_discount == "Discount fix":
-        discount_valoare = round(max(0.0, min(subtotal_brut, float(valoare_discount_total or 0.0))), 2)
-    else:
-        discount_valoare = 0.0
+            if hist_state_key not in st.session_state:
+                df_art_vechi = (
+                    pd.DataFrame(articole_salvate)
+                    if articole_salvate
+                    else pd.DataFrame(
+                        columns=[
+                            "Ordine",
+                            "Descriere",
+                            "UM",
+                            "Cantitate",
+                            "Pret Sursa",
+                            "Moneda Sursa",
+                            col_pret_hist,
+                            "Termen livrare",
+                        ]
+                    )
+                )
+                for c_name in list(df_art_vechi.columns):
+                    if "Pret Unitar" in c_name and c_name != col_pret_hist:
+                        if col_pret_hist not in df_art_vechi.columns:
+                            df_art_vechi = df_art_vechi.rename(columns={c_name: col_pret_hist})
+                        else:
+                            df_art_vechi = df_art_vechi.drop(columns=[c_name])
+                if col_pret_hist not in df_art_vechi.columns:
+                    df_art_vechi[col_pret_hist] = 0.0
+                if "Pret Sursa" not in df_art_vechi.columns:
+                    df_art_vechi["Pret Sursa"] = pd.to_numeric(df_art_vechi[col_pret_hist], errors="coerce").fillna(0.0)
+                if "Moneda Sursa" not in df_art_vechi.columns:
+                    df_art_vechi["Moneda Sursa"] = moneda_of
+                if "Termen livrare" not in df_art_vechi.columns:
+                    df_art_vechi["Termen livrare"] = ""
+                df_art_vechi = df_art_vechi.reset_index(drop=True)
+                df_art_vechi["Ordine"] = range(1, len(df_art_vechi) + 1)
 
-    subtotal_net = round(max(0.0, subtotal_brut - discount_valoare), 2)
-    tva = round(subtotal_net * (cota_tva_procent / 100.0), 2)
-    total_general = round(subtotal_net + tva, 2)
+                coloane_ordonate_h = [
+                    "Ordine",
+                    "Descriere",
+                    "UM",
+                    "Cantitate",
+                    "Pret Sursa",
+                    "Moneda Sursa",
+                    col_pret_hist,
+                    "Termen livrare",
+                ]
+                alte_col_h = [c for c in df_art_vechi.columns if c not in coloane_ordonate_h]
+                st.session_state[hist_state_key] = df_art_vechi[coloane_ordonate_h + alte_col_h]
 
-    return {
-        "linii": linii,
-        "subtotal_brut": subtotal_brut,
-        "discount_valoare": discount_valoare,
-        "subtotal": subtotal_net,
-        "tva": tva,
-        "total_general": total_general,
-    }
+            st.markdown("##### ✏️ Editare & Reordonare Poziții / Prețuri (pentru Revizuire Ofertă):")
+            st.caption(
+                f"💡 Modifică **Preț Sursa** și **Moneda Sursa** — coloana **{col_pret_hist}** și totalul PDF se recalculează automat folosind cursul BNR (**{curs_of:.4f}**)."
+            )
+            df_hist_curent = st.session_state[hist_state_key].reset_index(drop=True)
+            df_art_editat_hist = st.data_editor(
+                df_hist_curent,
+                num_rows="dynamic",
+                hide_index=True,
+                column_config={
+                    "Ordine": st.column_config.NumberColumn(
+                        "Ordine", min_value=1, step=1, format="%d", default=len(df_hist_curent) + 1, width="small"
+                    ),
+                    "Descriere": st.column_config.TextColumn("Denumire Articol / Serviciu", required=False, width="large"),
+                    "UM": st.column_config.SelectboxColumn(
+                        "UM", options=["buc", "ore", "set", "ml", "kg", "km", "intervenție", "proiect"], default="buc", width="small"
+                    ),
+                    "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, format="%.2f", default=1.0, width="small"),
+                    "Pret Sursa": st.column_config.NumberColumn("Preț Sursa", min_value=0.0, format="%.2f", default=0.0, width="small"),
+                    "Moneda Sursa": st.column_config.SelectboxColumn("Moneda Sursa", options=["RON", "EUR"], default=moneda_of, width="small"),
+                    col_pret_hist: st.column_config.NumberColumn(
+                        f"Preț ({moneda_of}) [Auto]", min_value=0.0, format="%.2f", default=0.0, disabled=True, width="small"
+                    ),
+                    "Termen livrare": st.column_config.TextColumn("Termen livrare", default="1", width="small"),
+                },
+                key=f"hist_editor_{oid}_{st.session_state[hist_counter_key]}",
+                use_container_width=True,
+            )
+
+            if not df_art_editat_hist.empty:
+                df_art_editat_hist = df_art_editat_hist.copy()
+                for idx_h, r_h in df_art_editat_hist.iterrows():
+                    p_src_val = float(pd.to_numeric(r_h.get("Pret Sursa"), errors="coerce") or 0.0)
+                    m_src_val = str(r_h.get("Moneda Sursa") or moneda_of).strip().upper()
+                    df_art_editat_hist.at[idx_h, col_pret_hist] = converteste_in_moneda_oferta(
+                        p_src_val, m_src_val, moneda_of, curs_of
+                    )
+
+                df_h_calc = df_art_editat_hist[df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""].copy()
+                cant_ser = pd.to_numeric(df_h_calc["Cantitate"], errors="coerce").fillna(0.0)
+                pret_ser = pd.to_numeric(df_h_calc[col_pret_hist], errors="coerce").fillna(0.0)
+                sub_hist_prev = round(float((cant_ser * pret_ser).sum()), 2)
+                tva_hist_prev = round(sub_hist_prev * (cota_tva_procent / 100.0), 2)
+                tot_hist_prev = round(sub_hist_prev + tva_hist_prev, 2)
+
+                st.info(
+                    f"🧮 **Total Recalculat (Previzualizare Live — {moneda_of}):** "
+                    f"**{sub_hist_prev:,.2f} {moneda_of}** fără TVA | "
+                    f"TVA ({cota_tva_procent:g}%): **{tva_hist_prev:,.2f} {moneda_of}** | "
+                    f"**TOTAL GENERAL: {tot_hist_prev:,.2f} {moneda_of}**"
+                )
+
+                ch_ord1, ch_ins_pos, ch_ins_btn = st.columns([2.0, 1.2, 1.8], vertical_alignment="bottom")
+                if ch_ord1.button("🔄 Aplică Ordinea & Renumerotează", key=f"btn_ord_hist_{oid}", use_container_width=True):
+                    df_h_sort = df_art_editat_hist[
+                        df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
+                    ].copy()
+                    df_h_sort["Ordine"] = pd.to_numeric(df_h_sort["Ordine"], errors="coerce").fillna(999)
+                    df_h_sort = df_h_sort.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
+                    df_h_sort["Ordine"] = range(1, len(df_h_sort) + 1)
+                    st.session_state[hist_state_key] = df_h_sort
+                    st.session_state[hist_counter_key] += 1
+                    st.rerun()
+
+                nr_h_cur = len(df_art_editat_hist)
+                poz_h_ins = ch_ins_pos.number_input(
+                    "La poziția (Nr.)",
+                    min_value=1,
+                    max_value=nr_h_cur + 1,
+                    value=min(2, nr_h_cur + 1),
+                    step=1,
+                    key=f"num_poz_ins_hist_{oid}",
+                )
+                if ch_ins_btn.button("➕ Inserează rând gol la mijloc", key=f"btn_ins_mid_hist_{oid}", use_container_width=True):
+                    df_h_c = df_art_editat_hist.reset_index(drop=True)
+                    idx_h_sp = int(poz_h_ins) - 1
+                    rand_h_gol = pd.DataFrame([{
+                        "Ordine": int(poz_h_ins),
+                        "Descriere": "",
+                        "UM": "buc",
+                        "Cantitate": 1.0,
+                        "Pret Sursa": 0.0,
+                        "Moneda Sursa": moneda_of,
+                        col_pret_hist: 0.0,
+                        "Termen livrare": "1",
+                    }])
+                    df_h_nou = pd.concat([df_h_c.iloc[:idx_h_sp], rand_h_gol, df_h_c.iloc[idx_h_sp:]], ignore_index=True)
+                    df_h_nou["Ordine"] = range(1, len(df_h_nou) + 1)
+                    st.session_state[hist_state_key] = df_h_nou
+                    st.session_state[hist_counter_key] += 1
+                    st.rerun()
+
+            obs_hist_editat = st.text_area(
+                "Mențiuni subsol ofertă",
+                value=str(of.get("observatii") or ""),
+                height=95,
+                key=f"hist_obs_{oid}",
+            )
+
+            c_hbtn1, c_hbtn2 = st.columns(2)
+            with c_hbtn1:
+                if st.button(
+                    f"🔄 Salvează Revizia & Generează PDF Revizuit #{nr_of}",
+                    type="primary",
+                    key=f"rev_pdf_hist_{oid}",
+                    use_container_width=True,
+                ):
+                    df_h_val = df_art_editat_hist[
+                        df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
+                    ].copy()
+                    if "Ordine" in df_h_val.columns:
+                        df_h_val["Ordine"] = pd.to_numeric(df_h_val["Ordine"], errors="coerce").fillna(999)
+                        df_h_val = df_h_val.sort_values(by="Ordine", kind="mergesort").reset_index(drop=True)
+
+                    df_h_val["Cantitate"] = pd.to_numeric(df_h_val["Cantitate"], errors="coerce").fillna(0.0)
+                    df_h_val["Pret Sursa"] = pd.to_numeric(df_h_val["Pret Sursa"], errors="coerce").fillna(0.0)
+                    df_h_val["Moneda Sursa"] = (
+                        df_h_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
+                    )
+                    df_h_val[col_pret_hist] = [
+                        converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
+                        for p_s, m_s in zip(df_h_val["Pret Sursa"], df_h_val["Moneda Sursa"])
+                    ]
+
+                    df_h_sync = df_h_val.copy()
+                    df_h_sync["Ordine"] = range(1, len(df_h_sync) + 1)
+                    st.session_state[hist_state_key] = df_h_sync
+                    st.session_state[hist_counter_key] += 1
+
+                    linii_rev = df_h_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
+                    for l_r in linii_rev:
+                        _, plafonat_r = _valideaza_si_plafoneaza_ore_transport(
+                            l_r.get("Descriere"), float(l_r.get("Cantitate", 0))
+                        )
+                        if plafonat_r:
+                            st.error(
+                                f"⚠️ Activitatea **{l_r.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!"
+                            )
+                            st.stop()
+
+                    sub_rev = round(
+                        sum(round(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)), 2) for l in linii_rev), 2
+                    )
+                    tva_rev = round(sub_rev * (cota_tva_procent / 100.0), 2)
+                    tot_rev = round(sub_rev + tva_rev, 2)
+
+                    OferteRepository.update_oferta_revizuita(oid, linii_rev, tot_rev, obs_hist_editat)
+
+                    pers_hist = extrage_nume_persoana_firma(firma_hist_obj)
+                    date_pdf_rev = {
+                        "id": nr_of,
+                        "numar_oferta": nr_of,
+                        "data": of["data_emitere"],
+                        "client": of["firma"],
+                        "cui_client": firma_hist_obj.get("cui", ""),
+                        "reg_com_client": firma_hist_obj.get("reg_com", "") or firma_hist_obj.get("nr_reg_com", ""),
+                        "adresa_client": firma_hist_obj.get("adresa", ""),
+                        "in_atentia": f"În atenția {pers_hist}" if pers_hist else "",
+                        "titlu": of["titlu"],
+                        "valabilitate": of.get("valabilitate") or valabilitate_def,
+                        "termeni_plata": of.get("termeni_plata") or termeni_plata_def,
+                        "intocmit_de": intocmit_de_def,
+                        "acceptat_de": pers_hist,
+                        "observatii": obs_hist_editat,
+                        "moneda": moneda_of,
+                        "curs_valutar": curs_of,
+                        "cota_tva": float(cota_tva_procent),
+                        "articole": linii_rev,
+                        "subtotal": sub_rev,
+                        "tva": tva_rev,
+                        "total_general": tot_rev,
+                        "valoare_anterioara": total_afisat,
+                        "status": "Revizuită",
+                        "este_revizuita": True,
+                        "actiune_registru": "Revizuită",
+                    }
+                    sync_oferta_in_fundal(date_pdf_rev)
+
+                    st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf_rev)
+                    st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}_REVIZUITA.pdf"
+                    st.session_state[f"msg_rev_ok_{oid}"] = (
+                        f"✅ Oferta #{nr_of} a fost recalculată ({tot_rev:,.2f} {moneda_of}), "
+                        f"salvată ca REVIZUITĂ și trimisă în Registru activități!"
+                    )
+                    st.rerun()
+
+            with c_hbtn2:
+                if st.button(f"📥 Generează PDF Ofertă #{nr_of} (forma curentă)", key=f"dl_pdf_hist_{oid}", use_container_width=True):
+                    df_h_cur_val = df_art_editat_hist[
+                        df_art_editat_hist["Descriere"].fillna("").astype(str).str.strip() != ""
+                    ].copy()
+                    if "Ordine" in df_h_cur_val.columns:
+                        df_h_cur_val["Ordine"] = pd.to_numeric(df_h_cur_val["Ordine"], errors="coerce").fillna(999)
+                        df_h_cur_val = df_h_cur_val.sort_values(by="Ordine", kind="mergesort")
+                    df_h_cur_val["Cantitate"] = pd.to_numeric(df_h_cur_val["Cantitate"], errors="coerce").fillna(0.0)
+                    df_h_cur_val["Pret Sursa"] = pd.to_numeric(df_h_cur_val["Pret Sursa"], errors="coerce").fillna(0.0)
+                    df_h_cur_val["Moneda Sursa"] = (
+                        df_h_cur_val["Moneda Sursa"].fillna(moneda_of).astype(str).str.strip().str.upper()
+                    )
+                    df_h_cur_val[col_pret_hist] = [
+                        converteste_in_moneda_oferta(p_s, m_s, moneda_of, curs_of)
+                        for p_s, m_s in zip(df_h_cur_val["Pret Sursa"], df_h_cur_val["Moneda Sursa"])
+                    ]
+                    linii_cur = df_h_cur_val.drop(columns=["Ordine"], errors="ignore").to_dict(orient="records")
+                    for l_c in linii_cur:
+                        _, plafonat_c = _valideaza_si_plafoneaza_ore_transport(
+                            l_c.get("Descriere"), float(l_c.get("Cantitate", 0))
+                        )
+                        if plafonat_c:
+                            st.error(
+                                f"⚠️ Activitatea **{l_c.get('Descriere')}** nu poate depăși **{int(MAX_ORE_TRANSPORT_ZI)} ore / zi**!"
+                            )
+                            st.stop()
+
+                    sub_cur = sum(float(l.get("Cantitate", 1)) * float(l.get(col_pret_hist, 0)) for l in linii_cur)
+                    tva_cur = round(sub_cur * (cota_tva_procent / 100.0), 2)
+                    tot_cur = round(sub_cur + tva_cur, 2)
+                    este_rev = of.get("status") == "Revizuită"
+
+                    pers_hist = extrage_nume_persoana_firma(firma_hist_obj)
+                    date_pdf = {
+                        "id": nr_of,
+                        "numar_oferta": nr_of,
+                        "data": of["data_emitere"],
+                        "client": of["firma"],
+                        "cui_client": firma_hist_obj.get("cui", ""),
+                        "reg_com_client": firma_hist_obj.get("reg_com", "") or firma_hist_obj.get("nr_reg_com", ""),
+                        "adresa_client": firma_hist_obj.get("adresa", ""),
+                        "in_atentia": f"În atenția {pers_hist}" if pers_hist else "",
+                        "titlu": of["titlu"],
+                        "valabilitate": of.get("valabilitate") or valabilitate_def,
+                        "termeni_plata": of.get("termeni_plata") or termeni_plata_def,
+                        "intocmit_de": intocmit_de_def,
+                        "acceptat_de": pers_hist,
+                        "observatii": obs_hist_editat,
+                        "moneda": moneda_of,
+                        "curs_valutar": curs_of,
+                        "cota_tva": float(cota_tva_procent),
+                        "articole": linii_cur,
+                        "subtotal": round(sub_cur, 2),
+                        "tva": tva_cur,
+                        "total_general": tot_cur,
+                        "este_revizuita": este_rev,
+                    }
+                    st.session_state[f"pdf_hist_bytes_{oid}"] = genereaza_pdf_oferta(date_pdf)
+                    sufix = "_REVIZUITA" if este_rev else ""
+                    st.session_state[f"pdf_hist_nume_{oid}"] = f"Oferta_{nr_of}{sufix}.pdf"
+
+            if st.session_state.get(f"msg_rev_ok_{oid}"):
+                st.success(st.session_state[f"msg_rev_ok_{oid}"])
+
+            if st.session_state.get(f"pdf_hist_bytes_{oid}"):
+                nume_hist_dl = st.session_state[f"pdf_hist_nume_{oid}"]
+                st.download_button(
+                    label=f"⬇️ Descarcă {nume_hist_dl}",
+                    data=st.session_state[f"pdf_hist_bytes_{oid}"],
+                    file_name=nume_hist_dl,
+                    mime="application/pdf",
+                    type="primary",
+                    key=f"btn_dl_real_{oid}",
+                )
