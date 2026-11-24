@@ -266,6 +266,12 @@ def render_masuratori():
                             extra_key=extra_key,
                             sub_nou=subansamblu_nou,
                         )
+                    pending_sub = st.session_state.pop(pending_sub_key, None)
+                    if pending_sub and pending_sub in opt_sub:
+                        st.session_state[sub_select_key] = pending_sub
+                    elif sub_select_key not in st.session_state or st.session_state[sub_select_key] not in opt_sub:
+                        st.session_state[sub_select_key] = opt_sub[0]   
+                        
                     st.session_state[pending_sub_key] = subansamblu_nou
                     st.toast(f"✅ Subansamblul '{subansamblu_nou}' este pregătit pentru măsurare.")
                     st.rerun(scope="fragment")
