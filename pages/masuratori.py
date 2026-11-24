@@ -193,6 +193,7 @@ def render_masuratori():
         m_nume = masina_obj_val["denumire"]
         extra_key = f"mas_sub_extra_{m_id}"
         pending_sub_key = f"_mas_pending_sub_{m_id}"
+        clear_nou_sub_key = f"_mas_clear_nou_sub_{m_id}"
         sub_select_key = f"mas_sel_sub_{m_id}"
         sub_nou_key = f"mas_nou_sub_{m_id}"
         sel_derulare_key = f"mas_sel_derulare_{m_id}"
@@ -231,9 +232,11 @@ def render_masuratori():
             if sub_din_derulare in subansambluri_existente:
                 st.session_state[pending_sub_key] = sub_din_derulare
 
+        if st.session_state.pop(clear_nou_sub_key, False):
+            st.session_state[sub_nou_key] = ""
+
         opt_sub = subansambluri_existente if subansambluri_existente else ["General"]
 
-        # Aplicăm valoarea pregătită ÎNAINTE de instanțierea widget-ului `sub_select_key`
         pending_sub = st.session_state.pop(pending_sub_key, None)
         if pending_sub and pending_sub in opt_sub:
             st.session_state[sub_select_key] = pending_sub
@@ -266,13 +269,8 @@ def render_masuratori():
                             extra_key=extra_key,
                             sub_nou=subansamblu_nou,
                         )
-                    pending_sub = st.session_state.pop(pending_sub_key, None)
-                    if pending_sub and pending_sub in opt_sub:
-                        st.session_state[sub_select_key] = pending_sub
-                    elif sub_select_key not in st.session_state or st.session_state[sub_select_key] not in opt_sub:
-                        st.session_state[sub_select_key] = opt_sub[0]   
-                        
                     st.session_state[pending_sub_key] = subansamblu_nou
+                    st.session_state[clear_nou_sub_key] = True
                     st.toast(f"✅ Subansamblul '{subansamblu_nou}' este pregătit pentru măsurare.")
                     st.rerun(scope="fragment")
 
@@ -334,6 +332,7 @@ def render_masuratori():
 
                     _invalideaza_cache_masuratori()
                     st.session_state[pending_sub_key] = sub_curat
+                    st.session_state[clear_nou_sub_key] = True
                     st.success(
                         f"Măsurătoarea pentru '{parametru_input}' ({valoare_input:+.3f} {unitate_input}) "
                         f"pe subansamblul '{sub_curat}' a fost salvată!"
