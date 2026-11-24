@@ -420,9 +420,11 @@ def render_masuratori():
                         st.session_state[unit_custom_key] = unit_cunoscuta
                 st.session_state[focus_token_key] = f"param_{parametru_dd}_{datetime.now().timestamp()}"
 
-        # 4. Formularul reorganizat: stânga = subansamblu + parametru; dreapta = reintroducere valoare + unitate + salvare
+        # 4. Formular reorganizat:
+        # Stânga: Subansamblu -> Parametru -> Valoare Măsurată -> Buton Salvează
+        # Dreapta: Unitate de Măsură (alături de zona parametrului/valorii)
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
-            f_col1, f_col2 = st.columns([1.05, 1.15])
+            f_col1, f_col2 = st.columns([1.25, 1.0])
 
             with f_col1:
                 subansamblu_input = st.text_input(
@@ -434,24 +436,24 @@ def render_masuratori():
                     "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)",
                     key=param_edit_key,
                 )
+                valoare_input = st.number_input(
+                    _VALOARE_LABEL,
+                    format="%.3f",
+                    step=0.001,
+                    help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
+                )
+                btn_salveaza = st.form_submit_button(
+                    "💾 Salvează Măsurătoarea",
+                    type="primary",
+                    use_container_width=True,
+                )
 
             with f_col2:
-                st.markdown("##### 🎯 Reintroducere Valoare & Salvare")
-                v_col1, v_col2 = st.columns([1.5, 1.0])
-                with v_col1:
-                    valoare_input = st.number_input(
-                        _VALOARE_LABEL,
-                        format="%.3f",
-                        step=0.001,
-                        help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
-                    )
-                with v_col2:
-                    unitate_input = st.selectbox(
-                        "Unitate de Măsură",
-                        options=_UNITATI_MASURA,
-                        key=unit_select_key,
-                    )
-
+                unitate_input = st.selectbox(
+                    "Unitate de Măsură",
+                    options=_UNITATI_MASURA,
+                    key=unit_select_key,
+                )
                 if unitate_input == "Altul":
                     unitate_custom = st.text_input(
                         "Specifică unitatea de măsură",
@@ -459,12 +461,6 @@ def render_masuratori():
                     )
                     if unitate_custom:
                         unitate_input = unitate_custom
-
-                btn_salveaza = st.form_submit_button(
-                    "💾 Salvează Măsurătoarea",
-                    type="primary",
-                    use_container_width=True,
-                )
 
             if btn_salveaza:
                 if not subansamblu_input.strip():
