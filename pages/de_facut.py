@@ -1473,7 +1473,7 @@ def render_de_facut():
 
     ts_a = time.perf_counter()
     link_gdrive_global = _obtine_link_gdrive_setari()
-    taskuri = _obtine_taskuri_cached()
+    taskuri = _incarca_taskuri_proaspete()
     piese_rows = _colecteaza_piese_necesare(link_gdrive_global)
     ts_b = time.perf_counter()
 
@@ -1499,3 +1499,17 @@ def render_de_facut():
             f"Întrețineri: {(ts_e - ts_d):.2f}s | "
             f"Total: {(ts_e - t0):.2f}s"
         )
+
+def _incarca_taskuri_proaspete() -> list[dict]:
+    return TaskuriVizitaRepository.get_all() or []
+
+
+def _invalideaza_taskuri_si_avanseaza_versiunea() -> None:
+    _colecteaza_piese_necesare.clear()
+    fn = getattr(TaskuriVizitaRepository.get_all, "clear", None)
+    if callable(fn):
+        try:
+            fn()
+        except Exception:
+            pass
+    st.session_state["df_task_ver"] = st.session_state.get("df_task_ver", 0) + 1
