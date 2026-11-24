@@ -420,11 +420,11 @@ def render_masuratori():
                         st.session_state[unit_custom_key] = unit_cunoscuta
                 st.session_state[focus_token_key] = f"param_{parametru_dd}_{datetime.now().timestamp()}"
 
-        # 4. Formular reorganizat:
-        # Stânga: Subansamblu -> Parametru -> Valoare Măsurată -> Buton Salvează
-        # Dreapta: Unitate de Măsură (alături de zona parametrului/valorii)
+        # 4. Formular:
+        # Stânga: Subansamblu activ -> Parametru măsurat (în locul unde era unitatea) -> Salvează Măsurătoarea
+        # Dreapta: Valoare Măsurată -> Unitate de Măsură (coborâtă lângă valoare)
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
-            f_col1, f_col2 = st.columns([1.25, 1.0])
+            f_col1, f_col2 = st.columns([1.2, 1.0])
 
             with f_col1:
                 subansamblu_input = st.text_input(
@@ -436,12 +436,6 @@ def render_masuratori():
                     "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)",
                     key=param_edit_key,
                 )
-                valoare_input = st.number_input(
-                    _VALOARE_LABEL,
-                    format="%.3f",
-                    step=0.001,
-                    help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
-                )
                 btn_salveaza = st.form_submit_button(
                     "💾 Salvează Măsurătoarea",
                     type="primary",
@@ -449,6 +443,12 @@ def render_masuratori():
                 )
 
             with f_col2:
+                valoare_input = st.number_input(
+                    _VALOARE_LABEL,
+                    format="%.3f",
+                    step=0.001,
+                    help="Introdu valoarea măsurată (cu semn +/-) și apasă Salvează Măsurătoarea.",
+                )
                 unitate_input = st.selectbox(
                     "Unitate de Măsură",
                     options=_UNITATI_MASURA,
