@@ -1,39 +1,80 @@
 import json
 import streamlit as st
+from config import db_cursor
 from repositories.base_repository import BaseRepository
 
+
+@st.cache_resource
+def _asigura_indexuri_reparatii_once() -> bool:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reparatii_firma ON reparatii (firma);
+            CREATE INDEX IF NOT EXISTS idx_reparatii_data_creare ON reparatii (data_creare DESC, id DESC);
+            """
+        )
+    return True
+
+
 class ReparatiiRepository(BaseRepository):
-    @staticmethod
+    @classmethod
     @st.cache_data(ttl=300)
-    def get_all():
+    def get_all(cls_or_self=None):
+        _asigura_indexuri_reparatii_once()
         query = """
-            SELECT id, firma, masina, subansamblu, defect, cod_eroare, piese_json, 
-                   titlu AS titlu_lucrare, simptom, solutie, stare_finala AS stare_fin, 
-                   durata AS durata_min, optimizari, tehnician AS tehnician_nume, 
-                   verificator AS verificator_nume, data_creare AS data, tip_interventie 
-            FROM reparatii 
+            SELECT id, firma, masina, subansamblu, defect, cod_eroare, piese_json,
+                   titlu AS titlu_lucrare, simptom, solutie, stare_finala AS stare_fin,
+                   durata AS durata_min, optimizari, tehnician AS tehnician_nume,
+                   verificator AS verificator_nume, data_creare AS data, tip_interventie
+            FROM reparatii
             ORDER BY id DESC
         """
         return BaseRepository().fetch_all(query)
 
     @classmethod
+    @st.cache_data(ttl=180)
+    def get_recente_pentru_piese(cls_or_self=None, limit: int = 500):
+        _asigura_indexuri_reparatii_once()
+        lim = max(1, int(limit))
+        query = """
+            SELECT id, firma, masina, piese_json
+            FROM reparatii
+            WHERE piese_json IS NOT NULL AND piese_json <> ''
+            ORDER BY id DESC
+            LIMIT %s
+        """
+        return BaseRepository().fetch_all(query, (lim,))
+
+    @classmethod
     def insert(cls, data):
+        _asigura_indexuri_reparatii_once()
         query = """
             INSERT INTO reparatii (
-                firma, masina, subansamblu, defect, cod_eroare, piese_json, 
-                titlu, simptom, solutie, stare_finala, durata, optimizari, 
+                firma, masina, subansamblu, defect, cod_eroare, piese_json,
+                titlu, simptom, solutie, stare_finala, durata, optimizari,
                 tehnician, verificator, tip_interventie
-            ) 
+            )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """
         params = (
-            data.get("firma"), data.get("masina"), data.get("subansamblu"), 
-            data.get("defect"), data.get("cod_eroare"), json.dumps(data.get("piese_valide", []), ensure_ascii=False), 
-            data.get("titlu_lucrare"), data.get("simptom"), data.get("solutie"), 
-            data.get("stare_fin"), data.get("durata_min"), data.get("optimizari"), 
-            data.get("tehnician_nume"), data.get("verificator_nume"), data.get("tip_interventie")
+            data.get("firma"),
+            data.get("masina"),
+            data.get("subansamblu"),
+            data.get("defect"),
+            data.get("cod_eroare"),
+            json.dumps(data.get("piese_valide", []), ensure_ascii=False),
+            data.get("titlu_lucrare"),
+            data.get("simptom"),
+            data.get("solutie"),
+            data.get("stare_fin"),
+            data.get("durata_min"),
+            data.get("optimizari"),
+            data.get("tehnician_nume"),
+            data.get("verificator_nume"),
+            data.get("tip_interventie"),
         )
         res = cls().execute_returning(query, params)
-        cls.get_all.clear()  # Golește cache-ul la inserare
-        return res['id'] if res else None
+        cls.get_all.clear()
+        cls.get_recente_pentru_piese.clear()
+        return res["id"] if res else None

@@ -1,15 +1,16 @@
-#------------------------------
-#----app.py (Meniu 2 Niveluri)
-#------------------------------
+# ------------------------------
+# ----app.py (Meniu 2 Niveluri)
+# ------------------------------
 
-import os
 import base64
+import importlib
+import os
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from PIL import Image
 
-
+from repositories.setari_repository import SetariRepository
 
 load_dotenv()
 
@@ -17,26 +18,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 icon_win_path = os.path.join(BASE_DIR, "Nexind.ico")
 icon_android_path = os.path.join(BASE_DIR, "Nexind_android.png")
 
-if os.path.exists(icon_android_path):
-    page_icon = Image.open(icon_android_path)
-elif os.path.exists(icon_win_path):
-    page_icon = Image.open(icon_win_path)
-else:
-    page_icon = "⚙️"
+
+@st.cache_resource
+def _incarca_iconita_pagina(android_path: str, win_path: str):
+    if os.path.exists(android_path):
+        return Image.open(android_path)
+    if os.path.exists(win_path):
+        return Image.open(win_path)
+    return "⚙️"
+
+
+page_icon = _incarca_iconita_pagina(icon_android_path, icon_win_path)
 
 st.set_page_config(
     page_title="NexInd CMMS Enterprise Dashboard",
     page_icon=page_icon,
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 if os.path.exists(icon_android_path):
     st.logo(icon_android_path)
 
-# Inițializare stare globală de deblocare
-if "is_unlocked" not in st.session_state:
-    st.session_state["is_unlocked"] = False
+st.session_state.setdefault("is_unlocked", False)
 
 st.markdown(
     """
@@ -52,58 +56,36 @@ st.markdown(
 )
 
 
-# Import pagini modulare
-from repositories.setari_repository import SetariRepository
-from pages.dashboard import render_dashboard
-from pages.predictii import render_predictii
-from pages.activitati import render_activitati
-from pages.mentenanta import render_mentenanta
-from pages.istoric import render_istoric
-from pages.documentatii import render_documentatii
-from pages.masini import render_masini
-from pages.piese import render_piese
-from pages.firme import render_firme
-from pages.masuratori import render_masuratori
-from pages.reparatii_electronice import render_reparatii_electronice
-from pages.oferte import render_oferte
-from pages.simulator_preturi import render_simulator_preturi
-from pages.setari import render_setari
-from pages.documentatie_gdrive import render_documentatie_gdrive
-from pages.asistent_defecte import render_page as render_asistent_defecte
-from pages.fise_mentenanta import render_fise_mentenanta
-from pages.comenzi import render_comenzi
-from pages.de_facut import render_de_facut
-
-
 def seteaza_iconita_android(cale_png: str):
-    if os.path.exists(cale_png):
-        with open(cale_png, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("utf-8")
-        data_uri = f"data:image/png;base64,{b64}"
-        components.html(
-            f"""
-            <script>
-            (function() {{
-                const doc = window.parent.document;
-                if (doc.querySelector('link[data-nexind-icon="1"]')) {{
-                    return;
-                }}
-                const head = doc.head;
-                doc.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"]').forEach(el => el.remove());
-                ['icon', 'shortcut icon', 'apple-touch-icon'].forEach(relType => {{
-                    const link = doc.createElement('link');
-                    link.rel = relType;
-                    link.type = 'image/png';
-                    link.href = '{data_uri}';
-                    link.setAttribute('data-nexind-icon', '1');
-                    head.appendChild(link);
-                }});
-            }})();
-            </script>
-            """,
-            height=0,
-            width=0,
-        )
+    if not os.path.exists(cale_png):
+        return
+    with open(cale_png, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    data_uri = f"data:image/png;base64,{b64}"
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const doc = window.parent.document;
+            if (doc.querySelector('link[data-nexind-icon="1"]')) {{
+                return;
+            }}
+            const head = doc.head;
+            doc.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"]').forEach(el => el.remove());
+            ['icon', 'shortcut icon', 'apple-touch-icon'].forEach(relType => {{
+                const link = doc.createElement('link');
+                link.rel = relType;
+                link.type = 'image/png';
+                link.href = '{data_uri}';
+                link.setAttribute('data-nexind-icon', '1');
+                head.appendChild(link);
+            }});
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def blocheaza_autofill_selectbox():
@@ -124,14 +106,9 @@ def blocheaza_autofill_selectbox():
                 });
             }
             applyAttr();
-            if (!window.parent.__nexindSelectboxObserver) {
+            if (!window.parent.__nexindSelectboxObserver && doc.body) {
                 window.parent.__nexindSelectboxObserver = new MutationObserver(applyAttr);
-                window.parent.document.addEventListener('DOMContentLoaded', () => {
-                    window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
-                });
-                if (doc.body) {
-                    window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
-                }
+                window.parent.__nexindSelectboxObserver.observe(doc.body, { childList: true, subtree: true });
             }
         })();
         </script>
@@ -141,29 +118,49 @@ def blocheaza_autofill_selectbox():
     )
 
 
-seteaza_iconita_android(icon_android_path)
-blocheaza_autofill_selectbox()
+if not st.session_state.get("_nexind_ui_init_done", False):
+    seteaza_iconita_android(icon_android_path)
+    blocheaza_autofill_selectbox()
+    st.session_state["_nexind_ui_init_done"] = True
+
+
+@st.cache_resource
+def _incarca_handler_pagina(module_path: str, func_name: str):
+    mod = importlib.import_module(module_path)
+    return getattr(mod, func_name)
 
 
 def render_deblocare():
     st.subheader("🔐 SistemAdmin — Deblocare Editare Configurații Sisteme")
-    st.caption("Deblochează global toate zonele protejate cu parolă din aplicație: prețuri achiziție piese, furnizori, tarife standard (Nivel A & B), adaos comercial implicit, praguri și componența sistemelor.")
+    st.caption(
+        "Deblochează global toate zonele protejate cu parolă din aplicație: prețuri achiziție piese, "
+        "furnizori, tarife standard (Nivel A & B), adaos comercial implicit, praguri și componența sistemelor."
+    )
 
     setari = SetariRepository.get_setari()
     parola_salvata = str(setari.get("pass") or "").strip()
 
     if not parola_salvata:
-        st.warning("⚠️ Nu există nicio parolă configurată în baza de date (`setari.pass`). Setează mai întâi o parolă în **SistemAdmin → Setări**.")
+        st.warning(
+            "⚠️ Nu există nicio parolă configurată în baza de date (`setari.pass`). "
+            "Setează mai întâi o parolă în **SistemAdmin → Setări**."
+        )
 
     if st.session_state.get("is_unlocked", False):
-        st.success("🔓 **Status curent: DEBLOCAT** — Ai permisiuni complete de adăugare și ștergere la verificările tehnice pe sisteme și la componența sistemelor.")
+        st.success(
+            "🔓 **Status curent: DEBLOCAT** — Ai permisiuni complete de adăugare și ștergere "
+            "la verificările tehnice pe sisteme și la componența sistemelor."
+        )
         if st.button("🔒 Blochează la loc elementele protejate", type="primary"):
             st.session_state["is_unlocked"] = False
             st.session_state["preturi_deblocate"] = False
             st.toast("🔒 Elementele protejate au fost blocate.")
             st.rerun()
     else:
-        st.info("🔒 **Status curent: BLOCAT (Doar vizualizare)** — Introdu parola administratorului din Setări pentru a debloca editarea.")
+        st.info(
+            "🔒 **Status curent: BLOCAT (Doar vizualizare)** — Introdu parola administratorului "
+            "din Setări pentru a debloca editarea."
+        )
         with st.form("form_deblocare_admin"):
             parola_introdusa = st.text_input("Parolă administrator", type="password")
             submit_unlock = st.form_submit_button("🔓 Deblochează", type="primary")
@@ -179,6 +176,42 @@ def render_deblocare():
                     st.error("❌ Parolă incorectă!")
 
 
+# Structură bară de meniu (Categorie -> Sub-meniuri: (modul, functie))
+MENIU_STRUCTURA = {
+    "📈 0. DashBoard": {
+        "✅ De făcut & Teren": ("pages.de_facut", "render_de_facut"),
+        "📊 Indicatori & Analiză": ("pages.dashboard", "render_dashboard"),
+    },
+    "🚨 1. Diagnostic & Documentație": {
+        "🛠️ Asistent Defecte": ("pages.asistent_defecte", "render_page"),
+        "📚 Index & Căutare Docs (GDrive)": ("pages.documentatie_gdrive", "render_documentatie_gdrive"),
+        "📄 Documentații": ("pages.documentatii", "render_documentatii"),
+    },
+    "🛠️ 2. Execuție & Rapoarte": {
+        "📝 Intervenții": ("pages.activitati", "render_activitati"),
+        "⚡ Reparații electronice": ("pages.reparatii_electronice", "render_reparatii_electronice"),
+        "🛡️ Mentenanță preventivă": ("pages.mentenanta", "render_mentenanta"),
+        "📊 Măsurători": ("pages.masuratori", "render_masuratori"),
+        "📋 Istoric": ("pages.istoric", "render_istoric"),
+        "🔮 Predicții": ("pages.predictii", "render_predictii"),
+    },
+    "💼 3. Oferte & Comercial": {
+        "💼 Oferte de preț": ("pages.oferte", "render_oferte"),
+        "🧮 Calculator Prețuri Vânzare": ("pages.simulator_preturi", "render_simulator_preturi"),
+        "📦 Comenzi (Furnizori & Clienți)": ("pages.comenzi", "render_comenzi"),
+    },
+    "📦 4. Nomenclatoare & Stocuri": {
+        "📦 Piese": ("pages.piese", "render_piese"),
+        "🦾 Mașini": ("pages.masini", "render_masini"),
+        "🏢 Firme": ("pages.firme", "render_firme"),
+        "📋 Catalog & Fișe Tip Mentenanță": ("pages.fise_mentenanta", "render_fise_mentenanta"),
+    },
+    "🔐 SistemAdmin": {
+        "🔑 Deblocare": ("__local__", "render_deblocare"),
+        "⚙️ Setări": ("pages.setari", "render_setari"),
+    },
+}
+
 c_title, c_status = st.columns([4.2, 1.3], vertical_alignment="center")
 with c_title:
     st.title("🛠️ NexInd CMMS Dashboard & Predictive")
@@ -187,42 +220,6 @@ with c_status:
         st.success("🔓 Sistem: DEBLOCAT")
     else:
         st.warning("🔒 Sistem: BLOCAT")
-
-# Structură bară de meniu (Categorie -> Sub-meniuri)
-MENIU_STRUCTURA = {
-    "📈 0. DashBoard": {
-        "✅ De făcut & Teren": render_de_facut,
-        "📊 Indicatori & Analiză": render_dashboard,
-        },
-    "🚨 1. Diagnostic & Documentație": {
-        "🛠️ Asistent Defecte": render_asistent_defecte,
-        "📚 Index & Căutare Docs (GDrive)": render_documentatie_gdrive,
-        "📄 Documentații": render_documentatii,
-    },
-    "🛠️ 2. Execuție & Rapoarte": {
-        "📝 Intervenții": render_activitati,
-        "⚡ Reparații electronice": render_reparatii_electronice,
-        "🛡️ Mentenanță preventivă": render_mentenanta,
-        "📊 Măsurători": render_masuratori,
-        "📋 Istoric": render_istoric,
-        "🔮 Predicții": render_predictii,
-    },
-    "💼 3. Oferte & Comercial": {
-        "💼 Oferte de preț": render_oferte,
-        "🧮 Calculator Prețuri Vânzare": render_simulator_preturi,
-        "📦 Comenzi (Furnizori & Clienți)": render_comenzi,
-    },
-    "📦 4. Nomenclatoare & Stocuri": {
-        "📦 Piese": render_piese,
-        "🦾 Mașini": render_masini,
-        "🏢 Firme": render_firme,
-        "📋 Catalog & Fișe Tip Mentenanță": render_fise_mentenanta,
-    },
-    "🔐 SistemAdmin": {
-        "🔑 Deblocare": render_deblocare,
-        "⚙️ Setări": render_setari,
-    },
-}
 
 categorii_lista = list(MENIU_STRUCTURA.keys())
 if st.session_state.get("nav_categorie_principala") not in categorii_lista:
@@ -250,5 +247,9 @@ with col_sub:
 
 st.markdown("---")
 
-# Randarea paginii selectate
-submeniuri[submeniu_sel]()
+mod_path, func_name = submeniuri[submeniu_sel]
+if mod_path == "__local__":
+    render_deblocare()
+else:
+    handler = _incarca_handler_pagina(mod_path, func_name)
+    handler()

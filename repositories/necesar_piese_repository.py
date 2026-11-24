@@ -5,6 +5,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
+from config import db_cursor
 from repositories.base_repository import BaseRepository
 from repositories.piese_repository import PieseRepository, _normalizeaza_stare_comanda
 
@@ -21,39 +22,38 @@ def normalizeaza_prioritate_piesa(val: Any) -> str:
     return "Normal"
 
 
-class NecesarPieseRepository(BaseRepository):
-    _tabela_asigurata = False
+@st.cache_resource
+def _asigura_tabela_necesar_once() -> bool:
+    ddl_si_indexuri = """
+        CREATE TABLE IF NOT EXISTS necesar_piese (
+            id SERIAL PRIMARY KEY,
+            piesa_id INTEGER NULL REFERENCES piese(id) ON DELETE SET NULL,
+            denumire_piesa VARCHAR(255) NOT NULL,
+            cod_producator VARCHAR(120) DEFAULT '',
+            cantitate NUMERIC(12, 2) NOT NULL DEFAULT 1.00,
+            firma_id INTEGER NULL,
+            firma_client VARCHAR(255) NOT NULL,
+            masina VARCHAR(255) DEFAULT '',
+            prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal',
+            observatii TEXT DEFAULT '',
+            status_comanda VARCHAR(50) NOT NULL DEFAULT 'De căutat',
+            data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS firma_id INTEGER NULL;
+        ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal';
+        CREATE INDEX IF NOT EXISTS idx_necesar_piese_status ON necesar_piese (status_comanda);
+        CREATE INDEX IF NOT EXISTS idx_necesar_piese_prioritate ON necesar_piese (prioritate_piesa);
+        CREATE INDEX IF NOT EXISTS idx_necesar_piese_firma ON necesar_piese (firma_id);
+    """
+    with db_cursor() as cur:
+        cur.execute(ddl_si_indexuri)
+    return True
 
+
+class NecesarPieseRepository(BaseRepository):
     @classmethod
     def _asigura_tabela(cls) -> None:
-        if cls._tabela_asigurata:
-            return
-        ddl = """
-            CREATE TABLE IF NOT EXISTS necesar_piese (
-                id SERIAL PRIMARY KEY,
-                piesa_id INTEGER NULL REFERENCES piese(id) ON DELETE SET NULL,
-                denumire_piesa VARCHAR(255) NOT NULL,
-                cod_producator VARCHAR(120) DEFAULT '',
-                cantitate NUMERIC(12, 2) NOT NULL DEFAULT 1.00,
-                firma_id INTEGER NULL,
-                firma_client VARCHAR(255) NOT NULL,
-                masina VARCHAR(255) DEFAULT '',
-                prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal',
-                observatii TEXT DEFAULT '',
-                status_comanda VARCHAR(50) NOT NULL DEFAULT 'De căutat',
-                data_creare TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """
-        cls().execute(ddl)
-        for alter_sql in (
-            "ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS firma_id INTEGER NULL",
-            "ALTER TABLE necesar_piese ADD COLUMN IF NOT EXISTS prioritate_piesa VARCHAR(30) NOT NULL DEFAULT 'Normal'",
-        ):
-            try:
-                cls().execute(alter_sql)
-            except Exception:
-                pass
-        cls._tabela_asigurata = True
+        _asigura_tabela_necesar_once()
 
     @classmethod
     def _gaseste_piesa_catalog(cls, denumire: str, cod_producator: str = "") -> Optional[Dict[str, Any]]:
@@ -62,14 +62,18 @@ class NecesarPieseRepository(BaseRepository):
         if not den_norm and not cod_norm:
             return None
 
-        for p in PieseRepository.get_all() or []:
-            p_den = " ".join(str(p.get("denumire") or "").strip().lower().split())
-            p_cod = " ".join(str(p.get("cod_producator") or "").strip().lower().split())
-            if den_norm and p_den == den_norm:
-                return p
-            if cod_norm and p_cod and p_cod == cod_norm:
-                return p
-        return None
+        row = cls().fetch_one(
+            """
+            SELECT id, denumire, cod_producator
+            FROM piese
+            WHERE (%s <> '' AND LOWER(TRIM(COALESCE(denumire, ''))) = %s)
+               OR (%s <> '' AND LOWER(TRIM(COALESCE(cod_producator, ''))) = %s)
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (den_norm, den_norm, cod_norm, cod_norm),
+        )
+        return dict(row) if row else None
 
     @classmethod
     def noteaza_piesa_pe_teren(
@@ -119,7 +123,8 @@ class NecesarPieseRepository(BaseRepository):
             if not cod_curat:
                 cod_curat = str(piesa_catalog.get("cod_producator") or "").strip()
         else:
-            PieseRepository._asigura_coloane_piese()
+            if hasattr(PieseRepository, "_asigura_coloane_piese"):
+                PieseRepository._asigura_coloane_piese()
             masina_catalog = masina_curata or "General"
             obs_catalog = f"Notat pe teren | Client: {firma_curata} | Stare piesă: {prio_norm}"
             if obs_curata:
@@ -149,7 +154,8 @@ class NecesarPieseRepository(BaseRepository):
                     status_final,
                 ),
             )
-            PieseRepository.get_all.clear()
+            if hasattr(PieseRepository.get_all, "clear"):
+                PieseRepository.get_all.clear()
             piesa_id = inserted.get("id") if isinstance(inserted, dict) else None
 
         row_necesar = cls().execute_returning(

@@ -4,10 +4,23 @@
 
 import logging
 import streamlit as st
+from config import db_cursor
 from repositories.base_repository import BaseRepository
 from repositories.setari_repository import SetariRepository
 
 logger = logging.getLogger("NexIndCMMS.FirmeRepository")
+
+
+@st.cache_resource
+def _asigura_indexuri_firme_once() -> bool:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_firme_nume_firma ON firme (nume_firma);
+            CREATE INDEX IF NOT EXISTS idx_firme_cui ON firme (cui);
+            """
+        )
+    return True
 
 
 def _rezolva_adaos(data: dict) -> float:
@@ -23,19 +36,21 @@ def _rezolva_adaos(data: dict) -> float:
 
 
 class FirmeRepository(BaseRepository):
-    @staticmethod
+    @classmethod
     @st.cache_data(ttl=300)
-    def get_all():
+    def get_all(cls_or_self=None):
+        _asigura_indexuri_firme_once()
         query = """
-            SELECT id, nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial 
-            FROM firme 
+            SELECT id, nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial
+            FROM firme
             ORDER BY nume_firma
         """
         return BaseRepository().fetch_all(query)
 
     @classmethod
     def insert(cls, data: dict):
-        nume = data.get('nume_firma')
+        _asigura_indexuri_firme_once()
+        nume = data.get("nume_firma")
         if not nume or not str(nume).strip():
             logger.error("Tentativă de inserare firmă fără nume.")
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
@@ -43,20 +58,20 @@ class FirmeRepository(BaseRepository):
         adaos_val = _rezolva_adaos(data)
 
         query = """
-            INSERT INTO firme (nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial) 
+            INSERT INTO firme (nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             nume.strip(),
-            data.get('cui'),
-            data.get('reg_com'),
-            data.get('adresa'),
-            data.get('banca'),
-            data.get('cont'),
-            data.get('nume_persoana'),
-            data.get('email'),
-            data.get('telefon'),
-            adaos_val
+            data.get("cui"),
+            data.get("reg_com"),
+            data.get("adresa"),
+            data.get("banca"),
+            data.get("cont"),
+            data.get("nume_persoana"),
+            data.get("email"),
+            data.get("telefon"),
+            adaos_val,
         )
         cls().execute(query, params)
         cls.get_all.clear()
@@ -64,26 +79,33 @@ class FirmeRepository(BaseRepository):
 
     @classmethod
     def update(cls, firma_id: int, data: dict):
+        _asigura_indexuri_firme_once()
         if not firma_id:
             raise ValueError("ID-ul firmei este obligatoriu pentru actualizare.")
 
-        nume = data.get('nume_firma')
+        nume = data.get("nume_firma")
         if not nume or not str(nume).strip():
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
 
         adaos_val = _rezolva_adaos(data)
 
         query = """
-            UPDATE firme 
-            SET nume_firma=%s, cui=%s, reg_com=%s, adresa=%s, banca=%s, cont=%s, nume_persoana=%s, email=%s, telefon=%s, adaos_comercial=%s 
+            UPDATE firme
+            SET nume_firma=%s, cui=%s, reg_com=%s, adresa=%s, banca=%s, cont=%s, nume_persoana=%s, email=%s, telefon=%s, adaos_comercial=%s
             WHERE id=%s
         """
         params = (
-            nume.strip(), data.get('cui'), data.get('reg_com'),
-            data.get('adresa'), data.get('banca'), data.get('cont'),
-            data.get('nume_persoana'), data.get('email'), data.get('telefon'),
+            nume.strip(),
+            data.get("cui"),
+            data.get("reg_com"),
+            data.get("adresa"),
+            data.get("banca"),
+            data.get("cont"),
+            data.get("nume_persoana"),
+            data.get("email"),
+            data.get("telefon"),
             adaos_val,
-            firma_id
+            firma_id,
         )
         cls().execute(query, params)
         cls.get_all.clear()

@@ -1,5 +1,6 @@
 import logging
 import streamlit as st
+from config import db_cursor
 from repositories.base_repository import BaseRepository
 
 logger = logging.getLogger("NexIndCMMS.SetariRepository")
@@ -39,44 +40,32 @@ DEFAULTS_SETARI = {
     "adaos_comercial_implicit": 35.0,
 }
 
-@classmethod
-@st.cache_data(ttl=300)
-def get_setari(cls_or_self=None) -> dict:
-    cls = cls_or_self if isinstance(cls_or_self, type) else SetariRepository
-    _ensure_setari_schema_once()
-    res = cls().fetch_one("SELECT * FROM setari LIMIT 1") or {}
-    merged = dict(DEFAULTS_SETARI)
-    for key, default_val in DEFAULTS_SETARI.items():
-        val = res.get(key)
-        if val is not None and str(val).strip() != "":
-            merged[key] = val
-    for extra_key, extra_val in res.items():
-        if extra_key not in merged:
-            merged[extra_key] = extra_val
-    return merged    
-        
-        
+
 @st.cache_resource
 def _ensure_setari_schema_once() -> bool:
     try:
-        BaseRepository().execute(
-            """
-            ALTER TABLE setari
-            ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
-            ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
-            ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
-            ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT '',
-            ADD COLUMN IF NOT EXISTS locatie_documentatii_gdrive TEXT DEFAULT ''
-            """
-        )
+        with db_cursor() as cur:
+            cur.execute(
+                """
+                ALTER TABLE setari
+                ADD COLUMN IF NOT EXISTS telefon_1 VARCHAR(50) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT '',
+                ADD COLUMN IF NOT EXISTS locatie_documentatii_gdrive TEXT DEFAULT ''
+                """
+            )
         return True
     except Exception as exc:
         logger.warning(f"Verificarea coloanelor pe 'setari' a întâmpinat o eroare: {exc}")
         return False
 
+
 class SetariRepository(BaseRepository):
     @classmethod
-    def get_setari(cls) -> dict:
+    @st.cache_data(ttl=300)
+    def get_setari(cls_or_self=None) -> dict:
+        cls = cls_or_self if isinstance(cls_or_self, type) else SetariRepository
         _ensure_setari_schema_once()
         res = cls().fetch_one("SELECT * FROM setari LIMIT 1") or {}
         merged = dict(DEFAULTS_SETARI)
@@ -87,7 +76,6 @@ class SetariRepository(BaseRepository):
         for extra_key, extra_val in res.items():
             if extra_key not in merged:
                 merged[extra_key] = extra_val
-        cls.get_setari.clear()
         return merged
 
     @classmethod
@@ -136,10 +124,6 @@ class SetariRepository(BaseRepository):
             merged.get("adaos_comercial_implicit"),
         )
 
-        with BaseRepository() as _:
-            pass
-
-        from config import db_cursor
         with db_cursor() as cur:
             cur.execute("DELETE FROM setari")
             cur.execute(
@@ -157,11 +141,12 @@ class SetariRepository(BaseRepository):
                 """,
                 params,
             )
+        cls.get_setari.clear()
         logger.info("Setările au fost salvate în baza de date.")
 
     @classmethod
     def update_pass(cls, noua_parola: str) -> None:
-        from config import db_cursor
+        _ensure_setari_schema_once()
         with db_cursor() as cur:
             cur.execute("SELECT COUNT(*) AS cnt FROM setari")
             row = cur.fetchone()
@@ -169,5 +154,5 @@ class SetariRepository(BaseRepository):
                 cur.execute("INSERT INTO setari (pass) VALUES (%s)", (noua_parola,))
             else:
                 cur.execute("UPDATE setari SET pass = %s", (noua_parola,))
-        logger.info("Parola a fost actualizată în setări.")
         cls.get_setari.clear()
+        logger.info("Parola a fost actualizată în setări.")
