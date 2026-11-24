@@ -240,9 +240,10 @@ def render_masuratori():
                 "Subansamblu de măsurat",
                 options=opt_sub,
                 index=idx_sub,
-                key=f"mas_sub_select_v2_{m_id}",
+                key=sub_widget_key,
             )
             st.session_state[sub_state_key] = subansamblu_ales
+        
         with c_sub2:
             subansamblu_nou = st.text_input(
                 "Sau creează subansamblu nou de măsurat",
@@ -264,6 +265,7 @@ def render_masuratori():
                             sub_nou=subansamblu_nou,
                         )
                     st.session_state[sub_state_key] = subansamblu_nou
+                    st.session_state.pop(sub_widget_key, None)
                     st.toast(f"✅ Subansamblul '{subansamblu_nou}' este pregătit pentru măsurare.")
                     st.rerun(scope="fragment")
 
@@ -313,7 +315,12 @@ def render_masuratori():
                         "unitate_masura": unitate_input,
                         "data_masurare": datetime.now(),
                     })
-
+                    
+                    _invalideaza_cache_masuratori()
+                    st.session_state[sub_state_key] = sub_curat
+                    st.session_state.pop(sub_widget_key, None)
+                    masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
+                    
                     if sub_curat.lower() not in [s.lower() for s in subansambluri_existente]:
                         subansambluri_existente.append(sub_curat)
                         _persista_subansamblu_pe_masina(
@@ -393,3 +400,12 @@ def render_masuratori():
             st.dataframe(df_afisare, width="stretch")
 
     render_form_si_grafic(firma_id, masina_obj)
+    
+    m_id = masina_obj_val["id"]
+    m_nume = masina_obj_val["denumire"]
+    extra_key = f"mas_sub_extra_{m_id}"
+    sub_state_key = f"_mas_sub_curent_{m_id}"
+    sub_nou_key = f"mas_nou_sub_{m_id}"
+    sel_derulare_key = f"mas_sel_derulare_{m_id}"
+    last_derulare_key = f"_mas_last_derulare_{m_id}"
+    sub_widget_key = f"mas_sub_picker_{m_id}"
