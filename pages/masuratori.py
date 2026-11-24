@@ -29,6 +29,22 @@ _UNITATI_MASURA = [
     "Altul",
 ]
 
+# Paletă cu culori distincte pentru a separa clar parametrii pe grafic
+_PALETA_CULORI_PARAMETRI = [
+    "#00E5FF",  # cyan electric
+    "#FF5252",  # roșu coral
+    "#69F0AE",  # verde mentă
+    "#FFD740",  # galben ambră
+    "#E040FB",  # mov magenta
+    "#FF9100",  # portocaliu intens
+    "#448AFF",  # albastru cobalt
+    "#FF80AB",  # roz aprins
+    "#B2FF59",  # verde lime
+    "#18FFFF",  # turcoaz
+    "#EA80FC",  # lavandă
+    "#FFE57F",  # galben deschis
+]
+
 
 def _invalideaza_cache_masuratori() -> None:
     clear_fn = getattr(MasuratoriRepository.get_by_masina, "clear", None)
@@ -40,10 +56,6 @@ def _invalideaza_cache_masuratori() -> None:
 
 
 def _construieste_masuratori_in_derulare(masuratori_db: list[dict]) -> list[dict]:
-    """
-    Grupează măsurătorile existente ale mașinii în sesiuni/serii în derulare
-    (pe subansamblu și dată) astfel încât utilizatorul să poată selecta ușor o măsurătoare începută.
-    """
     if not masuratori_db:
         return []
 
@@ -116,6 +128,36 @@ def _colecteaza_subansambluri(
         _adauga(s_ext)
 
     return subansambluri
+
+
+def _colecteaza_parametri(
+    masuratori_db: list[dict],
+    subansamblu_filtru: str | None = None,
+) -> list[str]:
+    """
+    Returnează parametrii existenți (prioritizând pe cei asociați subansamblului curent,
+    apoi restul parametrilor înregistrați pe mașină), fără duplicate case-insensitive.
+    """
+    prioritari: list[str] = []
+    alti: list[str] = []
+    vazute: set[str] = set()
+    filtru_low = str(subansamblu_filtru or "").strip().lower()
+
+    for m_row in masuratori_db:
+        param = str(m_row.get("parametru") or "").strip()
+        if not param:
+            continue
+        low = param.lower()
+        if low in vazute:
+            continue
+        vazute.add(low)
+        sub_row = str(m_row.get("subansamblu") or "").strip().lower()
+        if filtru_low and sub_row == filtru_low:
+            prioritari.append(param)
+        else:
+            alti.append(param)
+
+    return prioritari + alti
 
 
 def _persista_subansamblu_pe_masina(
@@ -199,6 +241,8 @@ def render_masuratori():
         sel_derulare_key = f"mas_sel_derulare_{m_id}"
         last_derulare_key = f"_mas_last_derulare_{m_id}"
         sub_widget_key = f"mas_sub_box_{m_id}"
+        param_widget_key = f"mas_param_box_{m_id}"
+        param_nou_key = f"mas_nou_param_{m_id}"
 
         masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
         sesiuni_derulare = _construieste_masuratori_in_derulare(masuratori_db)
@@ -277,6 +321,38 @@ def render_masuratori():
 
         sub_activ_implicit = subansamblu_nou or subansamblu_ales
 
+        # 3. Selectare parametru existent din dropdown sau introducere parametru nou
+        parametri_existenti = _colecteaza_parametri(
+            masuratori_db=masuratori_db,
+            subansamblu_filtru=sub_activ_implicit,
+        )
+        opt_parametri = (
+            ["— Alege parametru existent —"] + parametri_existenti
+            if parametri_existenti
+            else ["— Parametru nou —"]
+        )
+
+        c_p1, c_p2 = st.columns([2.2, 2.2], vertical_alignment="bottom")
+        with c_p1:
+            parametru_ales_dropdown = st.selectbox(
+                "Parametru măsurat existent",
+                options=opt_parametri,
+                key=param_widget_key,
+                help="Alege un parametru deja înregistrat sau lasă pe prima opțiune și scrie unul nou în dreapta.",
+            )
+        with c_p2:
+            parametru_nou_input = st.text_input(
+                "Sau introdu parametru nou",
+                placeholder="ex: Temperatură, Joc axial, Presiune, Vibrații",
+                key=param_nou_key,
+            ).strip()
+
+        parametru_implicit = parametru_nou_input or (
+            parametru_ales_dropdown
+            if not parametru_ales_dropdown.startswith("—")
+            else ""
+        )
+
         with st.form(f"form_adauga_masuratoare_{m_id}", clear_on_submit=False):
             f_col1, f_col2 = st.columns(2)
 
@@ -287,7 +363,9 @@ def render_masuratori():
                     help="Poți ajusta direct sau folosi subansamblul selectat / creat mai sus.",
                 )
                 parametru_input = st.text_input(
-                    "Parametru măsurat (ex: Temperatură, Joc axial, Presiune, Vibrații)"
+                    "Parametru activ pentru măsurătoare",
+                    value=parametru_implicit,
+                    help="Preluat automat din dropdown sau din câmpul de parametru nou; îl poți modifica oricând.",
                 )
 
             with f_col2:
@@ -311,12 +389,13 @@ def render_masuratori():
                     st.error("Te rugăm să completezi subansamblul și denumirea parametrului.")
                 else:
                     sub_curat = subansamblu_input.strip()
+                    param_curat = parametru_input.strip()
 
                     MasuratoriRepository.insert({
                         "firma_id": firma_id_val,
                         "masina_id": m_id,
                         "subansamblu": sub_curat,
-                        "parametru": parametru_input.strip(),
+                        "parametru": param_curat,
                         "valoare": valoare_input,
                         "unitate_masura": unitate_input,
                         "data_masurare": datetime.now(),
@@ -335,9 +414,10 @@ def render_masuratori():
                     _invalideaza_cache_masuratori()
                     st.session_state[sub_state_key] = sub_curat
                     st.session_state.pop(sub_widget_key, None)
+                    st.session_state.pop(param_widget_key, None)
                     masuratori_db = MasuratoriRepository.get_by_masina(m_id) or []
                     st.success(
-                        f"Măsurătoarea pentru '{parametru_input}' ({valoare_input:+.3f} {unitate_input}) "
+                        f"Măsurătoarea pentru '{param_curat}' ({valoare_input:+.3f} {unitate_input}) "
                         f"pe subansamblul '{sub_curat}' a fost salvată!"
                     )
 
@@ -368,13 +448,23 @@ def render_masuratori():
         )
 
         if sel_param_grafic:
-            df_filtrat = df_masuratori[df_masuratori["eticheta_parametru"].isin(sel_param_grafic)]
+            df_filtrat = (
+                df_masuratori[df_masuratori["eticheta_parametru"].isin(sel_param_grafic)]
+                .sort_values("data_masurare")
+            )
+
+            # Mapăm explicit culori distincte pe fiecare parametru unic din grafic
+            color_map = {
+                param_lbl: _PALETA_CULORI_PARAMETRI[i % len(_PALETA_CULORI_PARAMETRI)]
+                for i, param_lbl in enumerate(parametri_unic)
+            }
 
             fig = px.line(
                 df_filtrat,
                 x="data_masurare",
                 y="valoare",
                 color="eticheta_parametru",
+                color_discrete_map=color_map,
                 markers=True,
                 title=f"Evoluția în Timp a Parametrilor Tehnici ({m_nume})",
                 labels={
@@ -384,6 +474,8 @@ def render_masuratori():
                 },
                 hover_data={"valoare": ":+.3f", "unitate_masura": True, "subansamblu": True},
             )
+
+            fig.update_traces(line=dict(width=2.5), marker=dict(size=8))
 
             fig.update_layout(
                 xaxis=dict(autorange=True, title="Timp Scurs"),
