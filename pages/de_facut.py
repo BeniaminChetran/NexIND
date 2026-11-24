@@ -519,9 +519,11 @@ def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]
         if taskuri_urgente:
             for t in taskuri_urgente[:8]:
                 termen_txt = formateaza_termen_complet(t.get("de_facut_pana_la"), t.get("ora_limita"))
+                este_fin = t.get("stare") == "Finalizat"
+                strike_style = "text-decoration:line-through;opacity:0.65;" if este_fin else ""
                 st.markdown(
                     f"""
-                    <div style="background:#FEF2F2;border-left:5px solid #DC2626;padding:8px 12px;margin-bottom:6px;border-radius:4px;">
+                    <div style="background:#FEF2F2;border-left:5px solid #DC2626;padding:8px 12px;margin-bottom:6px;border-radius:4px;{strike_style}">
                         <div style="color:#B91C1C;font-size:1.08rem;font-weight:700;">
                             🚨 {t.get('firma') or '-'} {f"• {t.get('masina')}" if t.get('masina') else ""}
                         </div>
@@ -570,6 +572,11 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
         border = "#DC2626"
         text_col = "#991B1B"
         badge = "🚨 URGENT"
+    elif nivel == "finalizat":
+        bg = "#F3F4F6"
+        border = "#6B7280"
+        text_col = "#4B5563"
+        badge = "✅ FINALIZAT"
     else:
         bg = "#FEF9C3"
         border = "#D97706"
@@ -580,16 +587,18 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
         tid = int(t["id"])
         termen_str = formateaza_termen_complet(t.get("de_facut_pana_la"), t.get("ora_limita"))
         masina_str = f" — <i>{t.get('masina')}</i>" if t.get("masina") else ""
+        este_fin = t.get("stare") == "Finalizat"
+        nota_css = "text-decoration:line-through;opacity:0.75;" if este_fin else ""
 
         c_card, c_done, c_del = st.columns([6.2, 1.1, 0.9], vertical_alignment="center")
         with c_card:
             st.markdown(
                 f"""
                 <div style="background:{bg};border-left:5px solid {border};padding:10px 14px;border-radius:6px;margin-bottom:6px;">
-                    <div style="color:{text_col};font-size:1.05rem;font-weight:700;">
+                    <div style="color:{text_col};font-size:1.05rem;font-weight:700;{nota_css}">
                         {badge} • {t.get('firma') or '-'}{masina_str}
                     </div>
-                    <div style="color:{text_col};font-size:1.0rem;margin-top:4px;">
+                    <div style="color:{text_col};font-size:1.0rem;margin-top:4px;{nota_css}">
                         {t.get('note_vizita') or ''}
                     </div>
                     <div style="color:{text_col};font-size:0.86rem;opacity:0.9;margin-top:4px;">
@@ -602,7 +611,7 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
                 unsafe_allow_html=True,
             )
         with c_done:
-            if t.get("stare") != "Finalizat":
+            if not este_fin:
                 if st.button("✅ Completed", key=f"btn_done_task_{nivel}_{tid}", use_container_width=True):
                     if hasattr(TaskuriVizitaRepository, "mark_completed"):
                         TaskuriVizitaRepository.mark_completed(tid)
@@ -615,11 +624,13 @@ def _randeaza_lista_carduri_taskuri(task_list: list[dict], nivel: str):
                         )
                     _goleste_cache_taskuri()
                     st.session_state["df_toast_msg"] = "✅ Task marcat ca Finalizat."
+                    st.rerun()
         with c_del:
             if st.button("🗑️ Șterge", key=f"btn_del_task_{nivel}_{tid}", use_container_width=True):
                 TaskuriVizitaRepository.delete(tid)
                 _goleste_cache_taskuri()
                 st.session_state["df_toast_msg"] = "🗑️ Task șters."
+                st.rerun()
 
 
 def render_notite_vizita_de_facut(taskuri: list[dict]):
@@ -670,30 +681,30 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
 
             if salveaza_nota:
                 try:
-                    TaskuriVizitaRepository.insert(
-                        data_vizita=data_viz,
-                        de_facut_pana_la=de_facut_pana,
-                        ora_limita=ora_limita_inp,
-                        firma=firma_viz,
-                        firma_id=fid_viz,
-                        masina=masina_viz,
-                        note_vizita=note_viz,
-                        stare=stare_viz,
-                    )
+                    try:
+                        TaskuriVizitaRepository.insert(
+                            data_vizita=data_viz,
+                            de_facut_pana_la=de_facut_pana,
+                            ora_limita=ora_limita_inp,
+                            firma=firma_viz,
+                            firma_id=fid_viz,
+                            masina=masina_viz,
+                            note_vizita=note_viz,
+                            stare=stare_viz,
+                        )
+                    except TypeError:
+                        TaskuriVizitaRepository.insert(
+                            data_vizita=data_viz,
+                            de_facut_pana_la=de_facut_pana,
+                            firma=firma_viz,
+                            firma_id=fid_viz,
+                            masina=masina_viz,
+                            note_vizita=note_viz,
+                            stare=stare_viz,
+                        )
                     _goleste_cache_taskuri()
                     st.session_state["df_toast_msg"] = f"✅ Notiță salvată pentru {firma_viz} ({stare_viz})."
-                except TypeError:
-                    TaskuriVizitaRepository.insert(
-                        data_vizita=data_viz,
-                        de_facut_pana_la=de_facut_pana,
-                        firma=firma_viz,
-                        firma_id=fid_viz,
-                        masina=masina_viz,
-                        note_vizita=note_viz,
-                        stare=stare_viz,
-                    )
-                    _goleste_cache_taskuri()
-                    st.session_state["df_toast_msg"] = f"✅ Notiță salvată pentru {firma_viz} ({stare_viz})."
+                    st.rerun()
                 except ValueError as ve:
                     st.error(f"⚠️ {ve}")
 
@@ -704,6 +715,7 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
 
         taskuri_urgente = [t for t in taskuri if t.get("stare") == "Urgent"]
         taskuri_normale = [t for t in taskuri if t.get("stare") not in ("Urgent", "Finalizat")]
+        taskuri_finalizate = [t for t in taskuri if t.get("stare") == "Finalizat"]
 
         st.markdown("#### 🚨 Task-uri Urgente")
         if taskuri_urgente:
@@ -716,6 +728,10 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
             _randeaza_lista_carduri_taskuri(taskuri_normale, nivel="normal")
         else:
             st.caption("Nu există task-uri normale active.")
+
+        if taskuri_finalizate:
+            with st.expander(f"✅ Task-uri Finalizate ({len(taskuri_finalizate)})", expanded=False):
+                _randeaza_lista_carduri_taskuri(taskuri_finalizate, nivel="finalizat")
 
         with st.expander("✏️ Editare Rapidă în Tabel", expanded=False):
             df_t_init = pd.DataFrame([
@@ -806,6 +822,7 @@ def render_notite_vizita_de_facut(taskuri: list[dict]):
                     st.info("ℹ️ Nu există modificări nesalvate la notițe.")
                 else:
                     st.session_state["df_toast_msg"] = f"✅ Actualizate: {nr_mod_t} modificate, {nr_del_t} șterse."
+                    st.rerun()
 
 
 def render_notare_rapida_teren():
@@ -917,6 +934,7 @@ def render_notare_rapida_teren():
                 _goleste_cache_piese_si_rfq()
                 mesaj_cat = "existentă în catalog" if rez.get("existenta_in_catalog") else "adăugată și în catalogul `piese`"
                 st.session_state["df_toast_msg"] = f"✅ Salvat {str(den_finala).strip()} ({mesaj_cat})."
+                st.rerun()
             except ValueError as ve:
                 st.error(f"⚠️ {ve}")
 
@@ -1073,6 +1091,7 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
                 st.info("ℹ️ Nu există modificări nesalvate.")
             else:
                 st.session_state["df_toast_msg"] = f"✅ Stările au fost actualizate pentru {nr_mod} poziții."
+                st.rerun()
 
 
 def render_cereri_oferta_furnizori_de_facut():
@@ -1194,6 +1213,7 @@ def render_cereri_oferta_furnizori_de_facut():
                     )
                     _goleste_cache_piese_si_rfq()
                     st.session_state["df_toast_msg"] = f"✅ Cererea {cer_noua.get('cod_cerere')} a fost creată."
+                    st.rerun()
                 except ValueError as ve:
                     st.error(f"⚠️ {ve}")
 
@@ -1253,6 +1273,7 @@ def render_cereri_oferta_furnizori_de_facut():
                 _goleste_cache_taskuri()
                 _goleste_cache_piese_si_rfq()
                 st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
+                st.rerun()
 
         if linii_cer:
             df_lin_init = pd.DataFrame([
@@ -1330,6 +1351,7 @@ def render_cereri_oferta_furnizori_de_facut():
                     _goleste_cache_taskuri()
                     _goleste_cache_piese_si_rfq()
                     st.session_state["df_toast_msg"] = f"✅ Oferta furnizor pentru {cer_activa.get('firma_nume')} a fost salvată."
+                    st.rerun()
 
             with ca_b2:
                 if st.button(
@@ -1390,6 +1412,7 @@ def render_cereri_oferta_furnizori_de_facut():
                     CereriOfertaRepository.update_status_cerere(cid_activa, "Ofertat la client")
                     _goleste_cache_piese_si_rfq()
                     st.session_state["df_toast_msg"] = f"✅ Liniile au fost pregătite în Oferte pentru {firma_nume}."
+                    st.rerun()
 
 
 def render_memento_intretinere_de_facut():
@@ -1444,6 +1467,7 @@ def render_de_facut():
         if st.button("🔄 Actualizează", use_container_width=True, key="btn_df_refresh_unic"):
             _goleste_cache_de_facut()
             st.session_state["df_toast_msg"] = "🔄 Datele au fost reîncărcate."
+            st.rerun()
     with col_perf:
         arat_timpi = st.checkbox("⏱️ Timpi", value=False, key="df_show_timings")
 
