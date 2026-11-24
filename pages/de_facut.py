@@ -1057,7 +1057,6 @@ def render_memento_intretinere_de_facut():
         df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
         st.dataframe(df_m, hide_index=True, use_container_width=True)
 
-
 def render_de_facut():
     col_title, col_refresh = st.columns([5, 1])
     with col_title:
@@ -1069,19 +1068,19 @@ def render_de_facut():
 
     piese_rows = _colecteaza_piese_necesare()
 
-    # 7. Privire de ansamblu sus în pagină
+    # Privire de ansamblu sus în pagină
     render_privire_ansamblu_de_facut(piese_rows)
 
     st.markdown("---")
-    # 1, 2, 3. Notare rapidă piese
-    render_notare_rapida_teren()
-
-    # 4. Piese de comandat / necesare & furnizori
-    render_tabel_piese_de_comandat(piese_rows)
-
-    # 5, 6. Notițe & task-uri vizită client pe toată lățimea paginii
+    # 1. Primul expander: Notițe & task-uri vizită client (pe toată lățimea paginii)
     render_notite_vizita_de_facut()
 
+    # 2. Al doilea expander: Notare rapidă piese
+    render_notare_rapida_teren()
+
+    # 3. Al treilea expander: Piese de comandat / necesare & furnizori
+    render_tabel_piese_de_comandat(piese_rows)
+
     st.markdown("---")
-    # 8. Memento scadențe întreținere
+    # Memento scadențe întreținere
     render_memento_intretinere_de_facut()
