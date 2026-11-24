@@ -7,6 +7,7 @@ import streamlit as st
 from config import db_cursor
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository, ALL_SISTEME_DEFAULT
+from utils.sectiune_masina_cmms import render_sectiune_cmms_masina
 
 
 def _asigura_coloane_masini():
@@ -250,3 +251,6 @@ def render_masini():
                     _sterge_masina_db(mid)
                     st.warning(f"🗑️ Mașina **{m.get('denumire')}** a fost ștearsă.")
                     st.rerun()
+                    
+    # ... după ce ai firma_id și masina_obj (dicționarul mașinii active):
+    render_sectiune_cmms_masina(firma_id=firma_id, masina_obj=masina_obj)                
