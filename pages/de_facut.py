@@ -122,6 +122,38 @@ def _obtine_furnizori_cunoscuti_cached() -> list[str]:
     return sorted(nume_set, key=lambda x: x.lower())
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _obtine_cereri_cu_detalii_cached() -> list[dict]:
+    if not _HAS_CERERI_REPO or CereriOfertaRepository is None:
+        return []
+    cereri_raw = CereriOfertaRepository.get_cereri() or []
+    rezultat: list[dict] = []
+    for c in cereri_raw:
+        item = dict(c)
+        cid = item.get("id")
+        piese_lista: list[str] = []
+        furn_lista: list[str] = []
+        if cid is not None:
+            try:
+                linii = CereriOfertaRepository.get_linii_by_cerere(int(cid)) or []
+            except Exception:
+                linii = []
+            for l in linii:
+                den_p = str(l.get("denumire_piesa") or "").strip()
+                cod_p = str(l.get("cod_producator") or "").strip()
+                lbl_p = f"{den_p} [{cod_p}]" if den_p and cod_p else (den_p or cod_p)
+                if lbl_p and lbl_p not in piese_lista:
+                    piese_lista.append(lbl_p)
+                fn_l = str(l.get("furnizor_nume") or "").strip()
+                if fn_l and fn_l not in furn_lista:
+                    furn_lista.append(fn_l)
+        item["_piese_str"] = ", ".join(piese_lista) if piese_lista else "-"
+        item["_furnizori_str"] = ", ".join(furn_lista) if furn_lista else "-"
+        item["_furnizori_set"] = {x.lower() for x in furn_lista if x}
+        rezultat.append(item)
+    return rezultat
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _incarca_optiuni_lookup_piese():
     piese_catalog = PieseRepository.get_all() or []
@@ -181,7 +213,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                 FROM masini
                 WHERE COALESCE(fara_intretinere, FALSE) = FALSE
                   AND data_intretinere IS NOT NULL
-                  AND CAST(data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
+                  AND CAST(m.data_intretinere AS DATE) <= (CURRENT_DATE + make_interval(days => %s))
                 ORDER BY CAST(data_intretinere AS DATE) ASC, denumire ASC
                 """,
                 (zile,),
@@ -199,6 +231,7 @@ def _goleste_cache_piese_si_rfq():
     _clear_fn(_colecteaza_piese_necesare)
     _clear_fn(_incarca_optiuni_lookup_piese)
     _clear_fn(_obtine_furnizori_cunoscuti_cached)
+    _clear_fn(_obtine_cereri_cu_detalii_cached)
     for repo in (PieseRepository, NecesarPieseRepository, ReparatiiRepository, CereriOfertaRepository, FurnizoriRepository):
         if repo is None:
             continue
@@ -1103,7 +1136,7 @@ def render_cereri_oferta_furnizori_de_facut():
         return
 
     with st.expander("📨 Cereri Ofertă Furnizori (RFQ) • Analiză Prețuri & Legătură Client / Mașină", expanded=False):
-        cereri_all = CereriOfertaRepository.get_cereri() or []
+        cereri_all = _obtine_cereri_cu_detalii_cached()
         firme_nume, nume_to_id = _obtine_harta_firme_cached()
         masini_all = _obtine_masini_cached()
         furnizori_cunoscuti = _obtine_furnizori_cunoscuti_cached()
@@ -1229,209 +1262,245 @@ def render_cereri_oferta_furnizori_de_facut():
             if not cereri_all:
                 st.info("Nu există cereri de ofertă către furnizori înregistrate.")
             else:
-                filtru_st_cer = st.selectbox(
-                    "Filtrează după starea cererii",
-                    options=["Toate"] + OPTIUNI_STATUS_CERERE_OFERTA,
-                    key="df_rfq_filtru_status",
-                )
+                clienti_disp = ["Toți clienții"] + sorted({
+                    str(c.get("firma_nume") or "").strip() for c in cereri_all if str(c.get("firma_nume") or "").strip()
+                })
+                furn_disp = ["Toți furnizorii"] + sorted({
+                    fn for c in cereri_all for fn in (c.get("_furnizori_str") or "").split(", ") if fn and fn != "-"
+                })
+
+                fc1, fc2, fc3, fc4 = st.columns([1.3, 1.4, 1.4, 1.5])
+                with fc1:
+                    filtru_st_cer = st.selectbox(
+                        "Stare cerere",
+                        options=["Toate"] + OPTIUNI_STATUS_CERERE_OFERTA,
+                        key="df_rfq_filtru_status",
+                    )
+                with fc2:
+                    filtru_cli_cer = st.selectbox(
+                        "Client",
+                        options=clienti_disp,
+                        key="df_rfq_filtru_client",
+                    )
+                with fc3:
+                    filtru_furn_cer = st.selectbox(
+                        "Furnizor",
+                        options=furn_disp,
+                        key="df_rfq_filtru_furnizor",
+                    )
+                with fc4:
+                    filtru_piesa_cer = st.text_input(
+                        "Piesă / cod",
+                        placeholder="ex: rulment, cod...",
+                        key="df_rfq_filtru_piesa",
+                    ).strip().lower()
+
                 cereri_filtrate = [
                     c for c in cereri_all
-                    if filtru_st_cer == "Toate" or normalizeaza_status_cerere_oferta(c.get("status_cerere")) == filtru_st_cer
+                    if (filtru_st_cer == "Toate" or normalizeaza_status_cerere_oferta(c.get("status_cerere")) == filtru_st_cer)
+                    and (filtru_cli_cer == "Toți clienții" or str(c.get("firma_nume") or "").strip() == filtru_cli_cer)
+                    and (filtru_furn_cer == "Toți furnizorii" or filtru_furn_cer.lower() in (c.get("_furnizori_set") or set()))
+                    and (not filtru_piesa_cer or filtru_piesa_cer in str(c.get("_piese_str") or "").lower())
                 ]
+
                 if not cereri_filtrate:
-                    st.info("Nu există cereri pentru filtrul selectat.")
+                    st.info("Nu există cereri care să corespundă filtrelor selectate.")
                 else:
                     df_cer = pd.DataFrame([
                         {
-                            "Cod Cerere": str(c.get("cod_cerere") or ""),
-                            "Stare Cerere": normalizeaza_status_cerere_oferta(c.get("status_cerere")),
-                            "Client": str(c.get("firma_nume") or ""),
+                            "Stare cerere": normalizeaza_status_cerere_oferta(c.get("status_cerere")),
+                            "Client": str(c.get("firma_nume") or "-"),
                             "Mașină": str(c.get("masina_nume") or "-"),
-                            "Data Trimitere": str(c.get("data_trimitere") or "")[:10],
-                            "Termen Răspuns": str(c.get("termen_raspuns") or "-")[:10],
-                            "Ofertă Client ID": str(c.get("oferta_client_id") or "-"),
-                            "Observații": str(c.get("observatii") or ""),
+                            "Piesă": str(c.get("_piese_str") or "-"),
+                            "Cod Cerere": str(c.get("cod_cerere") or ""),
                         }
                         for c in cereri_filtrate
                     ])
                     st.dataframe(df_cer, hide_index=True, use_container_width=True)
 
-        # 3. ANALIZĂ OFERTE PRIMITE & OFERTĂ CLIENT
-        with st.expander("3. Analiză Oferte Primite de la Furnizori & Legătură cu Oferta către Client", expanded=False):
+        # 3. PRELUARE, ANALIZĂ OFERTE PRIMITE & OFERTĂ CLIENT
+        with st.expander("Preluare, Analiză Oferte Primite de la Furnizori & Legătură cu Oferta către Client", expanded=False):
             if not cereri_all:
                 st.info("Nu există cereri de ofertă de analizat.")
-                return
+            else:
+                filtru_st_an = st.session_state.get("df_rfq_filtru_status", "Toate")
+                filtru_cli_an = st.session_state.get("df_rfq_filtru_client", "Toți clienții")
+                filtru_furn_an = st.session_state.get("df_rfq_filtru_furnizor", "Toți furnizorii")
+                filtru_piesa_an = str(st.session_state.get("df_rfq_filtru_piesa") or "").strip().lower()
 
-            filtru_st_an = st.session_state.get("df_rfq_filtru_status", "Toate")
-            cereri_analiza = [
-                c for c in cereri_all
-                if filtru_st_an == "Toate" or normalizeaza_status_cerere_oferta(c.get("status_cerere")) == filtru_st_an
-            ] or cereri_all
+                cereri_analiza = [
+                    c for c in cereri_all
+                    if (filtru_st_an == "Toate" or normalizeaza_status_cerere_oferta(c.get("status_cerere")) == filtru_st_an)
+                    and (filtru_cli_an == "Toți clienții" or str(c.get("firma_nume") or "").strip() == filtru_cli_an)
+                    and (filtru_furn_an == "Toți furnizorii" or filtru_furn_an.lower() in (c.get("_furnizori_set") or set()))
+                    and (not filtru_piesa_an or filtru_piesa_an in str(c.get("_piese_str") or "").lower())
+                ] or cereri_all
 
-            mapa_cereri = {
-                f"{c.get('cod_cerere')} | {c.get('firma_nume')} ({normalizeaza_status_cerere_oferta(c.get('status_cerere'))})": c
-                for c in cereri_analiza
-            }
-            sel_cer_lbl = st.selectbox("Selectează cererea pentru analiză:", options=list(mapa_cereri.keys()), key="df_rfq_sel_analiza")
-            cer_activa = mapa_cereri[sel_cer_lbl]
-            cid_activa = int(cer_activa["id"])
-            linii_cer = CereriOfertaRepository.get_linii_by_cerere(cid_activa) or []
+                mapa_cereri = {
+                    f"{c.get('cod_cerere') or '-'}, {c.get('firma_nume') or '-'}, {c.get('masina_nume') or '-'}, {c.get('_piese_str') or '-'} ({normalizeaza_status_cerere_oferta(c.get('status_cerere'))})": c
+                    for c in cereri_analiza
+                }
+                opts_cer = list(mapa_cereri.keys())
+                sel_cer_lbl = st.selectbox("Selectează cererea pentru analiză:", options=opts_cer, key="df_rfq_sel_analiza")
+                cer_activa = mapa_cereri[sel_cer_lbl]
+                cid_activa = int(cer_activa["id"])
+                linii_cer = CereriOfertaRepository.get_linii_by_cerere(cid_activa) or []
 
-            cs_left, cs_right = st.columns([2.0, 2.0], vertical_alignment="bottom")
-            with cs_left:
-                st_curent = normalizeaza_status_cerere_oferta(cer_activa.get("status_cerere"))
-                nou_st_cer = st.selectbox(
-                    "Stare cerere",
-                    options=OPTIUNI_STATUS_CERERE_OFERTA,
-                    index=OPTIUNI_STATUS_CERERE_OFERTA.index(st_curent),
-                    key=f"df_rfq_st_sel_{cid_activa}",
-                )
-            with cs_right:
-                if st.button("🔄 Actualizează Starea Cererii", key=f"df_rfq_btn_st_{cid_activa}", use_container_width=True):
-                    CereriOfertaRepository.update_status_cerere(cid_activa, nou_st_cer)
-                    _goleste_cache_taskuri()
-                    _goleste_cache_piese_si_rfq()
-                    st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
-                    st.rerun()
-
-            if linii_cer:
-                df_lin_init = pd.DataFrame([
-                    {
-                        "id": int(l["id"]),
-                        "Furnizor": str(l.get("furnizor_nume") or ""),
-                        "Piesă": str(l.get("denumire_piesa") or ""),
-                        "Cod Prod.": str(l.get("cod_producator") or ""),
-                        "Piese înlocuitoare": str(l.get("piese_inlocuitoare") or ""),
-                        "Cant.": float(l.get("cantitate") or 1.0),
-                        "Preț Unitar": float(l.get("pret_unitar") or 0.0),
-                        "Monedă": str(l.get("moneda") or "EUR"),
-                        "Termen livrare": str(l.get("termen_livrare_zile") or ""),
-                        "Selectat Client": bool(l.get("selectat_pentru_client", False)),
-                    }
-                    for l in linii_cer
-                ])
-
-                df_lin_edit = st.data_editor(
-                    df_lin_init,
-                    key=f"df_rfq_linii_editor_{cid_activa}",
-                    hide_index=True,
-                    num_rows="fixed",
-                    use_container_width=True,
-                    disabled=["id", "Piesă", "Cod Prod.", "Cant."],
-                    column_config={
-                        "id": None,
-                        "Furnizor": st.column_config.TextColumn("Furnizor", width="medium"),
-                        "Piesă": st.column_config.TextColumn("Piesă", width="large"),
-                        "Cod Prod.": st.column_config.TextColumn("Cod Prod.", width="small"),
-                        "Piese înlocuitoare": st.column_config.TextColumn("Piese înlocuitoare", width="medium"),
-                        "Cant.": st.column_config.NumberColumn("Cant.", format="%.2f", width="small"),
-                        "Preț Unitar": st.column_config.NumberColumn("Preț Unitar", min_value=0.0, format="%.2f", width="small"),
-                        "Monedă": st.column_config.SelectboxColumn("Monedă", options=["EUR", "RON"], width="small"),
-                        "Termen livrare": st.column_config.TextColumn("Termen livrare", width="small"),
-                        "Selectat Client": st.column_config.CheckboxColumn("✅ Client", default=False, width="small"),
-                    },
-                )
-
-                df_analiza = df_lin_edit.copy()
-                df_analiza["Total Linie"] = (
-                    pd.to_numeric(df_analiza["Cant."], errors="coerce").fillna(0.0)
-                    * pd.to_numeric(df_analiza["Preț Unitar"], errors="coerce").fillna(0.0)
-                ).round(2)
-                rezumat_furn = (
-                    df_analiza.groupby(["Furnizor", "Monedă"], as_index=False)["Total Linie"]
-                    .sum()
-                    .sort_values(by="Total Linie", ascending=True)
-                )
-                if not rezumat_furn.empty:
-                    st.caption("📊 **Analiză comparativă oferte furnizori:**")
-                    st.dataframe(rezumat_furn, hide_index=True, use_container_width=True)
-
-                ca_b1, ca_b2 = st.columns(2)
-                with ca_b1:
-                    if st.button(
-                        "💾 Salvează Oferta Primită de la Furnizor (+ Task Ofertă Client)",
-                        type="primary",
-                        key=f"df_rfq_save_primita_{cid_activa}",
-                        use_container_width=True,
-                    ):
-                        payload_linii = [
-                            {
-                                "id": int(r["id"]),
-                                "furnizor_nume": str(r.get("Furnizor") or "").strip(),
-                                "pret_unitar": float(pd.to_numeric(r.get("Preț Unitar"), errors="coerce") or 0.0),
-                                "moneda": str(r.get("Monedă") or "EUR").strip().upper(),
-                                "termen_livrare_zile": str(r.get("Termen livrare") or "").strip(),
-                                "piese_inlocuitoare": str(r.get("Piese înlocuitoare") or "").strip(),
-                                "selectat_pentru_client": bool(r.get("Selectat Client", False)),
-                            }
-                            for _, r in df_lin_edit.iterrows()
-                        ]
-                        CereriOfertaRepository.salveaza_oferta_primita_furnizor(cid_activa, payload_linii)
+                cs_left, cs_right = st.columns([2.0, 2.0], vertical_alignment="bottom")
+                with cs_left:
+                    st_curent = normalizeaza_status_cerere_oferta(cer_activa.get("status_cerere"))
+                    nou_st_cer = st.selectbox(
+                        "Stare cerere",
+                        options=OPTIUNI_STATUS_CERERE_OFERTA,
+                        index=OPTIUNI_STATUS_CERERE_OFERTA.index(st_curent),
+                        key=f"df_rfq_st_sel_{cid_activa}",
+                    )
+                with cs_right:
+                    if st.button("🔄 Actualizează Starea Cererii", key=f"df_rfq_btn_st_{cid_activa}", use_container_width=True):
+                        CereriOfertaRepository.update_status_cerere(cid_activa, nou_st_cer)
                         _goleste_cache_taskuri()
                         _goleste_cache_piese_si_rfq()
-                        st.session_state["df_toast_msg"] = f"✅ Oferta furnizor pentru {cer_activa.get('firma_nume')} a fost salvată."
+                        st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
                         st.rerun()
 
-                with ca_b2:
-                    if st.button(
-                        "🚀 Pregătește Liniile în Oferta către Client",
-                        key=f"df_rfq_prep_oferta_client_{cid_activa}",
+                if linii_cer:
+                    df_lin_init = pd.DataFrame([
+                        {
+                            "id": int(l["id"]),
+                            "Furnizor": str(l.get("furnizor_nume") or ""),
+                            "Piesă": str(l.get("denumire_piesa") or ""),
+                            "Cod Prod.": str(l.get("cod_producator") or ""),
+                            "Piese înlocuitoare": str(l.get("piese_inlocuitoare") or ""),
+                            "Cant.": float(l.get("cantitate") or 1.0),
+                            "Preț Unitar": float(l.get("pret_unitar") or 0.0),
+                            "Monedă": str(l.get("moneda") or "EUR"),
+                            "Termen livrare": str(l.get("termen_livrare_zile") or ""),
+                            "Selectat Client": bool(l.get("selectat_pentru_client", False)),
+                        }
+                        for l in linii_cer
+                    ])
+
+                    df_lin_edit = st.data_editor(
+                        df_lin_init,
+                        key=f"df_rfq_linii_editor_{cid_activa}",
+                        hide_index=True,
+                        num_rows="fixed",
                         use_container_width=True,
-                    ):
-                        firme_all = FirmeRepository.get_all() or []
-                        firma_nume = str(cer_activa.get("firma_nume") or "").strip()
-                        firma_obj = next((f for f in firme_all if str(f.get("nume_firma") or "").strip() == firma_nume), {})
-                        adaos_client = float(firma_obj.get("adaos_comercial", 20.0) or 20.0)
+                        disabled=["id", "Piesă", "Cod Prod.", "Cant."],
+                        column_config={
+                            "id": None,
+                            "Furnizor": st.column_config.TextColumn("Furnizor", width="medium"),
+                            "Piesă": st.column_config.TextColumn("Piesă", width="large"),
+                            "Cod Prod.": st.column_config.TextColumn("Cod Prod.", width="small"),
+                            "Piese înlocuitoare": st.column_config.TextColumn("Piese înlocuitoare", width="medium"),
+                            "Cant.": st.column_config.NumberColumn("Cant.", format="%.2f", width="small"),
+                            "Preț Unitar": st.column_config.NumberColumn("Preț Unitar", min_value=0.0, format="%.2f", width="small"),
+                            "Monedă": st.column_config.SelectboxColumn("Monedă", options=["EUR", "RON"], width="small"),
+                            "Termen livrare": st.column_config.TextColumn("Termen livrare", width="small"),
+                            "Selectat Client": st.column_config.CheckboxColumn("✅ Client", default=False, width="small"),
+                        },
+                    )
 
-                        linii_sel = [r for _, r in df_lin_edit.iterrows() if bool(r.get("Selectat Client", False))]
-                        if not linii_sel:
-                            linii_sel = [r for _, r in df_lin_edit.iterrows()]
+                    df_analiza = df_lin_edit.copy()
+                    df_analiza["Total Linie"] = (
+                        pd.to_numeric(df_analiza["Cant."], errors="coerce").fillna(0.0)
+                        * pd.to_numeric(df_analiza["Preț Unitar"], errors="coerce").fillna(0.0)
+                    ).round(2)
+                    rezumat_furn = (
+                        df_analiza.groupby(["Furnizor", "Monedă"], as_index=False)["Total Linie"]
+                        .sum()
+                        .sort_values(by="Total Linie", ascending=True)
+                    )
+                    if not rezumat_furn.empty:
+                        st.caption("📊 **Analiză comparativă oferte furnizori:**")
+                        st.dataframe(rezumat_furn, hide_index=True, use_container_width=True)
 
-                        randuri_oferta = []
-                        for idx_r, r in enumerate(linii_sel, start=1):
-                            cant = float(pd.to_numeric(r.get("Cant."), errors="coerce") or 1.0)
-                            pret_furn = float(pd.to_numeric(r.get("Preț Unitar"), errors="coerce") or 0.0)
-                            pret_cu_adaos = round(pret_furn * (1.0 + adaos_client / 100.0), 2)
-                            mon = str(r.get("Monedă") or "EUR").strip().upper()
-                            if mon not in ("RON", "EUR"):
-                                mon = "EUR"
-                            den = str(r.get("Piesă") or "").strip()
-                            cod = str(r.get("Cod Prod.") or "").strip()
-                            desc_finala = f"{den} ({cod})" if cod and cod.lower() not in den.lower() else den
-                            termen = str(r.get("Termen livrare") or "1").strip() or "1"
+                    ca_b1, ca_b2 = st.columns(2)
+                    with ca_b1:
+                        if st.button(
+                            "💾 Salvează Oferta Primită de la Furnizor (+ Task Ofertă Client)",
+                            type="primary",
+                            key=f"df_rfq_save_primita_{cid_activa}",
+                            use_container_width=True,
+                        ):
+                            payload_linii = [
+                                {
+                                    "id": int(r["id"]),
+                                    "furnizor_nume": str(r.get("Furnizor") or "").strip(),
+                                    "pret_unitar": float(pd.to_numeric(r.get("Preț Unitar"), errors="coerce") or 0.0),
+                                    "moneda": str(r.get("Monedă") or "EUR").strip().upper(),
+                                    "termen_livrare_zile": str(r.get("Termen livrare") or "").strip(),
+                                    "piese_inlocuitoare": str(r.get("Piese înlocuitoare") or "").strip(),
+                                    "selectat_pentru_client": bool(r.get("Selectat Client", False)),
+                                }
+                                for _, r in df_lin_edit.iterrows()
+                            ]
+                            CereriOfertaRepository.salveaza_oferta_primita_furnizor(cid_activa, payload_linii)
+                            _goleste_cache_taskuri()
+                            _goleste_cache_piese_si_rfq()
+                            st.session_state["df_toast_msg"] = f"✅ Oferta furnizor pentru {cer_activa.get('firma_nume')} a fost salvată."
+                            st.rerun()
 
-                            randuri_oferta.append({
-                                "Ordine": idx_r,
-                                "Descriere": desc_finala,
-                                "UM": "buc",
-                                "Cantitate": cant,
-                                "Pret Unitar": pret_cu_adaos,
-                                "Moneda": mon,
-                                "Termen livrare": termen,
-                            })
+                    with ca_b2:
+                        if st.button(
+                            "🚀 Pregătește Liniile în Oferta către Client",
+                            key=f"df_rfq_prep_oferta_client_{cid_activa}",
+                            use_container_width=True,
+                        ):
+                            firme_all = FirmeRepository.get_all() or []
+                            firma_nume = str(cer_activa.get("firma_nume") or "").strip()
+                            firma_obj = next((f for f in firme_all if str(f.get("nume_firma") or "").strip() == firma_nume), {})
+                            adaos_client = float(firma_obj.get("adaos_comercial", 20.0) or 20.0)
 
-                        if randuri_oferta:
-                            st.session_state["df_oferta_editor"] = pd.DataFrame(randuri_oferta)
-                            st.session_state["editor_reset_counter"] = st.session_state.get("editor_reset_counter", 0) + 1
+                            linii_sel = [r for _, r in df_lin_edit.iterrows() if bool(r.get("Selectat Client", False))]
+                            if not linii_sel:
+                                linii_sel = [r for _, r in df_lin_edit.iterrows()]
 
-                        draft = st.session_state.get("oferta_draft")
-                        if isinstance(draft, dict):
-                            if firma_nume:
-                                draft["sel_firma"] = firma_nume
-                                draft["ultima_firma_pers"] = firma_nume
-                            masina_nume = str(cer_activa.get("masina_nume") or "").strip()
-                            if masina_nume:
-                                draft["sel_masina"] = masina_nume
-                                draft["ultima_masina_selectata"] = masina_nume
-                                draft["utilaj"] = masina_nume
-                            draft["cerere_furnizor_id"] = cid_activa
-                            draft["cod_cerere_furnizor"] = cer_activa.get("cod_cerere")
-                            st.session_state["ofs_cnt"] = st.session_state.get("ofs_cnt", 0) + 1
+                            randuri_oferta = []
+                            for idx_r, r in enumerate(linii_sel, start=1):
+                                cant = float(pd.to_numeric(r.get("Cant."), errors="coerce") or 1.0)
+                                pret_furn = float(pd.to_numeric(r.get("Preț Unitar"), errors="coerce") or 0.0)
+                                pret_cu_adaos = round(pret_furn * (1.0 + adaos_client / 100.0), 2)
+                                mon = str(r.get("Monedă") or "EUR").strip().upper()
+                                if mon not in ("RON", "EUR"):
+                                    mon = "EUR"
+                                den = str(r.get("Piesă") or "").strip()
+                                cod = str(r.get("Cod Prod.") or "").strip()
+                                desc_finala = f"{den} ({cod})" if cod and cod.lower() not in den.lower() else den
+                                termen = str(r.get("Termen livrare") or "1").strip() or "1"
 
-                        CereriOfertaRepository.update_status_cerere(cid_activa, "Ofertat la client")
-                        _goleste_cache_piese_si_rfq()
-                        st.session_state["df_toast_msg"] = f"✅ Liniile au fost pregătite în Oferte pentru {firma_nume}."
-                        st.rerun()
+                                randuri_oferta.append({
+                                    "Ordine": idx_r,
+                                    "Descriere": desc_finala,
+                                    "UM": "buc",
+                                    "Cantitate": cant,
+                                    "Pret Unitar": pret_cu_adaos,
+                                    "Moneda": mon,
+                                    "Termen livrare": termen,
+                                })
+
+                            if randuri_oferta:
+                                st.session_state["df_oferta_editor"] = pd.DataFrame(randuri_oferta)
+                                st.session_state["editor_reset_counter"] = st.session_state.get("editor_reset_counter", 0) + 1
+
+                            draft = st.session_state.get("oferta_draft")
+                            if isinstance(draft, dict):
+                                if firma_nume:
+                                    draft["sel_firma"] = firma_nume
+                                    draft["ultima_firma_pers"] = firma_nume
+                                masina_nume = str(cer_activa.get("masina_nume") or "").strip()
+                                if masina_nume:
+                                    draft["sel_masina"] = masina_nume
+                                    draft["ultima_masina_selectata"] = masina_nume
+                                    draft["utilaj"] = masina_nume
+                                draft["cerere_furnizor_id"] = cid_activa
+                                draft["cod_cerere_furnizor"] = cer_activa.get("cod_cerere")
+                                st.session_state["ofs_cnt"] = st.session_state.get("ofs_cnt", 0) + 1
+
+                            CereriOfertaRepository.update_status_cerere(cid_activa, "Ofertat la client")
+                            _goleste_cache_piese_si_rfq()
+                            st.session_state["df_toast_msg"] = f"✅ Liniile au fost pregătite în Oferte pentru {firma_nume}."
+                            st.rerun()
 
 
 def render_memento_intretinere_de_facut():
