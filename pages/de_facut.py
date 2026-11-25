@@ -172,7 +172,12 @@ def _incarca_optiuni_lookup_piese():
             continue
         vazute.add(eticheta)
         optiuni.append(eticheta)
-        detalii[eticheta] = {"denumire": den, "cod_producator": cod}
+        detalii[eticheta] = {
+            "piesa_id": p.get("id"),
+            "denumire": den,
+            "cod_producator": cod,
+            "piese_inlocuitoare": _extrage_piese_inlocuitoare(p),
+        }
 
     return optiuni, detalii
 
@@ -1249,6 +1254,7 @@ def render_cereri_oferta_furnizori_de_facut():
         masini_all = _obtine_masini_cached()
         furnizori_cunoscuti = _obtine_furnizori_cunoscuti_cached()
         necesar_rows = NecesarPieseRepository.get_all() or []
+        optiuni_piese_cat, detalii_piese_cat = _incarca_optiuni_lookup_piese()
 
         # 1. CREEAZĂ CERERE DE OFERTĂ CĂTRE FURNIZORI
         sub1_open = _sync_expander_state("df_rfq_sub1_open", "exp_rfq_sub1", False)
@@ -1497,83 +1503,186 @@ def render_cereri_oferta_furnizori_de_facut():
                         st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
                         st.rerun()
 
+                # Construim sursele de repere: din cerere, din necesarul clientului și din catalog
                 piese_unice_cerere: dict[str, dict] = {}
                 for l in linii_cer:
                     den_u = str(l.get("denumire_piesa") or "").strip()
                     if den_u and den_u not in piese_unice_cerere:
                         piese_unice_cerere[den_u] = l
 
-                with st.expander("➕ Adaugă încă o ofertă furnizor (variantă suplimentară) pentru o piesă", expanded=False):
+                firma_cer_curenta = str(cer_activa.get("firma_nume") or "").strip().lower()
+                necesar_client_cer = [
+                    np_r for np_r in necesar_rows
+                    if str(np_r.get("firma_client") or "").strip().lower() == firma_cer_curenta
+                    and str(np_r.get("denumire_piesa") or "").strip()
+                ]
+
+                surse_repere_map: dict[str, dict] = {}
+                for den_c, l_obj in piese_unice_cerere.items():
+                    lbl_s = f"[Cerere] {den_c}"
+                    surse_repere_map[lbl_s] = {
+                        "piesa_id": l_obj.get("piesa_id"),
+                        "denumire_piesa": den_c,
+                        "cod_producator": str(l_obj.get("cod_producator") or "").strip(),
+                        "cantitate": float(l_obj.get("cantitate") or 1.0),
+                        "piese_inlocuitoare": (
+                            "" if str(l_obj.get("piese_inlocuitoare") or "").strip() in ("", "-")
+                            else str(l_obj.get("piese_inlocuitoare")).strip()
+                        ),
+                    }
+
+                for np_r in necesar_client_cer:
+                    den_n = str(np_r.get("denumire_piesa") or "").strip()
+                    lbl_n = f"[Necesar client] {den_n} (cant. {np_r.get('cantitate')})"
+                    if lbl_n not in surse_repere_map:
+                        inloc_n = _extrage_piese_inlocuitoare(np_r)
+                        surse_repere_map[lbl_n] = {
+                            "piesa_id": np_r.get("piesa_id"),
+                            "denumire_piesa": den_n,
+                            "cod_producator": str(np_r.get("cod_producator") or "").strip(),
+                            "cantitate": float(np_r.get("cantitate") or 1.0),
+                            "piese_inlocuitoare": "" if inloc_n == "-" else inloc_n,
+                        }
+
+                for et_cat in optiuni_piese_cat[1:]:
+                    det_c = detalii_piese_cat.get(et_cat) or {}
+                    lbl_c = f"[Catalog] {et_cat}"
+                    if lbl_c not in surse_repere_map:
+                        inloc_c = str(det_c.get("piese_inlocuitoare") or "").strip()
+                        surse_repere_map[lbl_c] = {
+                            "piesa_id": det_c.get("piesa_id"),
+                            "denumire_piesa": str(det_c.get("denumire") or "").strip(),
+                            "cod_producator": str(det_c.get("cod_producator") or "").strip(),
+                            "cantitate": 1.0,
+                            "piese_inlocuitoare": "" if inloc_c == "-" else inloc_c,
+                        }
+
+                opt_surse_repere = ["✍️ Alt reper / piesă nouă (scriu manual)"] + list(surse_repere_map.keys())
+
+                with st.expander("➕ Adaugă încă o ofertă furnizor / reper suplimentar în tabel", expanded=False):
+                    # Buton rapid dacă clientul are și alte repere în necesar care nu sunt încă în tabelul cererii
+                    repere_deja_in_cerere = {k.lower() for k in piese_unice_cerere.keys()}
+                    repere_lipsa_din_necesar = [
+                        np_r for np_r in necesar_client_cer
+                        if str(np_r.get("denumire_piesa") or "").strip().lower() not in repere_deja_in_cerere
+                    ]
+                    if repere_lipsa_din_necesar:
+                        if st.button(
+                            f"📥 Preia în tabel toate reperele din necesarul clientului ({len(repere_lipsa_din_necesar)} repere)",
+                            key=f"df_rfq_import_all_nec_{cid_activa}",
+                            use_container_width=True,
+                        ):
+                            furn_implicit = (
+                                str(linii_cer[0].get("furnizor_nume") or "").strip()
+                                if linii_cer
+                                else ""
+                            )
+                            for np_l in repere_lipsa_din_necesar:
+                                inloc_l = _extrage_piese_inlocuitoare(np_l)
+                                _insereaza_linie_cerere_rfq(
+                                    cid_activa,
+                                    {
+                                        "piesa_id": np_l.get("piesa_id"),
+                                        "furnizor_nume": furn_implicit,
+                                        "denumire_piesa": str(np_l.get("denumire_piesa") or "").strip(),
+                                        "cod_producator": str(np_l.get("cod_producator") or "").strip(),
+                                        "piese_inlocuitoare": "" if inloc_l == "-" else inloc_l,
+                                        "cantitate": float(np_l.get("cantitate") or 1.0),
+                                        "pret_unitar": 0.0,
+                                        "moneda": "EUR",
+                                        "termen_livrare_zile": "",
+                                        "selectat_pentru_client": True,
+                                    },
+                                )
+                            _goleste_cache_piese_si_rfq()
+                            st.session_state["df_toast_msg"] = f"✅ Adăugate {len(repere_lipsa_din_necesar)} repere în tabel."
+                            st.rerun()
+
+                    sursa_reper_sel = st.selectbox(
+                        "Alege reper din cerere / necesar / catalog sau scrie un reper nou",
+                        options=opt_surse_repere,
+                        index=1 if len(opt_surse_repere) > 1 else 0,
+                        key=f"df_rfq_sursa_reper_sel_{cid_activa}",
+                    )
+                    este_reper_manual = sursa_reper_sel == "✍️ Alt reper / piesă nouă (scriu manual)"
+                    ref_piesa = surse_repere_map.get(sursa_reper_sel, {})
+
                     with st.form(f"form_add_oferta_supl_{cid_activa}", clear_on_submit=True):
-                        oa1, oa2, oa3 = st.columns([1.8, 1.5, 1.3])
+                        oa1, oa2, oa3 = st.columns([2.0, 1.4, 1.2])
                         with oa1:
-                            opt_piese_cer = list(piese_unice_cerere.keys())
-                            piesa_sel_add = st.selectbox(
-                                "Piesă din cerere",
-                                options=opt_piese_cer if opt_piese_cer else ["(Piesă nouă)"],
-                                key=f"df_rfq_add_piesa_sel_{cid_activa}",
+                            den_manual_add = st.text_input(
+                                "Denumire reper / piesă *",
+                                value="" if este_reper_manual else str(ref_piesa.get("denumire_piesa") or ""),
+                                placeholder="scrie denumirea reperului suplimentar...",
                             )
                         with oa2:
-                            furn_sel_add = st.selectbox(
-                                "Furnizor (nomenclator)",
-                                options=["-- Scrie manual mai jos --"] + furnizori_cunoscuti,
-                                key=f"df_rfq_add_furn_sel_{cid_activa}",
+                            cod_manual_add = st.text_input(
+                                "Cod producător",
+                                value="" if este_reper_manual else str(ref_piesa.get("cod_producator") or ""),
+                                placeholder="opțional",
                             )
                         with oa3:
+                            inloc_add = st.text_input(
+                                "Piese înlocuitoare / echiv.",
+                                value="" if este_reper_manual else str(ref_piesa.get("piese_inlocuitoare") or ""),
+                                placeholder="opțional",
+                            )
+
+                        oa4, oa5, oa6, oa7, oa8, oa9 = st.columns([1.4, 1.2, 0.8, 1.0, 0.8, 1.0])
+                        with oa4:
+                            furn_sel_add = st.selectbox(
+                                "Furnizor (nomenclator)",
+                                options=["-- Scrie manual --"] + furnizori_cunoscuti,
+                            )
+                        with oa5:
                             furn_txt_add = st.text_input(
                                 "Sau nume furnizor",
                                 placeholder="ex: Furnizor B",
-                                key=f"df_rfq_add_furn_txt_{cid_activa}",
                             )
-
-                        oa4, oa5, oa6, oa7, oa8 = st.columns([0.9, 1.0, 0.8, 1.0, 1.5])
-                        ref_piesa = piese_unice_cerere.get(piesa_sel_add, {})
-                        with oa4:
+                        with oa6:
                             cant_add = st.number_input(
                                 "Cant.",
                                 min_value=0.01,
-                                value=float(ref_piesa.get("cantitate") or 1.0),
+                                value=1.0 if este_reper_manual else float(ref_piesa.get("cantitate") or 1.0),
                                 step=1.0,
                                 format="%.2f",
                             )
-                        with oa5:
-                            pret_add = st.number_input("Preț Unitar", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-                        with oa6:
-                            mon_add = st.selectbox("Monedă", options=["EUR", "RON"], index=0)
                         with oa7:
-                            termen_add = st.text_input("Termen livrare", placeholder="ex: 3 zile")
+                            pret_add = st.number_input("Preț Unitar", min_value=0.0, value=0.0, step=1.0, format="%.2f")
                         with oa8:
-                            inloc_add = st.text_input("Piese înlocuitoare / cod echiv.", placeholder="opțional")
+                            mon_add = st.selectbox("Monedă", options=["EUR", "RON"], index=0)
+                        with oa9:
+                            termen_add = st.text_input("Termen livrare", placeholder="ex: stoc / 3 zile")
 
-                        if st.form_submit_button("➕ Adaugă Rând Ofertă Furnizor", type="primary"):
+                        sel_client_add = st.checkbox("✅ Include direct în oferta către client", value=True)
+
+                        if st.form_submit_button("➕ Adaugă Rând în Tabelul de Oferte", type="primary"):
                             furn_final_add = (
                                 furn_txt_add.strip()
                                 if furn_txt_add.strip()
                                 else ("" if furn_sel_add.startswith("--") else furn_sel_add.strip())
                             )
-                            den_final_add = str(ref_piesa.get("denumire_piesa") or "").strip()
+                            den_final_add = str(den_manual_add or "").strip()
                             if not den_final_add:
-                                st.error("⚠️ Selectează o piesă validă.")
-                            elif not furn_final_add:
-                                st.error("⚠️ Alege sau scrie numele furnizorului.")
+                                st.error("⚠️ Completează denumirea reperului / piesei.")
                             else:
                                 _insereaza_linie_cerere_rfq(
                                     cid_activa,
                                     {
-                                        "piesa_id": ref_piesa.get("piesa_id"),
+                                        "piesa_id": None if este_reper_manual else ref_piesa.get("piesa_id"),
                                         "furnizor_nume": furn_final_add,
                                         "denumire_piesa": den_final_add,
-                                        "cod_producator": str(ref_piesa.get("cod_producator") or "").strip(),
-                                        "piese_inlocuitoare": inloc_add.strip(),
+                                        "cod_producator": str(cod_manual_add or "").strip(),
+                                        "piese_inlocuitoare": str(inloc_add or "").strip(),
                                         "cantitate": float(cant_add),
                                         "pret_unitar": float(pret_add),
                                         "moneda": mon_add,
-                                        "termen_livrare_zile": termen_add.strip(),
-                                        "selectat_pentru_client": False,
+                                        "termen_livrare_zile": str(termen_add or "").strip(),
+                                        "selectat_pentru_client": bool(sel_client_add),
                                     },
                                 )
                                 _goleste_cache_piese_si_rfq()
-                                st.session_state["df_toast_msg"] = f"✅ Ofertă adăugată de la {furn_final_add} pentru {den_final_add}."
+                                st.session_state["df_toast_msg"] = f"✅ Reperul «{den_final_add}» a fost adăugat în tabel."
                                 st.rerun()
 
                 df_lin_init = pd.DataFrame(
@@ -1609,7 +1718,7 @@ def render_cereri_oferta_furnizori_de_facut():
                     ]
                 )
 
-                st.caption("💡 Poți edita prețurile existente și poți adăuga direct rânduri noi jos în tabel pentru alte oferte/furnizori.")
+                st.caption("💡 Poți edita prețurile existente și poți adăuga direct rânduri noi jos în tabel pentru alte repere/oferte/furnizori.")
                 df_lin_edit = st.data_editor(
                     df_lin_init,
                     key=f"df_rfq_linii_editor_{cid_activa}_{len(df_lin_init)}",
