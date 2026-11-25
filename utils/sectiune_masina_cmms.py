@@ -19,7 +19,7 @@ try:
 
     _cale_win = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
     if os.name == "nt" and _cale_win.is_file():
-        pytesseract.pytesseract.tesseract_cmd = str(_cale_win)
+        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
     _OCR_DISPONIBIL = True
 except Exception:
