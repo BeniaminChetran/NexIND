@@ -41,7 +41,7 @@ ANDROID_LOGO_B64 = _incarca_android_logo_b64(ICON_ANDROID_PATH)
 
 st.set_page_config(
     page_title="NexInd CMMS Enterprise Dashboard",
-    page_icon=PAGE_ICON,
+    page_icon="⚙️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
