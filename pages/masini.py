@@ -179,15 +179,12 @@ def render_masini():
         mid = int(m["id"])
         este_fara = bool(m.get("fara_intretinere", False))
         eticheta_int = "🚫 Fără întreținere" if este_fara else f"📅 Următoarea: {m.get('data_intretinere') or '-'}"
-       
+
         with st.expander(f"⚙️ {m.get('denumire')} ({eticheta_int})"):
             fara_int_edit = st.checkbox(
                 "🚫 Fără întreținere",
                 value=este_fara,
                 key=f"chk_fara_int_edit_{mid}",
-            render_sectiune_cmms_masina(
-                firma_id=firma_id,
-                masina_obj=m,
             )
 
             with st.form(f"form_editeaza_masina_{mid}"):
