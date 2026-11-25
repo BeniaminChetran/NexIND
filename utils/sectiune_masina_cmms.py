@@ -5,7 +5,6 @@
 # -------------------------------------------------------------
 
 
-
 from datetime import datetime
 import io
 import pandas as pd
@@ -69,18 +68,10 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
     st.markdown("---")
     st.subheader(f"🔐 Parole, Parametri & Comparație — {m_nume}")
 
-    tab_parole, tab_import, tab_comparare = st.tabs(
-        [
-            "🔑 Parole Mașină",
-            "📥 Parametri (Import, Vizualizare & Editare)",
-            "⚖️ Comparare Parametri (OK vs. Noi)",
-        ]
-    )
-
     # ---------------------------------------------------------
-    # TAB 1: PAROLE MAȘINI (LISTARE + EDITARE SUB FIECARE PAROLĂ)
+    # EXPANDER 1: PAROLE MAȘINI
     # ---------------------------------------------------------
-    with tab_parole:
+    with st.expander(f"🔑 Parole Mașină ({m_nume})", expanded=False):
         st.markdown("#### ➕ Adaugă parolă nouă")
         with st.form(f"form_parola_masina_{m_id}", clear_on_submit=True):
             p_col1, p_col2, p_col3 = st.columns([1.2, 1.2, 1.4])
@@ -172,9 +163,9 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
                                 st.rerun()
 
     # ---------------------------------------------------------
-    # TAB 2: IMPORT PARAMETRI + VIZUALIZARE & EDITARE SUB FIECARE SET
+    # EXPANDER 2: PARAMETRI MAȘINĂ (IMPORT, VIZUALIZARE & EDITARE)
     # ---------------------------------------------------------
-    with tab_import:
+    with st.expander(f"📥 Parametri Mașină — Import, Vizualizare & Editare ({m_nume})", expanded=False):
         draft_key = f"_cmms_text_draft_{m_id}"
         sursa_key = f"_cmms_sursa_draft_{m_id}"
         last_ocr_key = f"_cmms_last_ocr_id_{m_id}"
@@ -391,9 +382,9 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
                             st.rerun()
 
     # ---------------------------------------------------------
-    # TAB 3: COMPARARE PARAMETRI (REFERINȚĂ OK VS. NOI)
+    # EXPANDER 3: COMPARARE PARAMETRI (REFERINȚĂ OK VS. NOI)
     # ---------------------------------------------------------
-    with tab_comparare:
+    with st.expander(f"⚖️ Comparare Parametri — OK vs. Noi ({m_nume})", expanded=False):
         seturi_comp = ParametriMasinaRepository.get_seturi_by_masina(m_id)
         if len(seturi_comp) < 2:
             st.info(
