@@ -10,6 +10,24 @@ import io
 import pandas as pd
 import streamlit as st
 
+import os
+from pathlib import Path
+
+try:
+    from PIL import Image
+    import pytesseract
+
+    _cale_win = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if os.name == "nt" and _cale_win.is_file():
+        pytesseract.pytesseract.tesseract_cmd = str(_cale_win)
+
+    _OCR_DISPONIBIL = True
+except Exception:
+    Image = None
+    pytesseract = None
+    _OCR_DISPONIBIL = False
+
+
 from repositories.parametri_masina_repository import (
     ParametriMasinaRepository,
     parseaza_parametri_din_text,
