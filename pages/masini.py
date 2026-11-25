@@ -225,11 +225,16 @@ def render_masini():
                     else:
                         data_urm_edit = None
                         st.caption("ℹ️ Mașina este marcată **Fără întreținere** — data următoarei întrețineri va fi golită.")
-
+                   
+                render_sectiune_cmms_masina(
+                    firma_id=firma_id,
+                    masina_obj=m,   
+                   
                 b_save, b_del = st.columns([2, 1])
                 salveaza_btn = b_save.form_submit_button("💾 Salvează Modificările", type="primary")
                 sterge_btn = b_del.form_submit_button("🗑️ Șterge Mașina")
-
+                            
+                
                 if salveaza_btn:
                     if not den_edit.strip():
                         st.error("⚠️ Denumirea mașinii nu poate fi goală.")
