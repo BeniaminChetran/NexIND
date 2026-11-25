@@ -209,7 +209,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14):
                     'Fără firmă' AS firma,
                     denumire AS utilaj,
                     CAST(data_intretinere AS DATE) AS data_scadenta,
-                    (CAST(data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
+                    (CAST(m.data_intretinere AS DATE) - CURRENT_DATE) AS zile_ramase
                 FROM masini
                 WHERE COALESCE(fara_intretinere, FALSE) = FALSE
                   AND data_intretinere IS NOT NULL
@@ -1212,11 +1212,38 @@ def render_tabel_piese_de_comandat(randuri: list[dict]):
                 st.rerun()
 
 
+def _on_rfq_filter_change() -> None:
+    st.session_state["df_rfq_main_open"] = True
+    st.session_state["df_rfq_tbl_open"] = True
+
+
+def _sync_expander_state(state_key: str, widget_key: str, default: bool = False) -> bool:
+    current = bool(st.session_state.get(state_key, default))
+    if widget_key in st.session_state:
+        current = bool(st.session_state[widget_key])
+        st.session_state[state_key] = current
+    return current
+
+
 def render_cereri_oferta_furnizori_de_facut():
     if not _HAS_CERERI_REPO or CereriOfertaRepository is None:
         return
 
-    with st.expander("📨 Cereri Ofertă Furnizori (RFQ) • Analiză Prețuri & Legătură Client / Mașină", expanded=False):
+    st.session_state.setdefault("df_rfq_main_open", False)
+    st.session_state.setdefault("df_rfq_sub1_open", False)
+    st.session_state.setdefault("df_rfq_tbl_open", False)
+    st.session_state.setdefault("df_rfq_preluare_open", False)
+    st.session_state.setdefault("df_rfq_comp_open", False)
+
+    main_open = _sync_expander_state("df_rfq_main_open", "exp_rfq_main", False)
+
+    with st.expander(
+        "📨 Cereri Ofertă Furnizori (RFQ) • Analiză Prețuri & Legătură Client / Mașină",
+        expanded=main_open,
+        key="exp_rfq_main",
+    ):
+        st.session_state["df_rfq_main_open"] = True
+
         cereri_all = _obtine_cereri_cu_detalii_cached()
         firme_nume, nume_to_id = _obtine_harta_firme_cached()
         masini_all = _obtine_masini_cached()
@@ -1224,7 +1251,9 @@ def render_cereri_oferta_furnizori_de_facut():
         necesar_rows = NecesarPieseRepository.get_all() or []
 
         # 1. CREEAZĂ CERERE DE OFERTĂ CĂTRE FURNIZORI
-        with st.expander("1. Creează Cerere de Ofertă către Furnizori", expanded=False):
+        sub1_open = _sync_expander_state("df_rfq_sub1_open", "exp_rfq_sub1", False)
+        with st.expander("1. Creează Cerere de Ofertă către Furnizori", expanded=sub1_open, key="exp_rfq_sub1"):
+            st.session_state["df_rfq_sub1_open"] = True
             if not firme_nume:
                 st.warning("⚠️ Nu există firme înregistrate în baza de date.")
             else:
@@ -1339,7 +1368,9 @@ def render_cereri_oferta_furnizori_de_facut():
                         st.error(f"⚠️ {ve}")
 
         # 2. TABEL CERERI DE OFERTĂ CĂTRE FURNIZORI
-        with st.expander(f"2. Tabel Cereri de Ofertă către Furnizori ({len(cereri_all)})", expanded=False):
+        tbl_open = _sync_expander_state("df_rfq_tbl_open", "exp_rfq_tbl", False)
+        with st.expander(f"2. Tabel Cereri de Ofertă către Furnizori ({len(cereri_all)})", expanded=tbl_open, key="exp_rfq_tbl"):
+            st.session_state["df_rfq_tbl_open"] = True
             if not cereri_all:
                 st.info("Nu există cereri de ofertă către furnizori înregistrate.")
             else:
@@ -1349,31 +1380,43 @@ def render_cereri_oferta_furnizori_de_facut():
                 furn_disp = ["Toți furnizorii"] + sorted({
                     fn for c in cereri_all for fn in (c.get("_furnizori_str") or "").split(", ") if fn and fn != "-"
                 })
+                stari_disp = ["Toate"] + OPTIUNI_STATUS_CERERE_OFERTA
+
+                if st.session_state.get("df_rfq_filtru_client") not in clienti_disp:
+                    st.session_state["df_rfq_filtru_client"] = "Toți clienții"
+                if st.session_state.get("df_rfq_filtru_furnizor") not in furn_disp:
+                    st.session_state["df_rfq_filtru_furnizor"] = "Toți furnizorii"
+                if st.session_state.get("df_rfq_filtru_status") not in stari_disp:
+                    st.session_state["df_rfq_filtru_status"] = "Toate"
 
                 fc1, fc2, fc3, fc4 = st.columns([1.3, 1.4, 1.4, 1.5])
                 with fc1:
                     filtru_st_cer = st.selectbox(
                         "Stare cerere",
-                        options=["Toate"] + OPTIUNI_STATUS_CERERE_OFERTA,
+                        options=stari_disp,
                         key="df_rfq_filtru_status",
+                        on_change=_on_rfq_filter_change,
                     )
                 with fc2:
                     filtru_cli_cer = st.selectbox(
                         "Client",
                         options=clienti_disp,
                         key="df_rfq_filtru_client",
+                        on_change=_on_rfq_filter_change,
                     )
                 with fc3:
                     filtru_furn_cer = st.selectbox(
                         "Furnizor",
                         options=furn_disp,
                         key="df_rfq_filtru_furnizor",
+                        on_change=_on_rfq_filter_change,
                     )
                 with fc4:
                     filtru_piesa_cer = st.text_input(
                         "Piesă / cod",
                         placeholder="ex: rulment, cod...",
                         key="df_rfq_filtru_piesa",
+                        on_change=_on_rfq_filter_change,
                     ).strip().lower()
 
                 cereri_filtrate = [
@@ -1403,8 +1446,14 @@ def render_cereri_oferta_furnizori_de_facut():
         df_lin_edit = pd.DataFrame()
         cer_activa = None
         cid_activa = None
+        preluare_open = _sync_expander_state("df_rfq_preluare_open", "exp_rfq_preluare", False)
 
-        with st.expander("Preluare, Analiză Oferte Primite de la Furnizori & Legătură cu Oferta către Client", expanded=False):
+        with st.expander(
+            "Preluare, Analiză Oferte Primite de la Furnizori & Legătură cu Oferta către Client",
+            expanded=preluare_open,
+            key="exp_rfq_preluare",
+        ):
+            st.session_state["df_rfq_preluare_open"] = True
             if not cereri_all:
                 st.info("Nu există cereri de ofertă de analizat.")
             else:
@@ -1448,7 +1497,6 @@ def render_cereri_oferta_furnizori_de_facut():
                         st.session_state["df_toast_msg"] = f"✅ Starea cererii {cer_activa.get('cod_cerere')} -> {nou_st_cer}."
                         st.rerun()
 
-                # Adăugare rapidă a unei oferte suplimentare (alt furnizor / altă variantă) pentru o piesă din cerere
                 piese_unice_cerere: dict[str, dict] = {}
                 for l in linii_cer:
                     den_u = str(l.get("denumire_piesa") or "").strip()
@@ -1614,7 +1662,6 @@ def render_cereri_oferta_furnizori_de_facut():
                         if not linii_sel:
                             linii_sel = [r for _, r in df_valide.iterrows()]
 
-                        # Numără câte variante selectate există per piesă pentru a diferenția furnizorii în ofertă
                         contor_piese: dict[str, int] = {}
                         for r in linii_sel:
                             k_p = str(r.get("Piesă") or "").strip().lower()
@@ -1675,7 +1722,9 @@ def render_cereri_oferta_furnizori_de_facut():
                         st.rerun()
 
         # 4. SUBEXPANDER SEPARAT: ANALIZĂ COMPARATIVĂ ÎNTRE FURNIZORI
-        with st.expander("📊 Analiză Comparativă între Furnizori", expanded=False):
+        comp_open = _sync_expander_state("df_rfq_comp_open", "exp_rfq_comp", False)
+        with st.expander("📊 Analiză Comparativă între Furnizori", expanded=comp_open, key="exp_rfq_comp"):
+            st.session_state["df_rfq_comp_open"] = True
             if cer_activa is None or df_lin_edit.empty:
                 st.info("Selectează o cerere cu oferte în subexpanderul de preluare pentru a vedea comparația între furnizori.")
             else:
@@ -1744,7 +1793,7 @@ def render_memento_intretinere_de_facut():
             }
             for r in alerta_rows
         ])
-        df_m = df_m[["Firmă", "Utilaj", "Data scadenta", "Zile rămase", "Status memento"]]
+        df_m = df_m[["Firmă", "Utilaj", "Data scadentă", "Zile rămase", "Status memento"]]
         st.dataframe(df_m, hide_index=True, use_container_width=True)
 
 
