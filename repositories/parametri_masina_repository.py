@@ -5,7 +5,6 @@
 # -------------------------------------------------------------
 
 
-
 from datetime import datetime
 import json
 import re
@@ -18,7 +17,6 @@ def _incearca_float(val: str | float | int | None) -> float | None:
     if isinstance(val, (int, float)):
         return float(val)
     txt = str(val).strip().replace(" ", "").replace(",", ".")
-    # Extrage primul număr dacă există unitate lipită (ex: "24.5V" -> "24.5")
     match = re.match(r"^[+-]?\d+(?:\.\d+)?", txt)
     if not match:
         return None
@@ -32,18 +30,11 @@ def parseaza_parametri_din_text(continut: str) -> list[dict]:
     """
     Parsează linii sau JSON într-o listă curată de dicționare:
     {"cod_param": ..., "valoare": ..., "descriere": ..., "documentatie_link": ...}
-
-    Formate acceptate per linie:
-    - cod_param;valoare;descriere;documentatie_link
-    - cod_param | valoare | descriere | documentatie_link
-    - cod_param = valoare
-    - cod_param: valoare
     """
     text = (continut or "").strip()
     if not text:
         return []
 
-    # Dacă este JSON valid (listă sau {"parametri": [...]})
     if text.startswith("[") or text.startswith("{"):
         try:
             data = json.loads(text)
@@ -121,6 +112,23 @@ def parseaza_parametri_din_text(continut: str) -> list[dict]:
     return rezultat
 
 
+def _normalizeaza_lista_parametri(parametri: list[dict]) -> list[dict]:
+    lista_curata: list[dict] = []
+    for p in parametri:
+        cod = str(p.get("cod_param") or "").strip()
+        if not cod:
+            continue
+        lista_curata.append(
+            {
+                "cod_param": cod,
+                "valoare": str(p.get("valoare") if p.get("valoare") is not None else "").strip(),
+                "descriere": str(p.get("descriere") or "").strip(),
+                "documentatie_link": str(p.get("documentatie_link") or "").strip(),
+            }
+        )
+    return lista_curata
+
+
 class ParametriMasinaRepository:
     @staticmethod
     def get_seturi_by_masina(masina_id: int) -> list[dict]:
@@ -168,7 +176,7 @@ class ParametriMasinaRepository:
                     data_inregistrare
                 FROM parametri_masina_valori
                 WHERE set_id = %s
-                ORDER BY cod_param ASC, id ASC
+                ORDER BY id ASC
                 """,
                 (set_id,),
             )
@@ -188,19 +196,7 @@ class ParametriMasinaRepository:
         data_inregistrare: datetime | None = None,
     ) -> int:
         dt = data_inregistrare or datetime.now()
-        lista_curata = []
-        for p in parametri:
-            cod = str(p.get("cod_param") or "").strip()
-            if not cod:
-                continue
-            lista_curata.append(
-                {
-                    "cod_param": cod,
-                    "valoare": str(p.get("valoare") if p.get("valoare") is not None else "").strip(),
-                    "descriere": str(p.get("descriere") or "").strip(),
-                    "documentatie_link": str(p.get("documentatie_link") or "").strip(),
-                }
-            )
+        lista_curata = _normalizeaza_lista_parametri(parametri)
 
         with db_cursor() as c:
             c.execute(
@@ -270,18 +266,97 @@ class ParametriMasinaRepository:
         return set_id
 
     @staticmethod
+    def actualizeaza_set_parametri(
+        set_id: int,
+        parametri: list[dict],
+        model_piesa: str | None = None,
+        subansamblu: str | None = None,
+        este_referinta: bool = False,
+        observatii: str | None = None,
+    ) -> None:
+        """Actualizează metadatele și lista de parametri pentru un set existent."""
+        lista_curata = _normalizeaza_lista_parametri(parametri)
+
+        with db_cursor() as c:
+            c.execute(
+                """
+                UPDATE seturi_parametri_masina
+                SET model_piesa = %s,
+                    subansamblu = %s,
+                    este_referinta = %s,
+                    observatii = %s,
+                    parametri_json = %s::jsonb
+                WHERE id = %s
+                RETURNING firma_id, masina_id, data_inregistrare
+                """,
+                (
+                    (model_piesa or "").strip() or None,
+                    (subansamblu or "").strip() or None,
+                    bool(este_referinta),
+                    (observatii or "").strip() or None,
+                    json.dumps(lista_curata, ensure_ascii=False),
+                    int(set_id),
+                ),
+            )
+            meta = c.fetchone()
+            if not meta:
+                return
+
+            firma_id = int(meta["firma_id"])
+            masina_id = int(meta["masina_id"])
+            dt = meta["data_inregistrare"] or datetime.now()
+
+            c.execute("DELETE FROM parametri_masina_valori WHERE set_id = %s", (int(set_id),))
+
+            if lista_curata:
+                valori_rows = [
+                    (
+                        int(set_id),
+                        firma_id,
+                        masina_id,
+                        item["cod_param"],
+                        item["valoare"],
+                        _incearca_float(item["valoare"]),
+                        item["descriere"] or None,
+                        item["documentatie_link"] or None,
+                        dt,
+                    )
+                    for item in lista_curata
+                ]
+                c.executemany(
+                    """
+                    INSERT INTO parametri_masina_valori (
+                        set_id,
+                        firma_id,
+                        masina_id,
+                        cod_param,
+                        valoare_text,
+                        valoare_num,
+                        descriere,
+                        documentatie_link,
+                        data_inregistrare
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    valori_rows,
+                )
+
+    @staticmethod
     def seteaza_referinta(set_id: int, este_referinta: bool = True) -> None:
         with db_cursor() as c:
             c.execute(
                 "UPDATE seturi_parametri_masina SET este_referinta = %s WHERE id = %s",
-                (bool(este_referinta), set_id),
+                (bool(este_referinta), int(set_id)),
             )
 
     @staticmethod
+    def delete_set(set_id: int) -> None:
+        with db_cursor() as c:
+            c.execute("DELETE FROM seturi_parametri_masina WHERE id = %s", (int(set_id),))
+
+    @staticmethod
     def compara_seturi(set_referinta_id: int, set_nou_id: int) -> list[dict]:
-        """
-        Compară un set de referință (ex: când mașina mergea OK) cu un set nou.
-        """
+        """Compară un set de referință (ex: când mașina mergea OK) cu un set nou."""
         ref_rows = ParametriMasinaRepository.get_valori_by_set(set_referinta_id)
         nou_rows = ParametriMasinaRepository.get_valori_by_set(set_nou_id)
 

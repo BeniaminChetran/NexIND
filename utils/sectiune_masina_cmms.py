@@ -6,7 +6,6 @@
 
 
 
-
 from datetime import datetime
 import io
 import pandas as pd
@@ -73,16 +72,16 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
     tab_parole, tab_import, tab_comparare = st.tabs(
         [
             "🔑 Parole Mașină",
-            "📥 Import Parametri (Fișier / Text / OCR)",
+            "📥 Parametri (Import, Vizualizare & Editare)",
             "⚖️ Comparare Parametri (OK vs. Noi)",
         ]
     )
 
     # ---------------------------------------------------------
-    # TAB 1: PAROLE MAȘINI
+    # TAB 1: PAROLE MAȘINI (LISTARE + EDITARE SUB FIECARE PAROLĂ)
     # ---------------------------------------------------------
     with tab_parole:
-        st.markdown("#### Adaugă parolă nouă pentru această mașină")
+        st.markdown("#### ➕ Adaugă parolă nouă")
         with st.form(f"form_parola_masina_{m_id}", clear_on_submit=True):
             p_col1, p_col2, p_col3 = st.columns([1.2, 1.2, 1.4])
             with p_col1:
@@ -120,31 +119,60 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
         if not parole_db:
             st.info("Nu există parole înregistrate pentru această mașină.")
         else:
-            st.markdown("#### Parole salvate")
-            df_parole = pd.DataFrame(parole_db)[
-                ["id", "unde_se_aplica", "parola", "observatii", "creat_la"]
-            ].copy()
-            df_parole.columns = ["ID", "Unde se aplică", "Parolă", "Observații", "Creat la"]
-            st.dataframe(df_parole, use_container_width=True, hide_index=True)
+            st.markdown(f"#### 📋 Parole salvate ({len(parole_db)})")
+            for p in parole_db:
+                pid = int(p["id"])
+                obs_preview = f" — {p['observatii']}" if p.get("observatii") else ""
+                with st.container(border=True):
+                    c_info1, c_info2 = st.columns([1.4, 1.6])
+                    with c_info1:
+                        st.markdown(f"**Unde se aplică:** `{p['unde_se_aplica']}`")
+                    with c_info2:
+                        st.markdown(f"**Parolă:** `{p['parola']}`{obs_preview}")
 
-            opt_del = {
-                f"#{p['id']} — {p['unde_se_aplica']}": int(p["id"]) for p in parole_db
-            }
-            del_col1, del_col2 = st.columns([3.0, 1.0], vertical_alignment="bottom")
-            with del_col1:
-                sel_del_lbl = st.selectbox(
-                    "Selectează parola de șters",
-                    options=list(opt_del.keys()),
-                    key=f"sel_del_parola_{m_id}",
-                )
-            with del_col2:
-                if st.button("🗑️ Șterge", key=f"btn_del_parola_{m_id}", use_container_width=True):
-                    ParoleMasiniRepository.delete(opt_del[sel_del_lbl])
-                    st.success("Parola a fost ștearsă.")
-                    st.rerun()
+                    with st.expander("✏️ Modifică / Șterge această parolă", expanded=False):
+                        with st.form(f"form_edit_parola_{pid}"):
+                            ep1, ep2, ep3 = st.columns([1.2, 1.2, 1.4])
+                            with ep1:
+                                edit_unde = st.text_input(
+                                    "Unde se aplică *",
+                                    value=str(p.get("unde_se_aplica") or ""),
+                                )
+                            with ep2:
+                                edit_parola = st.text_input(
+                                    "Parolă *",
+                                    value=str(p.get("parola") or ""),
+                                )
+                            with ep3:
+                                edit_obs = st.text_input(
+                                    "Observații",
+                                    value=str(p.get("observatii") or ""),
+                                )
+
+                            b_up, b_del = st.columns([2, 1])
+                            salveaza_p = b_up.form_submit_button("💾 Salvează modificările", type="primary")
+                            sterge_p = b_del.form_submit_button("🗑️ Șterge parola")
+
+                            if salveaza_p:
+                                if not edit_unde.strip() or not edit_parola.strip():
+                                    st.error("Completează 'Unde se aplică' și 'Parolă'.")
+                                else:
+                                    ParoleMasiniRepository.update(
+                                        parola_id=pid,
+                                        parola=edit_parola,
+                                        unde_se_aplica=edit_unde,
+                                        observatii=edit_obs,
+                                    )
+                                    st.success("Parola a fost actualizată.")
+                                    st.rerun()
+
+                            if sterge_p:
+                                ParoleMasiniRepository.delete(pid)
+                                st.warning("Parola a fost ștearsă.")
+                                st.rerun()
 
     # ---------------------------------------------------------
-    # TAB 2: IMPORT PARAMETRI (FIȘIER TEXT / TEXT LIPIT / OCR)
+    # TAB 2: IMPORT PARAMETRI + VIZUALIZARE & EDITARE SUB FIECARE SET
     # ---------------------------------------------------------
     with tab_import:
         draft_key = f"_cmms_text_draft_{m_id}"
@@ -155,6 +183,7 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
         st.session_state.setdefault(draft_key, "")
         st.session_state.setdefault(sursa_key, "text_lipit")
 
+        st.markdown("#### ➕ Adaugă / Importă set nou de parametri")
         imp_col1, imp_col2 = st.columns(2)
         with imp_col1:
             uploaded_txt = st.file_uploader(
@@ -198,7 +227,7 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
 
         text_parametri = st.text_area(
             "Text parametri (poți lipi, edita sau încărca din fișier / poză)",
-            height=180,
+            height=160,
             key=draft_key,
             placeholder="P001;24.50;Tensiune alimentare;https://...\nP002;1500;Turatie nominala;",
         )
@@ -231,7 +260,7 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
 
         parametri_parsati = parseaza_parametri_din_text(text_parametri)
         if parametri_parsati:
-            st.markdown(f"#### Previzualizare ({len(parametri_parsati)} parametri detectați)")
+            st.markdown(f"**Previzualizare ({len(parametri_parsati)} parametri detectați)**")
             st.dataframe(
                 pd.DataFrame(parametri_parsati),
                 use_container_width=True,
@@ -262,44 +291,104 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("#### Seturi de parametri salvate pe această mașină")
         seturi_db = ParametriMasinaRepository.get_seturi_by_masina(m_id)
         if not seturi_db:
             st.info("Nu există încă seturi de parametri salvate pentru această mașină.")
         else:
-            df_seturi = pd.DataFrame(
-                [
-                    {
-                        "ID Set": s["id"],
-                        "Data": str(s["data_inregistrare"])[:19],
-                        "Referință OK": "✅ DA" if s.get("este_referinta") else "Nu",
-                        "Model piesă": s.get("model_piesa") or "—",
-                        "Subansamblu": s.get("subansamblu") or "—",
-                        "Sursă": s.get("sursa_import") or "—",
-                        "Nr. parametri": s.get("nr_parametri", 0),
-                        "Observații": s.get("observatii") or "—",
-                    }
-                    for s in seturi_db
-                ]
-            )
-            st.dataframe(df_seturi, use_container_width=True, hide_index=True)
+            st.markdown(f"#### 📋 Seturi de parametri salvate ({len(seturi_db)})")
+            for s in seturi_db:
+                sid = int(s["id"])
+                eticheta_s = _format_eticheta_set(s)
 
-            opt_seturi_ref = {_format_eticheta_set(s): int(s["id"]) for s in seturi_db}
-            ref_c1, ref_c2, ref_c3 = st.columns([2.6, 1.0, 1.0], vertical_alignment="bottom")
-            with ref_c1:
-                sel_set_ref_flag = st.selectbox(
-                    "Selectează set pentru status Referință (OK)",
-                    options=list(opt_seturi_ref.keys()),
-                    key=f"sel_set_flag_ref_{m_id}",
-                )
-            with ref_c2:
-                if st.button("⭐ Marchează OK", key=f"btn_set_ok_{m_id}", use_container_width=True):
-                    ParametriMasinaRepository.seteaza_referinta(opt_seturi_ref[sel_set_ref_flag], True)
-                    st.rerun()
-            with ref_c3:
-                if st.button("↩️ Scoate OK", key=f"btn_unset_ok_{m_id}", use_container_width=True):
-                    ParametriMasinaRepository.seteaza_referinta(opt_seturi_ref[sel_set_ref_flag], False)
-                    st.rerun()
+                with st.expander(eticheta_s, expanded=False):
+                    valori_set = ParametriMasinaRepository.get_valori_by_set(sid)
+                    df_initial = pd.DataFrame(
+                        [
+                            {
+                                "cod_param": v.get("cod_param") or "",
+                                "valoare": v.get("valoare_text") or "",
+                                "descriere": v.get("descriere") or "",
+                                "documentatie_link": v.get("documentatie_link") or "",
+                            }
+                            for v in valori_set
+                        ]
+                        if valori_set
+                        else [{"cod_param": "", "valoare": "", "descriere": "", "documentatie_link": ""}]
+                    )
+
+                    em1, em2, em3 = st.columns(3)
+                    with em1:
+                        edit_piesa = st.text_input(
+                            "Model piesă",
+                            value=str(s.get("model_piesa") or ""),
+                            key=f"edit_set_piesa_{sid}",
+                        )
+                    with em2:
+                        edit_sub = st.text_input(
+                            "Subansamblu",
+                            value=str(s.get("subansamblu") or ""),
+                            key=f"edit_set_sub_{sid}",
+                        )
+                    with em3:
+                        edit_obs = st.text_input(
+                            "Observații set",
+                            value=str(s.get("observatii") or ""),
+                            key=f"edit_set_obs_{sid}",
+                        )
+
+                    edit_ref = st.checkbox(
+                        "⭐ Referință (OK — când mașina merge bine)",
+                        value=bool(s.get("este_referinta", False)),
+                        key=f"edit_set_ref_{sid}",
+                    )
+
+                    st.caption("Poți modifica direct celulele, adăuga rânduri noi sau șterge rânduri din tabel:")
+                    df_editat = st.data_editor(
+                        df_initial,
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"editor_parametri_set_{sid}",
+                        column_config={
+                            "cod_param": st.column_config.TextColumn("Cod Parametru *", required=True),
+                            "valoare": st.column_config.TextColumn("Valoare"),
+                            "descriere": st.column_config.TextColumn("Descriere"),
+                            "documentatie_link": st.column_config.TextColumn("Documentație Link"),
+                        },
+                    )
+
+                    bs1, bs2 = st.columns([2, 1])
+                    with bs1:
+                        if st.button(
+                            "💾 Salvează modificările setului",
+                            type="primary",
+                            key=f"btn_save_edit_set_{sid}",
+                            use_container_width=True,
+                        ):
+                            randuri_noi = df_editat.fillna("").to_dict(orient="records")
+                            randuri_valide = [r for r in randuri_noi if str(r.get("cod_param") or "").strip()]
+                            if not randuri_valide:
+                                st.error("Setul trebuie să conțină cel puțin un parametru cu 'Cod Parametru'.")
+                            else:
+                                ParametriMasinaRepository.actualizeaza_set_parametri(
+                                    set_id=sid,
+                                    parametri=randuri_valide,
+                                    model_piesa=edit_piesa,
+                                    subansamblu=edit_sub,
+                                    este_referinta=edit_ref,
+                                    observatii=edit_obs,
+                                )
+                                st.success(f"Setul #{sid} a fost actualizat.")
+                                st.rerun()
+                    with bs2:
+                        if st.button(
+                            "🗑️ Șterge setul",
+                            key=f"btn_del_set_{sid}",
+                            use_container_width=True,
+                        ):
+                            ParametriMasinaRepository.delete_set(sid)
+                            st.warning(f"Setul #{sid} a fost șters.")
+                            st.rerun()
 
     # ---------------------------------------------------------
     # TAB 3: COMPARARE PARAMETRI (REFERINȚĂ OK VS. NOI)
@@ -316,7 +405,6 @@ def render_sectiune_cmms_masina(firma_id: int, masina_obj: dict) -> None:
         etichete_map = {_format_eticheta_set(s): int(s["id"]) for s in seturi_comp}
         etichete_lista = list(etichete_map.keys())
 
-        # Alegem implicit un set marcat ca referință OK dacă există
         default_ref_idx = 0
         for idx, s in enumerate(seturi_comp):
             if s.get("este_referinta"):

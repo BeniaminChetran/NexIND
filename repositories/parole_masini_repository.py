@@ -4,7 +4,6 @@
 # -------repositories/parole_masini_repository.py--------------
 # -------------------------------------------------------------
 
-
 from config import db_cursor
 
 
@@ -62,6 +61,31 @@ class ParoleMasiniRepository:
             return int(row["id"]) if row else 0
 
     @staticmethod
+    def update(
+        parola_id: int,
+        parola: str,
+        unde_se_aplica: str,
+        observatii: str | None = None,
+    ) -> None:
+        with db_cursor() as c:
+            c.execute(
+                """
+                UPDATE parole_masini
+                SET parola = %s,
+                    unde_se_aplica = %s,
+                    observatii = %s
+                WHERE id = %s
+                """,
+                (
+                    parola.strip(),
+                    unde_se_aplica.strip(),
+                    (observatii or "").strip() or None,
+                    int(parola_id),
+                ),
+            )
+
+    @staticmethod
     def delete(parola_id: int) -> None:
         with db_cursor() as c:
-            c.execute("DELETE FROM parole_masini WHERE id = %s", (parola_id,))
+            c.execute("DELETE FROM parole_masini WHERE id = %s", (int(parola_id),))
+            
