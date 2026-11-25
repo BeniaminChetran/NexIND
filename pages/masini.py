@@ -11,11 +11,14 @@ from utils.sectiune_masina_cmms import render_sectiune_cmms_masina
 
 
 def _asigura_coloane_masini():
+    if st.session_state.get("_coloane_masini_verificate"):
+        return
     try:
         with db_cursor() as c:
             c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS fara_intretinere BOOLEAN DEFAULT FALSE")
             c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS interval_intretinere_zile INTEGER DEFAULT 0")
             c.execute("ALTER TABLE masini ADD COLUMN IF NOT EXISTS ultima_intretinere DATE")
+        st.session_state["_coloane_masini_verificate"] = True
     except Exception:
         pass
 
@@ -31,13 +34,19 @@ def _parse_date_sigur(val, fallback: date) -> date:
     return fallback
 
 
+def _invalideaza_cache_masini():
+    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
+        MasiniRepository.get_all.clear()
+    if hasattr(MasiniRepository, "get_by_firma") and hasattr(MasiniRepository.get_by_firma, "clear"):
+        MasiniRepository.get_by_firma.clear()
+
+
 def _actualizeaza_masina_db(masina_id: int, payload: dict):
     _asigura_coloane_masini()
     if hasattr(MasiniRepository, "update"):
         try:
             MasiniRepository.update(int(masina_id), payload)
-            if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
-                MasiniRepository.get_all.clear()
+            _invalideaza_cache_masini()
             return
         except Exception:
             pass
@@ -68,24 +77,21 @@ def _actualizeaza_masina_db(masina_id: int, payload: dict):
                 int(masina_id),
             ),
         )
-    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
-        MasiniRepository.get_all.clear()
+    _invalideaza_cache_masini()
 
 
 def _sterge_masina_db(masina_id: int):
     if hasattr(MasiniRepository, "delete"):
         try:
             MasiniRepository.delete(int(masina_id))
-            if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
-                MasiniRepository.get_all.clear()
+            _invalideaza_cache_masini()
             return
         except Exception:
             pass
 
     with db_cursor() as c:
         c.execute("DELETE FROM masini WHERE id = %s", (int(masina_id),))
-    if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
-        MasiniRepository.get_all.clear()
+    _invalideaza_cache_masini()
 
 
 def render_masini():
@@ -106,7 +112,7 @@ def render_masini():
         return
 
     firma_obj = firme_map[sel_firma]
-    firma_id = firma_obj["id"]
+    firma_id = int(firma_obj["id"])
 
     st.markdown("---")
     st.markdown("#### ➕ Adaugă Mașină Nouă")
@@ -161,8 +167,7 @@ def render_masini():
                     "sisteme_active": ALL_SISTEME_DEFAULT,
                 }
                 MasiniRepository.insert(payload)
-                if hasattr(MasiniRepository, "get_all") and hasattr(MasiniRepository.get_all, "clear"):
-                    MasiniRepository.get_all.clear()
+                _invalideaza_cache_masini()
                 st.success(f"✅ Mașina **{denumire_nou.strip()}** a fost adăugată.")
                 st.rerun()
 
@@ -225,16 +230,36 @@ def render_masini():
                     else:
                         data_urm_edit = None
                         st.caption("ℹ️ Mașina este marcată **Fără întreținere** — data următoarei întrețineri va fi golită.")
-                   
-                render_sectiune_cmms_masina(
-                    firma_id=firma_id,
-                    masina_obj=m,   
-                )   
+
                 b_save, b_del = st.columns([2, 1])
                 salveaza_btn = b_save.form_submit_button("💾 Salvează Modificările", type="primary")
                 sterge_btn = b_del.form_submit_button("🗑️ Șterge Mașina")
-                            
-                
+
                 if salveaza_btn:
                     if not den_edit.strip():
                         st.error("⚠️ Denumirea mașinii nu poate fi goală.")
+                    else:
+                        payload_update = {
+                            "firma_id": firma_id,
+                            "denumire": den_edit.strip(),
+                            "tip_masina": tip_edit.strip(),
+                            "serie": serie_edit.strip(),
+                            "tip_intretinere": frec_edit,
+                            "data_intretinere": None if fara_int_edit else data_urm_edit,
+                            "fara_intretinere": bool(fara_int_edit),
+                            "interval_intretinere_zile": 0 if fara_int_edit else int(interval_edit),
+                            "ultima_intretinere": ultima_edit if ultima_are_valoare else None,
+                        }
+                        _actualizeaza_masina_db(mid, payload_update)
+                        st.success(f"✅ Modificările pentru **{den_edit.strip()}** au fost salvate.")
+                        st.rerun()
+
+                if sterge_btn:
+                    _sterge_masina_db(mid)
+                    st.warning(f"🗑️ Mașina **{m.get('denumire')}** a fost ștearsă.")
+                    st.rerun()
+
+            render_sectiune_cmms_masina(
+                firma_id=firma_id,
+                masina_obj=m,
+            )
