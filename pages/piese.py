@@ -174,8 +174,8 @@ def _sincronizeaza_din_rapoarte_electronice_si_teren() -> dict:
 def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict], acces_permis: bool):
     st.subheader("📝 Bon de Comandă Provizoriu (Note Rapide Teren)")
     st.caption(
-        "Data este completată automat. Când nu este selectată o piesă existentă, apare «Caută după denumire» "
-        "(completat automat cu valoarea negăsită) și câmpurile editabile pentru piesa nouă."
+        "Data este completată automat. Piesele inexistente în baza de date se adaugă în `piese` "
+        "cu preț `0.00` (și se calculează cu `0` în bon)."
     )
 
     if not firme_nume:
@@ -216,8 +216,7 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
         mapa_piese[eticheta] = p
 
     st.session_state.setdefault("bon_provizoriu_linii", [])
-    st.session_state.setdefault("bon_prov_cauta_den", "")
-    st.session_state.setdefault("bon_prov_negasit", "")
+    st.session_state.setdefault("bon_prov_nou_den", "")
 
     # Același rând: Selectează piesa + Cantitate
     optiuni_select_piesa = [None] + list(mapa_piese.keys())
@@ -246,42 +245,18 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
         else None
     )
 
-    den_cautata = ""
     den_noua = ""
     cod_nou = ""
     prop_noua = ""
     mas_montaj_noua = "General"
 
-    # Apare DOAR când `Selectează piesa` este None (nu există piesă selectată/găsită)
     if piesa_selectata is None:
-        if st.session_state.get("bon_prov_negasit") and not st.session_state.get("bon_prov_cauta_den"):
-            st.session_state["bon_prov_cauta_den"] = st.session_state["bon_prov_negasit"]
+        # Câmpul "Denumire piesă nouă" este invizibil (nu este randat vizibil)
+        den_noua = str(st.session_state.get("bon_prov_nou_den") or "").strip()
 
-        den_cautata = st.text_input(
-            "Caută după denumire",
-            key="bon_prov_cauta_den",
-            placeholder="scrie denumirea piesei...",
-        ).strip()
-
-        if den_cautata:
-            potriviri = [k for k in mapa_piese.keys() if den_cautata.lower() in k.lower()]
-            if potriviri:
-                st.info("Potriviri găsite în DB: " + ", ".join(f"`{p}`" for p in potriviri[:4]))
-            else:
-                st.session_state["bon_prov_negasit"] = den_cautata
-
-        # Câmpurile editabile pentru piesa nouă (cu denumirea precompletată din căutare)
-        st.session_state.setdefault("bon_prov_nou_den", "")
-        if den_cautata and st.session_state.get("bon_prov_nou_den") != den_cautata:
-            st.session_state["bon_prov_nou_den"] = den_cautata
-
-        n0, n1 = st.columns([2.0, 1.2])
-        with n0:
-            den_noua = st.text_input("Denumire piesă nouă *", key="bon_prov_nou_den")
+        n1, n2, n3 = st.columns([1.2, 1.8, 1.2])
         with n1:
             cod_nou = st.text_input("Cod piesă", key="bon_prov_nou_cod")
-
-        n2, n3 = st.columns([2.0, 1.2])
         with n2:
             prop_noua = st.text_input("Proprietăți / parametri", key="bon_prov_nou_prop")
         with n3:
@@ -292,7 +267,6 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
             })
             mas_montaj_noua = st.selectbox("Mașină montaj", options=toate_masinile, key="bon_prov_nou_masina")
     else:
-        st.session_state["bon_prov_negasit"] = ""
         pret_afisat = float(piesa_selectata.get("pret_achizitie") or 0.0) if acces_permis else 0.0
         st.caption(
             f"Selectat: **{piesa_selectata.get('denumire')}** | "
@@ -302,9 +276,9 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
 
     if st.button("➕ Adaugă reper în Bonul Provizoriu", type="primary", key="btn_bon_prov_add", use_container_width=True):
         if piesa_selectata is None:
-            den_finala_noua = (den_noua or den_cautata).strip()
+            den_finala_noua = den_noua.strip()
             if not den_finala_noua:
-                st.error("⚠️ Completează denumirea piesei noi sau caută după denumire.")
+                st.error("⚠️ Nu există nicio denumire setată pentru piesa nouă.")
                 return
 
             potrivire_exacta = next(
@@ -312,13 +286,9 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
                 None,
             )
             if potrivire_exacta is not None:
-                st.session_state["bon_prov_negasit"] = ""
-                st.session_state["bon_prov_cauta_den"] = ""
                 st.session_state["bon_prov_nou_den"] = ""
                 linie = calculeaza_linie_bon_provizoriu(potrivire_exacta, cant_bon, None)
             else:
-                st.session_state["bon_prov_negasit"] = den_finala_noua
-                st.session_state["bon_prov_cauta_den"] = den_finala_noua
                 date_noua = {
                     "denumire": den_finala_noua,
                     "cod": cod_nou,
@@ -389,8 +359,6 @@ def render_bon_comanda_provizoriu(firme_nume: list[str], masini_all: list[dict],
         with col_del:
             if st.button("🧹 Golește Bonul", key="btn_bon_prov_clear", use_container_width=True):
                 st.session_state["bon_provizoriu_linii"] = []
-                st.session_state["bon_prov_negasit"] = ""
-                st.session_state["bon_prov_cauta_den"] = ""
                 st.session_state["bon_prov_nou_den"] = ""
 
 
