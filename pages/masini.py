@@ -185,6 +185,9 @@ def render_masini():
                 "🚫 Fără întreținere",
                 value=este_fara,
                 key=f"chk_fara_int_edit_{mid}",
+            render_sectiune_cmms_masina(
+                firma_id=firma_id,
+                masina_obj=m,
             )
 
             with st.form(f"form_editeaza_masina_{mid}"):
