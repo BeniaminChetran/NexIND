@@ -10,6 +10,15 @@ import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from PIL import Image
 
+from utils.iconita_app import incarca_iconita_app
+
+st.set_page_config(
+    page_title="NexInd CMMS Enterprise Dashboard",
+    page_icon=incarca_iconita_app("logo.png", fallback="⚙️"),
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
 from repositories.setari_repository import SetariRepository
 
 load_dotenv()
