@@ -1326,12 +1326,15 @@ def _fragment_deviz_oferta(
                     pdf_bytes=pdf_pentru_drive,
                     nume_fisier=nume_fisier_pdf,
                 )
-                if ok_drv:
-                    st.toast(f"✅ {msg_drv}")
-                else:
-                    st.warning(f"⚠️ Salvare Google Drive: {msg_drv}")
-                # ------------------------------------------------------------------
-
+                try:
+                    ok_drv, msg_drv = salveaza_pdf_oferta_in_gdrive(
+                        pdf_bytes=pdf_pentru_drive,
+                        nume_fisier=nume_fisier_pdf,
+                    )
+                    if not ok_drv:
+                        st.session_state["oferta_gdrive_msg"] = f"Google Drive indisponibil/neuploadat: {msg_drv}"
+                except Exception as e:
+                    st.session_state["oferta_gdrive_msg"] = f"Google Drive indisponibil/neuploadat: {e}"
                 st.rerun()
                 
 

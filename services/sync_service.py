@@ -173,4 +173,4 @@ def salveaza_pdf_oferta_in_gdrive(pdf_bytes: bytes, nume_fisier: str) -> tuple[b
         return True, f"Încărcat în Google Drive ({locatie_setata}): {creat.get('name')}"
     except Exception as e:
         logger.error(f"Eroare upload PDF Google Drive: {e}")
-        return False, str(e)[cite: 6]
+        return False, str(e)
