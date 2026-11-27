@@ -104,7 +104,6 @@ def _asigura_tabel_oferte_db():
             )
             """
         )
-        # Migrare sigură pentru tabele existente
         cur.execute("ALTER TABLE oferte_client ADD COLUMN IF NOT EXISTS moneda_oferta TEXT DEFAULT 'EUR'")
         cur.execute("ALTER TABLE oferte_client ADD COLUMN IF NOT EXISTS curs_valutar DOUBLE PRECISION DEFAULT 0.0")
 
@@ -134,7 +133,11 @@ def _salveaza_oferta_in_db(
         if not desc:
             continue
         raw_disc_linie = r.get("Discount (%)")
-        disc_linie = 0.0 if (raw_disc_linie is None or pd.isna(raw_disc_linie) or str(raw_disc_linie).strip() == "") else float(raw_disc_linie)
+        disc_linie = (
+            0.0
+            if (raw_disc_linie is None or pd.isna(raw_disc_linie) or str(raw_disc_linie).strip() == "")
+            else float(raw_disc_linie)
+        )
 
         linii_clean.append({
             "Ordine": int(r.get("Ordine") or (idx + 1)),
@@ -233,26 +236,68 @@ def _salveaza_oferta_in_db(
                 return int(row["id"])
             return int(row[0])
 
+def _normalizeaza_nume_firma(nume: str | None) -> str:
+    txt = str(nume or "").strip().lower()
+    txt = re.sub(r"[^a-z0-9ăâîșț]+", " ", txt)
+    return re.sub(r"\s+", " ", txt).strip()
 
-def _listeaza_oferte_salvate(limit: int = 30) -> list[dict]:
+
+def _listeaza_oferte_salvate(
+    firma_id=None,
+    nume_firma: str | None = None,
+    masina: str | None = None,
+    limit: int = 30,
+) -> list[dict]:
     _asigura_tabel_oferte_db()
     with db_cursor() as cur:
         cur.execute(
             """
-            SELECT id, nume_firma, masina, data_oferta, moneda_oferta, total_general, status_oferta, trimisa_la_client, data_trimitere
+            SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
+                   total_general, status_oferta, trimisa_la_client, data_trimitere
             FROM oferte_client
             ORDER BY id DESC
-            LIMIT %s
-            """,
-            (int(limit),),
+            """
         )
         rows = cur.fetchall() or []
         cols = [d[0] for d in cur.description] if cur.description else []
-        res = []
-        for r in rows:
-            res.append(r if isinstance(r, dict) else dict(zip(cols, r)))
-        return res
+        toate = [r if isinstance(r, dict) else dict(zip(cols, r)) for r in rows]
 
+    nume_tinta_norm = _normalizeaza_nume_firma(nume_firma)
+    masina_tinta_norm = _normalizeaza_nume_firma(masina)
+    are_filtru_masina = bool(
+        masina and str(masina).strip() and str(masina).strip() != "-- Fără mașină --"
+    )
+
+    filtrate: list[dict] = []
+    for o in toate:
+        o_fid = o.get("firma_id")
+        o_nume_norm = _normalizeaza_nume_firma(o.get("nume_firma"))
+
+        match_firma = False
+        if firma_id is not None and o_fid is not None:
+            try:
+                if int(o_fid) == int(firma_id):
+                    match_firma = True
+            except (TypeError, ValueError):
+                pass
+
+        if not match_firma and nume_tinta_norm and o_nume_norm:
+            if o_nume_norm == nume_tinta_norm:
+                match_firma = True
+
+        if not match_firma:
+            continue
+
+        if are_filtru_masina:
+            o_masina_norm = _normalizeaza_nume_firma(o.get("masina"))
+            if o_masina_norm != masina_tinta_norm:
+                continue
+
+        filtrate.append(o)
+        if len(filtrate) >= int(limit):
+            break
+
+    return filtrate
 
 def _incarca_oferta_din_db(oferta_id: int) -> dict | None:
     _asigura_tabel_oferte_db()
@@ -512,7 +557,6 @@ def calculeaza_oferta_fara_fallback(
                     f"Valoare ({moneda_tinta})": val_neta_linie,
                     "Monedă sursă": mon,
                     "Termen livrare": str(row.get("Termen livrare") or "").strip(),
-                    # Chei auxiliare pentru PDF / compatibilitate
                     "_pret_unitar_conv": pret_unitar_conv_r,
                     "_pret_net_unitar": pret_net_unitar,
                     "_valoare_neta": val_neta_linie,
@@ -571,7 +615,6 @@ def _construieste_payload_pdf_service(
     articole_pdf = []
     for lin in tot["linii_valide"]:
         disc_l = float(lin.get("Discount (%)") or 0.0)
-        # Trimitem în PDF prețul unitar net (după discountul pe reper) ca totalul liniei să bată exact cu subtotalul
         pret_pt_pdf = lin["_pret_net_unitar"] if disc_l > 0 else lin["_pret_unitar_conv"]
         desc_pdf = lin["Descriere"]
         if disc_l > 0:
@@ -627,7 +670,7 @@ def _fragment_deviz_oferta(
     curs_valutar_activ: float | None,
     adaos_client: float | None,
     eroare_adaos: str,
-    cota_tva_implicita: float | None,
+    cota_tva_implicita: float,
 ):
     st.session_state.setdefault("df_oferta_editor", pd.DataFrame(columns=COLS_OFERTA))
     st.session_state.setdefault("oferta_2_editor_counter", 0)
@@ -641,66 +684,85 @@ def _fragment_deviz_oferta(
     if eroare_adaos:
         st.error(f"⚠️ {eroare_adaos}")
 
-    # Încărcare ofertă salvată din DB pentru modificări și regenerare PDF
-    oferte_salvate = _listeaza_oferte_salvate(limit=30)
-    if oferte_salvate:
-        opt_oferte = {0: "-- Ofertă nouă --"}
-        for o in oferte_salvate:
-            oid = int(o["id"])
-            st_lbl = "Trimisă la client" if o.get("trimisa_la_client") else str(o.get("status_oferta") or "Salvată")
-            mon_lbl = str(o.get("moneda_oferta") or "EUR")
-            opt_oferte[oid] = (
-                f"#{oid} | {o.get('nume_firma')} | {o.get('data_oferta')} | "
-                f"{float(o.get('total_general') or 0.0):.2f} {mon_lbl} ({st_lbl})"
-            )
+    nume_firma = str(firma_obj.get("nume_firma") or "").strip()
+    firma_id = firma_obj.get("id")
 
-        c_load_sel, c_load_btn = st.columns([3.4, 1.2], vertical_alignment="bottom")
-        with c_load_sel:
-            sel_oid = st.selectbox(
-                "Încarcă ofertă salvată pentru editare / revizuire PDF",
-                options=list(opt_oferte.keys()),
-                format_func=lambda x: opt_oferte.get(x, str(x)),
-                key="oferta_select_incarcare_db",
-            )
-        with c_load_btn:
-            if st.button("📂 Încarcă oferta", key="btn_incarca_oferta_db", use_container_width=True):
-                if sel_oid == 0:
-                    st.session_state["oferta_curenta_id"] = None
-                    st.session_state["oferta_status"] = "Ciornă"
-                    st.session_state["df_oferta_editor"] = pd.DataFrame(columns=COLS_OFERTA)
+    # Istoric oferte salvate filtrat după firmă și opțional după mașina selectată
+    are_masina_selectata = bool(masina_selectata and masina_selectata != "-- Fără mașină --")
+    filtreaza_dupa_masina = True
+    if are_masina_selectata:
+        filtreaza_dupa_masina = st.checkbox(
+            f"Filtrează istoricul doar pentru utilajul «{masina_selectata}»",
+            value=True,
+            key="oferta_filtreaza_istoric_masina",
+        )
+
+    oferte_salvate = _listeaza_oferte_salvate(
+        firma_id=firma_id,
+        nume_firma=nume_firma,
+        masina=masina_selectata if (are_masina_selectata and filtreaza_dupa_masina) else None,
+        limit=30,
+    )
+
+    opt_oferte = {0: "-- Ofertă nouă --"}
+    for o in oferte_salvate:
+        oid = int(o["id"])
+        st_lbl = "Trimisă la client" if o.get("trimisa_la_client") else str(o.get("status_oferta") or "Salvată")
+        mon_lbl = str(o.get("moneda_oferta") or "EUR")
+        mas_lbl = str(o.get("masina") or "").strip()
+        mas_txt = f" | {mas_lbl}" if mas_lbl and mas_lbl != "-- Fără mașină --" else ""
+        opt_oferte[oid] = (
+            f"#{oid} | {o.get('nume_firma')}{mas_txt} | {o.get('data_oferta')} | "
+            f"{float(o.get('total_general') or 0.0):.2f} {mon_lbl} ({st_lbl})"
+        )
+
+    c_load_sel, c_load_btn = st.columns([3.4, 1.2], vertical_alignment="bottom")
+    with c_load_sel:
+        sel_oid = st.selectbox(
+            f"Încarcă ofertă salvată ({nume_firma})",
+            options=list(opt_oferte.keys()),
+            format_func=lambda x: opt_oferte.get(x, str(x)),
+            key="oferta_select_incarcare_db",
+        )
+    with c_load_btn:
+        if st.button("📂 Încarcă oferta", key="btn_incarca_oferta_db", use_container_width=True):
+            if sel_oid == 0:
+                st.session_state["oferta_curenta_id"] = None
+                st.session_state["oferta_status"] = "Ciornă"
+                st.session_state["df_oferta_editor"] = pd.DataFrame(columns=COLS_OFERTA)
+                st.session_state["oferta_pdf_bytes"] = None
+                st.session_state["oferta_pdf_deschis"] = False
+                st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
+                st.rerun()
+            else:
+                rec = _incarca_oferta_din_db(int(sel_oid))
+                if rec:
+                    try:
+                        linii_rec = json.loads(rec.get("linii_json") or "[]")
+                    except Exception:
+                        linii_rec = []
+                    df_loaded = pd.DataFrame(linii_rec) if linii_rec else pd.DataFrame(columns=COLS_OFERTA)
+                    for col in COLS_OFERTA:
+                        if col not in df_loaded.columns:
+                            df_loaded[col] = 0.0 if col == "Discount (%)" else ""
+                    df_loaded = df_loaded[COLS_OFERTA]
+
+                    st.session_state["oferta_curenta_id"] = int(rec["id"])
+                    st.session_state["oferta_status"] = str(rec.get("status_oferta") or "Salvată")
+                    st.session_state["df_oferta_editor"] = df_loaded
+                    if rec.get("moneda_oferta") in ("EUR", "RON"):
+                        st.session_state["oferta_2_moneda_oferta"] = rec["moneda_oferta"]
+                    if rec.get("curs_valutar") and float(rec["curs_valutar"]) > 0:
+                        st.session_state["oferta_2_curs_valutar"] = float(rec["curs_valutar"])
+                    st.session_state["oferta_2_disc_pct"] = float(rec.get("discount_pct") or 0.0)
+                    st.session_state["oferta_2_disc_val"] = float(rec.get("discount_val") or 0.0)
+                    if rec.get("cota_tva_pct") is not None:
+                        st.session_state["oferta_2_tva_pct"] = float(rec["cota_tva_pct"])
                     st.session_state["oferta_pdf_bytes"] = None
                     st.session_state["oferta_pdf_deschis"] = False
                     st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
+                    st.success(f"✅ Oferta #{rec['id']} a fost încărcată.")
                     st.rerun()
-                else:
-                    rec = _incarca_oferta_din_db(int(sel_oid))
-                    if rec:
-                        try:
-                            linii_rec = json.loads(rec.get("linii_json") or "[]")
-                        except Exception:
-                            linii_rec = []
-                        df_loaded = pd.DataFrame(linii_rec) if linii_rec else pd.DataFrame(columns=COLS_OFERTA)
-                        for col in COLS_OFERTA:
-                            if col not in df_loaded.columns:
-                                df_loaded[col] = 0.0 if col == "Discount (%)" else ""
-                        df_loaded = df_loaded[COLS_OFERTA]
-
-                        st.session_state["oferta_curenta_id"] = int(rec["id"])
-                        st.session_state["oferta_status"] = str(rec.get("status_oferta") or "Salvată")
-                        st.session_state["df_oferta_editor"] = df_loaded
-                        if rec.get("moneda_oferta") in ("EUR", "RON"):
-                            st.session_state["oferta_2_moneda_oferta"] = rec["moneda_oferta"]
-                        if rec.get("curs_valutar") and float(rec["curs_valutar"]) > 0:
-                            st.session_state["oferta_2_curs_valutar"] = float(rec["curs_valutar"])
-                        st.session_state["oferta_2_disc_pct"] = float(rec.get("discount_pct") or 0.0)
-                        st.session_state["oferta_2_disc_val"] = float(rec.get("discount_val") or 0.0)
-                        if rec.get("cota_tva_pct") is not None:
-                            st.session_state["oferta_2_tva_pct"] = float(rec["cota_tva_pct"])
-                        st.session_state["oferta_pdf_bytes"] = None
-                        st.session_state["oferta_pdf_deschis"] = False
-                        st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
-                        st.success(f"✅ Oferta #{rec['id']} a fost încărcată.")
-                        st.rerun()
 
     oid_curent = st.session_state.get("oferta_curenta_id")
     status_curent = st.session_state.get("oferta_status", "Ciornă")
@@ -928,7 +990,7 @@ def _fragment_deviz_oferta(
                         )
 
     st.markdown("#### 📋 Linii ofertă")
-    st.caption("💡 Poți aplica **Discount (%)** individual pe fiecare reper direct în coloana dedicată din tabel.")
+    st.caption("💡 Poți aplica **Disc. reper (%)** individual pe fiecare reper direct în tabel.")
     df_init = st.session_state["df_oferta_editor"].copy()
     for col in COLS_OFERTA:
         if col not in df_init.columns:
@@ -1042,9 +1104,6 @@ def _fragment_deviz_oferta(
     st.divider()
     st.markdown("#### 💾 Salvare, PDF & Trimitere Client")
 
-    nume_firma = str(firma_obj.get("nume_firma") or "").strip()
-    firma_id = firma_obj.get("id")
-
     b1, b2, b3 = st.columns(3)
     with b1:
         if st.button("💾 Salvează oferta în DB", type="primary", key="btn_salveaza_oferta_db", use_container_width=True):
@@ -1073,84 +1132,6 @@ def _fragment_deviz_oferta(
                 st.session_state["oferta_curenta_id"] = nou_id
                 st.session_state["oferta_status"] = "Salvată"
                 st.success(f"✅ Oferta #{nou_id} ({moneda_oferta}) a fost salvată în baza de date.")
-                st.rerun()
-
-    with b2:
-        if st.button("📄 Generează & Vezi PDF", key="btn_genereaza_pdf_oferta", use_container_width=True):
-            if not ok_calc or tot is None:
-                st.error("⚠️ Nu pot genera PDF-ul deoarece lipsesc valori obligatorii:")
-                for msg in lipsuri_calc:
-                    st.markdown(f"- {msg}")
-            else:
-                era_deja_salvata = st.session_state.get("oferta_curenta_id") is not None
-                nou_id = _salveaza_oferta_in_db(
-                    oferta_id=st.session_state.get("oferta_curenta_id"),
-                    firma_id=firma_id,
-                    nume_firma=nume_firma,
-                    masina=masina_selectata,
-                    data_oferta=data_oferta_str,
-                    moneda_oferta=moneda_oferta,
-                    curs_valutar=curs_valutar_activ,
-                    adaos_pct=tot["adaos_comercial_pct"],
-                    discount_pct=disc_pct,
-                    discount_val=disc_val,
-                    cota_tva_pct=float(cota_tva),
-                    tot=tot,
-                    df_linii=edited_df,
-                    status_oferta=st.session_state.get("oferta_status", "Salvată"),
-                    trimisa_la_client=(st.session_state.get("oferta_status") == "Verificată / Trimisă la client"),
-                )
-                st.session_state["oferta_curenta_id"] = nou_id
-
-                payload_pdf = _construieste_payload_pdf_service(
-                    oferta_id=nou_id,
-                    firma_obj=firma_obj,
-                    masina_selectata=masina_selectata,
-                    data_oferta_str=data_oferta_str,
-                    disc_pct=disc_pct,
-                    disc_val=disc_val,
-                    cota_tva=float(cota_tva),
-                    tot=tot,
-                    curs_valutar=curs_valutar_activ,
-                    este_revizuita=era_deja_salvata,
-                )
-                try:
-                    pdf_bytes = genereaza_pdf_oferta(payload_pdf)
-                    st.session_state["oferta_pdf_bytes"] = pdf_bytes
-                    st.session_state["oferta_pdf_deschis"] = True
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"⚠️ Eroare la generarea PDF-ului: {exc}")
-
-    with b3:
-        if st.button("✅ Ofertă verificată — Trimite la client", key="btn_trimite_oferta_client", use_container_width=True):
-            if not ok_calc or tot is None:
-                st.error("⚠️ Nu pot trimite oferta deoarece lipsesc valori obligatorii:")
-                for msg in lipsuri_calc:
-                    st.markdown(f"- {msg}")
-            else:
-                data_trim = datetime.now().strftime("%Y-%m-%d %H:%M")
-                nou_id = _salveaza_oferta_in_db(
-                    oferta_id=st.session_state.get("oferta_curenta_id"),
-                    firma_id=firma_id,
-                    nume_firma=nume_firma,
-                    masina=masina_selectata,
-                    data_oferta=data_oferta_str,
-                    moneda_oferta=moneda_oferta,
-                    curs_valutar=curs_valutar_activ,
-                    adaos_pct=tot["adaos_comercial_pct"],
-                    discount_pct=disc_pct,
-                    discount_val=disc_val,
-                    cota_tva_pct=float(cota_tva),
-                    tot=tot,
-                    df_linii=edited_df,
-                    status_oferta="Verificată / Trimisă la client",
-                    trimisa_la_client=True,
-                    data_trimitere=data_trim,
-                )
-                st.session_state["oferta_curenta_id"] = nou_id
-                st.session_state["oferta_status"] = "Verificată / Trimisă la client"
-                st.success(f"📨 Oferta #{nou_id} a fost marcată ca **verificată și trimisă către client** ({data_trim}).")
                 st.rerun()
 
     with b2:
@@ -1231,7 +1212,6 @@ def _fragment_deviz_oferta(
                 st.success(f"📨 Oferta #{nou_id} a fost marcată ca **verificată și trimisă către client** ({data_trim}).")
                 st.rerun()
 
-    # Descărcare directă PDF (fără previzualizare st.pdf)
     if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
         st.success("✅ PDF-ul ofertei este pregătit. Descarcă-l pentru verificare, apoi apasă pe **«✅ Ofertă verificată — Trimite la client»** sau modifică tabelul și regenerează.")
         c_dl, c_close = st.columns([2.2, 1.4], vertical_alignment="center")
@@ -1251,31 +1231,6 @@ def _fragment_deviz_oferta(
                 st.session_state["oferta_pdf_deschis"] = False
                 st.session_state["oferta_pdf_bytes"] = None
                 st.rerun()
-    
-    # Previzualizare PDF + închidere pentru revenire la modificări în tabel
-    if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
-        st.markdown("#### 📑 Previzualizare PDF Ofertă")
-        c_dl, c_close = st.columns([2.2, 1.4], vertical_alignment="center")
-        nume_fisier_pdf = f"oferta_{st.session_state.get('oferta_curenta_id') or 'noua'}_{moneda_oferta}_{data_oferta_str}.pdf"
-        with c_dl:
-            st.download_button(
-                "⬇️ Descarcă PDF",
-                data=st.session_state["oferta_pdf_bytes"],
-                file_name=nume_fisier_pdf,
-                mime="application/pdf",
-                key="btn_descarca_pdf_oferta",
-                use_container_width=True,
-            )
-        with c_close:
-            if st.button("❌ Închide PDF & Editează oferta", key="btn_inchide_pdf_oferta", use_container_width=True):
-                st.session_state["oferta_pdf_deschis"] = False
-                st.info("ℹ️ PDF-ul a fost închis. Poți modifica tabelul de ofertă, salva și genera din nou PDF-ul.")
-                st.rerun()
-
-        if hasattr(st, "pdf"):
-            st.pdf(st.session_state["oferta_pdf_bytes"])
-        else:
-            st.info("ℹ️ Descarcă PDF-ul pentru verificare, apoi apasă **«❌ Închide PDF & Editează oferta»** dacă vrei să operezi modificări.")
 
 
 def render_oferte():
@@ -1294,14 +1249,15 @@ def render_oferte():
     masini_db = MasiniRepository.get_all() or []
     setari_firma = get_date_firma_mea() or {}
     raw_tva_setari = setari_firma.get("cota_tva")
-    cota_tva_implicita = float(raw_tva_setari) if raw_tva_setari not in (None, "") else None
+    cota_tva_implicita = float(raw_tva_setari) if raw_tva_setari not in (None, "") else 0.0
 
-    # Inițializare curs valutar BNR în session_state
     if "oferta_2_curs_valutar" not in st.session_state:
         curs_init = obtine_curs_bnr()
         st.session_state["oferta_2_curs_valutar"] = float(curs_init) if curs_init else 0.0
 
-    c1, c2, c3, c4, c5, c6 = st.columns([2.0, 1.9, 1.0, 0.9, 1.0, 1.1], vertical_alignment="bottom")
+    st.session_state.setdefault("oferta_2_moneda_oferta", "EUR")
+
+    c1, c2, c3 = st.columns([2.2, 2.2, 1.2], vertical_alignment="bottom")
     with c1:
         sel_firma = st.selectbox("Firmă client *", options=list(firme_dict.keys()), key="oferta_2_firma")
     firma_obj = firme_dict[sel_firma]
@@ -1322,34 +1278,38 @@ def render_oferte():
         data_oferta_str = date.today().isoformat()
         st.text_input("Data ofertă", value=data_oferta_str, disabled=True, key="oferta_2_data")
 
-    with c4:
+    # Rând dedicat pentru moneda finală a ofertei și cursul valutar BNR
+    v1, v2, v3 = st.columns([1.4, 1.4, 1.6], vertical_alignment="bottom")
+    with v1:
         moneda_oferta = st.selectbox(
-            "Monedă ofertă",
+            "Monedă ofertă finală",
             options=["EUR", "RON"],
             key="oferta_2_moneda_oferta",
         )
-
-    with c5:
+    with v2:
         curs_valutar_input = st.number_input(
-            "Curs EUR/RON",
+            "Curs EUR / RON",
             min_value=0.0,
             step=0.0001,
             format="%.4f",
             key="oferta_2_curs_valutar",
         )
-
-    with c6:
-        if st.button("🔄 Actualizează curs", key="btn_actualizeaza_curs_bnr", use_container_width=True):
+    with v3:
+        if st.button("🔄 Actualizează curs valutar", key="btn_actualizeaza_curs_bnr", use_container_width=True):
             obtine_curs_bnr.clear()
             curs_nou = obtine_curs_bnr()
             if curs_nou and curs_nou > 0:
                 st.session_state["oferta_2_curs_valutar"] = float(curs_nou)
-                st.toast(f"Curs BNR actualizat: 1 EUR = {curs_nou:.4f} RON", icon="✅")
+                st.success(f"✅ Curs BNR actualizat: 1 EUR = {curs_nou:.4f} RON")
                 st.rerun()
             else:
-                st.toast("Nu s-a putut prelua cursul BNR online. Poți introduce cursul manual.", icon="⚠️")
+                st.warning("⚠️ Nu s-a putut prelua cursul BNR online. Poți introduce cursul manual.")
 
-    curs_valutar_activ = float(curs_valutar_input) if curs_valutar_input and float(curs_valutar_input) > 0 else None
+    curs_valutar_activ = (
+        float(curs_valutar_input)
+        if curs_valutar_input is not None and float(curs_valutar_input) > 0
+        else None
+    )
 
     _fragment_deviz_oferta(
         firma_obj=firma_obj,
