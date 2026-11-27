@@ -576,4 +576,384 @@ def _fragment_deviz_oferta(
             if st.button("📂 Încarcă oferta", key="btn_incarca_oferta_db", use_container_width=True):
                 if sel_oid == 0:
                     st.session_state["oferta_curenta_id"] = None
-                    st.session_state["oferta_status"] = "Ciornă
+                    st.session_state["oferta_status"] = "Ciornă"
+                    st.session_state["df_oferta_editor"] = pd.DataFrame(columns=COLS_OFERTA)
+                    st.session_state["oferta_pdf_bytes"] = None
+                    st.session_state["oferta_pdf_deschis"] = False
+                    st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
+                    st.rerun()
+                else:
+                    rec = _incarca_oferta_din_db(int(sel_oid))
+                    if rec:
+                        try:
+                            linii_rec = json.loads(rec.get("linii_json") or "[]")
+                        except Exception:
+                            linii_rec = []
+                        st.session_state["oferta_curenta_id"] = int(rec["id"])
+                        st.session_state["oferta_status"] = str(rec.get("status_oferta") or "Salvată")
+                        st.session_state["df_oferta_editor"] = pd.DataFrame(linii_rec, columns=COLS_OFERTA) if linii_rec else pd.DataFrame(columns=COLS_OFERTA)
+                        st.session_state["oferta_2_disc_pct"] = float(rec.get("discount_pct") or 0.0)
+                        st.session_state["oferta_2_disc_val"] = float(rec.get("discount_val") or 0.0)
+                        if rec.get("cota_tva_pct") is not None:
+                            st.session_state["oferta_2_tva_pct"] = float(rec["cota_tva_pct"])
+                        st.session_state["oferta_pdf_bytes"] = None
+                        st.session_state["oferta_pdf_deschis"] = False
+                        st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
+                        st.success(f"✅ Oferta #{rec['id']} a fost încărcată.")
+                        st.rerun()
+
+    oid_curent = st.session_state.get("oferta_curenta_id")
+    status_curent = st.session_state.get("oferta_status", "Ciornă")
+    st.caption(
+        f"**Oferta curentă:** {f'#{oid_curent}' if oid_curent else 'Nesalvată încă'} | "
+        f"**Status:** `{status_curent}`"
+    )
+
+    piese_all = PieseRepository.get_all() or []
+    piese_dict: dict[str, dict] = {}
+    for p in piese_all:
+        den = str(p.get("denumire") or "").strip()
+        if not den:
+            continue
+        cod = str(p.get("cod_producator") or p.get("cod_comercial") or "").strip()
+        raw_p = p.get("pret_achizitie")
+        mon = str(p.get("valuta_achizitie") or "").strip().upper()
+        pret_lbl = f"{float(raw_p):.2f} {mon}".strip() if raw_p not in (None, "") else "preț lipsă"
+        eticheta = f"{den}" + (f" [{cod}]" if cod else "") + f" — {pret_lbl}"
+        piese_dict[eticheta] = p
+
+    st.markdown("#### ➕ Adaugă piesă din catalog în ofertă")
+    c_sel, c_cant, c_term, c_btn = st.columns([3.0, 1.0, 1.2, 1.2], vertical_alignment="bottom")
+    with c_sel:
+        opt_piese = ["-- Alege piesa --"] + list(piese_dict.keys())
+        sel_piesa_catalog = st.selectbox(
+            "Piesă din baza de date",
+            options=opt_piese,
+            key="oferta_2_sel_piesa",
+        )
+    with c_cant:
+        cant_piesa = st.number_input(
+            "Cantitate",
+            min_value=0.01,
+            value=1.0,
+            step=1.0,
+            format="%.2f",
+            key="oferta_2_cant_piesa",
+        )
+    with c_term:
+        termen_piesa = st.text_input(
+            "Termen livrare",
+            value="",
+            placeholder="ex: 3 zile",
+            key="oferta_2_termen_piesa",
+        )
+    with c_btn:
+        btn_add_piesa = st.button(
+            "➕ Adaugă",
+            type="primary",
+            key="oferta_2_btn_add_piesa",
+            use_container_width=True,
+        )
+
+    if btn_add_piesa:
+        st.session_state["oferta_2_eroare_piesa"] = ""
+        if sel_piesa_catalog == "-- Alege piesa --":
+            st.session_state["oferta_2_eroare_piesa"] = "⚠️ Selectați mai întâi o piesă din catalog!"
+        else:
+            p_info = piese_dict[sel_piesa_catalog]
+            ok_p, err_p, info_calc = valideaza_si_calculeaza_linie_oferta(
+                piesa_catalog=p_info,
+                cantitate=float(cant_piesa),
+                adaos_comercial_pct=adaos_client,
+            )
+            if not ok_p or info_calc is None:
+                st.session_state["oferta_2_eroare_piesa"] = f"⚠️ {err_p}"
+            else:
+                df_baza_p = _sincronizeaza_editor_inainte_de_adaugare()
+                next_ord = len(df_baza_p) + 1
+                termen_final = str(termen_piesa or p_info.get("termen_livrare") or "").strip()
+
+                linie_piesa = pd.DataFrame([{
+                    "Ordine": next_ord,
+                    "Descriere": info_calc["desc"],
+                    "UM": "buc",
+                    "Cantitate": info_calc["cant"],
+                    "Pret Unitar": info_calc["pret_vanzare"],
+                    "Moneda": info_calc["moneda"],
+                    "Termen livrare": termen_final,
+                }])
+                st.session_state["df_oferta_editor"] = pd.concat(
+                    [df_baza_p, linie_piesa],
+                    ignore_index=True,
+                )
+                st.session_state["oferta_2_editor_counter"] = (
+                    st.session_state.get("oferta_2_editor_counter", 0) + 1
+                )
+
+    if st.session_state.get("oferta_2_eroare_piesa"):
+        st.error(st.session_state["oferta_2_eroare_piesa"])
+
+    st.markdown("#### 📋 Linii ofertă")
+    df_init = st.session_state["df_oferta_editor"].copy()
+    for col in COLS_OFERTA:
+        if col not in df_init.columns:
+            df_init[col] = None
+    df_init = df_init[COLS_OFERTA]
+
+    ed_key = f"oferta_2_data_editor_{st.session_state.get('oferta_2_editor_counter', 0)}"
+    edited_df = st.data_editor(
+        df_init,
+        key=ed_key,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Ordine": st.column_config.NumberColumn("Nr.", min_value=1, step=1, format="%d", width="small"),
+            "Descriere": st.column_config.TextColumn("Descriere / Piesă / Serviciu", width="large", required=True),
+            "UM": st.column_config.TextColumn("UM", width="small"),
+            "Cantitate": st.column_config.NumberColumn("Cantitate", min_value=0.0, step=1.0, format="%.2f", width="small"),
+            "Pret Unitar": st.column_config.NumberColumn("Preț Vânzare", min_value=0.0, step=1.0, format="%.2f", width="small"),
+            "Moneda": st.column_config.SelectboxColumn("Monedă", options=["RON", "EUR", "USD"], width="small"),
+            "Termen livrare": st.column_config.TextColumn("Termen livrare", width="medium"),
+        },
+    )
+    st.session_state["df_oferta_editor"] = edited_df
+
+    st.markdown("#### 💶 Discounturi & TVA")
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        disc_pct = st.number_input(
+            "Discount procentual (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=0.0,
+            step=1.0,
+            format="%.2f",
+            key="oferta_2_disc_pct",
+        )
+    with d2:
+        disc_val = st.number_input(
+            "Discount valoric",
+            min_value=0.0,
+            value=0.0,
+            step=10.0,
+            format="%.2f",
+            key="oferta_2_disc_val",
+        )
+    with d3:
+        cota_tva = st.number_input(
+            "Cotă TVA (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=cota_tva_implicita,
+            step=1.0,
+            format="%.2f",
+            key="oferta_2_tva_pct",
+        )
+
+    curs_bnr = obtine_curs_bnr()
+    ok_calc, lipsuri_calc, tot = calculeaza_oferta_fara_fallback(
+        firma_obj=firma_obj,
+        df_linii=edited_df,
+        cota_tva_pct=cota_tva,
+        discount_pct=disc_pct,
+        discount_val=disc_val,
+        curs_valutar=curs_bnr,
+    )
+
+    if ok_calc and tot is not None:
+        st.markdown("#### 🧮 Valori calculate pe linie")
+        st.dataframe(pd.DataFrame(tot["linii_valide"]), hide_index=True, use_container_width=True)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Subtotal (fără TVA)", f"{tot['subtotal']:.2f} {tot['moneda_principala']}")
+        m2.metric("Total discounturi", f"{round(tot['discount_procent_val'] + tot['discount_valoric'], 2):.2f} {tot['moneda_principala']}")
+        m3.metric(f"TVA ({float(cota_tva):g}%)", f"{tot['tva_valoare']:.2f} {tot['moneda_principala']}")
+        m4.metric("Total General", f"{tot['total_general']:.2f} {tot['moneda_principala']}")
+    else:
+        st.warning("⚠️ Oferta nu poate fi calculată complet din cauza următoarelor lipsuri:")
+        for msg in lipsuri_calc:
+            st.markdown(f"- {msg}")
+
+    st.divider()
+    st.markdown("#### 💾 Salvare, PDF & Trimitere Client")
+
+    nume_firma = str(firma_obj.get("nume_firma") or "").strip()
+    firma_id = firma_obj.get("id")
+
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("💾 Salvează oferta în DB", type="primary", key="btn_salveaza_oferta_db", use_container_width=True):
+            if not ok_calc or tot is None:
+                st.error("⚠️ Nu pot salva oferta deoarece lipsesc valori obligatorii:")
+                for msg in lipsuri_calc:
+                    st.markdown(f"- {msg}")
+            else:
+                nou_id = _salveaza_oferta_in_db(
+                    oferta_id=st.session_state.get("oferta_curenta_id"),
+                    firma_id=firma_id,
+                    nume_firma=nume_firma,
+                    masina=masina_selectata,
+                    data_oferta=data_oferta_str,
+                    adaos_pct=tot["adaos_comercial_pct"],
+                    discount_pct=disc_pct,
+                    discount_val=disc_val,
+                    cota_tva_pct=float(cota_tva),
+                    tot=tot,
+                    df_linii=edited_df,
+                    status_oferta="Salvată",
+                    trimisa_la_client=False,
+                )
+                st.session_state["oferta_curenta_id"] = nou_id
+                st.session_state["oferta_status"] = "Salvată"
+                st.success(f"✅ Oferta #{nou_id} a fost salvată în baza de date.")
+                st.rerun()
+
+    with b2:
+        if st.button("📄 Generează & Vezi PDF", key="btn_genereaza_pdf_oferta", use_container_width=True):
+            if not ok_calc or tot is None:
+                st.error("⚠️ Nu pot genera PDF-ul deoarece lipsesc valori obligatorii:")
+                for msg in lipsuri_calc:
+                    st.markdown(f"- {msg}")
+            else:
+                era_deja_salvata = st.session_state.get("oferta_curenta_id") is not None
+                nou_id = _salveaza_oferta_in_db(
+                    oferta_id=st.session_state.get("oferta_curenta_id"),
+                    firma_id=firma_id,
+                    nume_firma=nume_firma,
+                    masina=masina_selectata,
+                    data_oferta=data_oferta_str,
+                    adaos_pct=tot["adaos_comercial_pct"],
+                    discount_pct=disc_pct,
+                    discount_val=disc_val,
+                    cota_tva_pct=float(cota_tva),
+                    tot=tot,
+                    df_linii=edited_df,
+                    status_oferta=st.session_state.get("oferta_status", "Salvată"),
+                    trimisa_la_client=(st.session_state.get("oferta_status") == "Verificată / Trimisă la client"),
+                )
+                st.session_state["oferta_curenta_id"] = nou_id
+
+                payload_pdf = _construieste_payload_pdf_service(
+                    oferta_id=nou_id,
+                    firma_obj=firma_obj,
+                    masina_selectata=masina_selectata,
+                    data_oferta_str=data_oferta_str,
+                    df_linii=edited_df,
+                    disc_pct=disc_pct,
+                    disc_val=disc_val,
+                    cota_tva=float(cota_tva),
+                    tot=tot,
+                    curs_valutar=curs_bnr,
+                    este_revizuita=era_deja_salvata,
+                )
+                try:
+                    pdf_bytes = genereaza_pdf_oferta(payload_pdf)
+                    st.session_state["oferta_pdf_bytes"] = pdf_bytes
+                    st.session_state["oferta_pdf_deschis"] = True
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"⚠️ Eroare la generarea PDF-ului: {exc}")
+
+    with b3:
+        if st.button("✅ Ofertă verificată — Trimite la client", key="btn_trimite_oferta_client", use_container_width=True):
+            if not ok_calc or tot is None:
+                st.error("⚠️ Nu pot trimite oferta deoarece lipsesc valori obligatorii:")
+                for msg in lipsuri_calc:
+                    st.markdown(f"- {msg}")
+            else:
+                data_trim = datetime.now().strftime("%Y-%m-%d %H:%M")
+                nou_id = _salveaza_oferta_in_db(
+                    oferta_id=st.session_state.get("oferta_curenta_id"),
+                    firma_id=firma_id,
+                    nume_firma=nume_firma,
+                    masina=masina_selectata,
+                    data_oferta=data_oferta_str,
+                    adaos_pct=tot["adaos_comercial_pct"],
+                    discount_pct=disc_pct,
+                    discount_val=disc_val,
+                    cota_tva_pct=float(cota_tva),
+                    tot=tot,
+                    df_linii=edited_df,
+                    status_oferta="Verificată / Trimisă la client",
+                    trimisa_la_client=True,
+                    data_trimitere=data_trim,
+                )
+                st.session_state["oferta_curenta_id"] = nou_id
+                st.session_state["oferta_status"] = "Verificată / Trimisă la client"
+                st.success(f"📨 Oferta #{nou_id} a fost marcată ca **verificată și trimisă către client** ({data_trim}).")
+                st.rerun()
+
+    # Previzualizare PDF + închidere pentru revenire la modificări în tabel
+    if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
+        st.markdown("#### 📑 Previzualizare PDF Ofertă")
+        c_dl, c_close = st.columns([2.2, 1.4], vertical_alignment="center")
+        nume_fisier_pdf = f"oferta_{st.session_state.get('oferta_curenta_id') or 'noua'}_{data_oferta_str}.pdf"
+        with c_dl:
+            st.download_button(
+                "⬇️ Descarcă PDF",
+                data=st.session_state["oferta_pdf_bytes"],
+                file_name=nume_fisier_pdf,
+                mime="application/pdf",
+                key="btn_descarca_pdf_oferta",
+                use_container_width=True,
+            )
+        with c_close:
+            if st.button("❌ Închide PDF & Editează oferta", key="btn_inchide_pdf_oferta", use_container_width=True):
+                st.session_state["oferta_pdf_deschis"] = False
+                st.info("ℹ️ PDF-ul a fost închis. Poți modifica tabelul de ofertă, salva și genera din nou PDF-ul.")
+                st.rerun()
+
+        if hasattr(st, "pdf"):
+            st.pdf(st.session_state["oferta_pdf_bytes"])
+        else:
+            st.info("ℹ️ Descarcă PDF-ul pentru verificare, apoi apasă **«❌ Închide PDF & Editează oferta»** dacă vrei să operezi modificări.")
+
+
+def render_oferte():
+    st.title("💼 Oferte de Preț")
+
+    firme_db = FirmeRepository.get_all() or []
+    firme_dict = {
+        str(f.get("nume_firma") or "").strip(): f
+        for f in firme_db
+        if str(f.get("nume_firma") or "").strip()
+    }
+    if not firme_dict:
+        st.warning("⚠️ Nu există firme înregistrate.")
+        return
+
+    masini_db = MasiniRepository.get_all() or []
+    setari_firma = get_date_firma_mea() or {}
+    raw_tva_setari = setari_firma.get("cota_tva")
+    cota_tva_implicita = float(raw_tva_setari) if raw_tva_setari not in (None, "") else None
+
+    c1, c2, c3 = st.columns([2.2, 2.2, 1.2], vertical_alignment="bottom")
+    with c1:
+        sel_firma = st.selectbox("Firmă client *", options=list(firme_dict.keys()), key="oferta_2_firma")
+    firma_obj = firme_dict[sel_firma]
+    fid = firma_obj.get("id")
+
+    with c2:
+        masini_firma = [
+            str(m.get("denumire") or "").strip()
+            for m in masini_db
+            if str(m.get("denumire") or "").strip() and (fid is None or m.get("firma_id") == fid)
+        ]
+        opt_mas = ["-- Fără mașină --"] + sorted(set(masini_firma))
+        masina_selectata = st.selectbox("Mașină / Utilaj", options=opt_mas, key="oferta_2_masina")
+
+    ok_ad, eroare_adaos, adaos_client = _extrage_adaos_firma(firma_obj)
+
+    with c3:
+        data_oferta_str = date.today().isoformat()
+        st.text_input("Data ofertă", value=data_oferta_str, disabled=True, key="oferta_2_data")
+
+    _fragment_deviz_oferta(
+        firma_obj=firma_obj,
+        masina_selectata=masina_selectata,
+        data_oferta_str=data_oferta_str,
+        adaos_client=adaos_client if ok_ad else None,
+        eroare_adaos=eroare_adaos,
+        cota_tva_implicita=cota_tva_implicita,
+    )
