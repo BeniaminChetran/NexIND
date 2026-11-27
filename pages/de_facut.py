@@ -33,7 +33,7 @@ from repositories.taskuri_vizita_repository import (
     normalizeaza_stare_task_vizita,
 )
 
-# Compatibilitate @st.fragment indiferent de versiunea Streamlit
+# Compatibilitate @st.fragment și st.rerun(scope="app") indiferent de versiunea Streamlit
 _fragment = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None) or (lambda fn: fn)
 _RERUN_SUPPORTS_SCOPE = "scope" in inspect.signature(st.rerun).parameters
 
@@ -535,6 +535,83 @@ def _goleste_cache_de_facut():
 # OPERAȚII SCRIERE & COLECTARE PIESE
 # ---------------------------------------------------------
 
+def _salveaza_modificari_piese(
+    df_orig_rows: list[dict],
+    edited_df: pd.DataFrame,
+    col_prio: str,
+    col_status: str,
+) -> tuple[int, list[str]]:
+    """
+    Salvează modificările de prioritate și status comandă din orice data_editor de piese.
+    Returnează (nr_modificate, lista_erori).
+    """
+    meta_map = {}
+    orig_status_map = {}
+    orig_prio_map = {}
+
+    for r in df_orig_rows:
+        rid = int(r["_row_id"])
+        meta_map[rid] = {
+            "_necesar_id": _to_int_or_none(r.get("_necesar_id")),
+            "_piesa_id": _to_int_or_none(r.get("_piesa_id")),
+            "_sursa_tbl": str(r.get("_sursa_tbl") or "").strip(),
+            "_sursa_rec_id": _to_int_or_none(r.get("_sursa_rec_id")),
+            "Piesă": str(r.get("Piesă") or ""),
+        }
+        orig_status_map[rid] = _normalizeaza_stare_comanda(r.get(col_status))
+        orig_prio_map[rid] = normalizeaza_prioritate_piesa(r.get(col_prio))
+
+    nr_mod = 0
+    erori_salvare: list[str] = []
+
+    for _, row in edited_df.iterrows():
+        rid = int(row["_row_id"])
+        stare_noua = _normalizeaza_stare_comanda(row.get(col_status))
+        stare_veche = orig_status_map.get(rid)
+        prio_noua = normalizeaza_prioritate_piesa(row.get(col_prio))
+        prio_veche = orig_prio_map.get(rid)
+
+        if stare_veche == stare_noua and prio_veche == prio_noua:
+            continue
+
+        meta = meta_map.get(rid) or {}
+        salvat_ceva = False
+        sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
+        den_piesa = meta.get("Piesă") or str(row.get("Piesă") or "")
+
+        necesar_id = meta.get("_necesar_id")
+        if sursa_tbl == "necesar_piese" and necesar_id is not None:
+            try:
+                if stare_veche != stare_noua:
+                    NecesarPieseRepository.update_status_comanda(necesar_id, stare_noua)
+                if prio_veche != prio_noua:
+                    NecesarPieseRepository.update_prioritate_piesa(necesar_id, prio_noua)
+                salvat_ceva = True
+            except Exception as e:
+                erori_salvare.append(f"Necesar #{necesar_id} ({den_piesa}): {e}")
+
+        piesa_id = meta.get("_piesa_id")
+        if piesa_id is not None and stare_veche != stare_noua:
+            try:
+                PieseRepository.update_stare_comandata(piesa_id, stare_noua)
+                salvat_ceva = True
+            except Exception as e:
+                erori_salvare.append(f"Piesa #{piesa_id} ({den_piesa}): {e}")
+
+        sursa_rec_id = meta.get("_sursa_rec_id")
+        if sursa_tbl in ("reparatii", "reparatii_electronice") and sursa_rec_id is not None and stare_veche != stare_noua:
+            try:
+                if _DeFacutDataAdapter.update_stare_in_raport_json(sursa_tbl, sursa_rec_id, den_piesa, stare_noua):
+                    salvat_ceva = True
+            except Exception as e:
+                erori_salvare.append(f"{sursa_tbl} #{sursa_rec_id} ({den_piesa}): {e}")
+
+        if salvat_ceva:
+            nr_mod += 1
+
+    return nr_mod, erori_salvare
+
+
 def _salveaza_toate_ofertele_cerere_rfq(cerere_id: int, df_lin_edit: pd.DataFrame) -> None:
     linii_existente: list[dict] = []
     linii_noi: list[dict] = []
@@ -734,7 +811,7 @@ def _colecteaza_piese_necesare(link_gdrive_global: str = "") -> list[dict]:
 
 
 # ---------------------------------------------------------
-# SECȚIUNEA 1: PRIVIRE DE ANSAMBLU
+# SECȚIUNEA 1: PRIVIRE DE ANSAMBLU (CU EDITARE PIESE PRIORITARE)
 # ---------------------------------------------------------
 
 def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]):
@@ -784,27 +861,69 @@ def render_privire_ansamblu_de_facut(piese_rows: list[dict], taskuri: list[dict]
         piese_active_ord = [
             p for p in piese_rows
             if p.get("Stare Piesă") == "Urgent" or p.get("Status Comandă") in ("De comandat", "De ofertat", "De căutat")
-        ]
+        ][:12]
+
         if piese_active_ord:
             df_po = pd.DataFrame([
                 {
-                    "Prioritate": f"🚨 {p.get('Stare Piesă')}" if p.get("Stare Piesă") == "Urgent" else p.get("Stare Piesă"),
-                    "Status": p.get("Status Comandă"),
+                    "_row_id": int(p["_row_id"]),
+                    "Prioritate": normalizeaza_prioritate_piesa(p.get("Stare Piesă")),
+                    "Status": _normalizeaza_stare_comanda(p.get("Status Comandă")),
                     "Piesă": p.get("Piesă"),
                     "Cant.": p.get("Cantitate"),
                     "Firmă": p.get("Firmă") or "-",
-                    "Doc GDrive": p.get("Doc GDrive") or None,
+                    "Doc GDrive": p.get("Doc GDrive") if str(p.get("Doc GDrive") or "").startswith(("http://", "https://")) else None,
                 }
-                for p in piese_active_ord[:12]
+                for p in piese_active_ord
             ])
-            st.dataframe(
+
+            ver_po = st.session_state.get("df_editor_piese_prio_ver", 0)
+            edited_po = st.data_editor(
                 df_po,
-                column_config={
-                    "Doc GDrive": st.column_config.LinkColumn("Doc GDrive", display_text="📂 GDrive"),
-                },
+                key=f"df_editor_piese_prioritare_v{ver_po}",
                 hide_index=True,
+                num_rows="fixed",
                 use_container_width=True,
+                disabled=["_row_id", "Piesă", "Cant.", "Firmă", "Doc GDrive"],
+                column_config={
+                    "_row_id": None,
+                    "Prioritate": st.column_config.SelectboxColumn(
+                        "Prioritate",
+                        options=OPTIUNI_PRIORITATE_PIESA,
+                        required=True,
+                        width="small",
+                    ),
+                    "Status": st.column_config.SelectboxColumn(
+                        "Status",
+                        options=OPTIUNI_STARE_COMANDA,
+                        required=True,
+                        width="medium",
+                    ),
+                    "Piesă": st.column_config.TextColumn("Piesă", width="medium"),
+                    "Cant.": st.column_config.NumberColumn("Cant.", format="%.2f", width="small"),
+                    "Firmă": st.column_config.TextColumn("Firmă", width="small"),
+                    "Doc GDrive": st.column_config.LinkColumn("Doc GDrive", display_text="📂 GDrive", width="small"),
+                },
             )
+
+            if st.button("💾 Salvează Piese Prioritare", type="primary", key="btn_df_save_piese_prioritare"):
+                nr_mod_po, erori_po = _salveaza_modificari_piese(
+                    df_orig_rows=piese_active_ord,
+                    edited_df=edited_po,
+                    col_prio="Prioritate",
+                    col_status="Status",
+                )
+                if nr_mod_po > 0:
+                    _goleste_cache_piese_si_rfq()
+                    st.session_state["df_editor_stare_piese_ver"] = st.session_state.get("df_editor_stare_piese_ver", 0) + 1
+
+                if erori_po:
+                    st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_po))
+                elif nr_mod_po == 0:
+                    st.info("ℹ️ Nu există modificări nesalvate la piesele prioritare.")
+                else:
+                    st.session_state["df_editor_piese_prio_ver"] = ver_po + 1
+                    _rerun_app(f"✅ Actualizate {nr_mod_po} piese prioritare.")
         else:
             st.success("✅ Nicio piesă în așteptare.")
 
@@ -1301,66 +1420,16 @@ def _fragment_tabel_piese_de_comandat(randuri_initiale: list[dict]):
     )
 
     if st.button("💾 Actualizează Stările în Tabel", type="primary", key="btn_df_update_stare_piese"):
-        meta_map = {}
-        for _, r in df_f.iterrows():
-            k = int(r["_row_id"])
-            if k not in meta_map:
-                meta_map[k] = {
-                    "_necesar_id": _to_int_or_none(r.get("_necesar_id")),
-                    "_piesa_id": _to_int_or_none(r.get("_piesa_id")),
-                    "_sursa_tbl": str(r.get("_sursa_tbl") or "").strip(),
-                    "_sursa_rec_id": _to_int_or_none(r.get("_sursa_rec_id")),
-                }
-
-        orig_status_map = {int(r["_row_id"]): _normalizeaza_stare_comanda(r["Status Comandă"]) for _, r in df_editor_init.iterrows()}
-        orig_prio_map = {int(r["_row_id"]): normalizeaza_prioritate_piesa(r["Stare Piesă"]) for _, r in df_editor_init.iterrows()}
-        nr_mod = 0
-        erori_salvare = []
-
-        for _, row in edited_df.iterrows():
-            rid = int(row["_row_id"])
-            stare_noua = _normalizeaza_stare_comanda(row.get("Status Comandă"))
-            stare_veche = orig_status_map.get(rid)
-            prio_noua = normalizeaza_prioritate_piesa(row.get("Stare Piesă"))
-            prio_veche = orig_prio_map.get(rid)
-
-            if stare_veche != stare_noua or prio_veche != prio_noua:
-                meta = meta_map.get(rid) or {}
-                salvat_ceva = False
-                sursa_tbl = str(meta.get("_sursa_tbl") or "").strip()
-
-                necesar_id = meta.get("_necesar_id")
-                if sursa_tbl == "necesar_piese" and necesar_id is not None:
-                    try:
-                        if stare_veche != stare_noua:
-                            NecesarPieseRepository.update_status_comanda(necesar_id, stare_noua)
-                        if prio_veche != prio_noua:
-                            NecesarPieseRepository.update_prioritate_piesa(necesar_id, prio_noua)
-                        salvat_ceva = True
-                    except Exception as e:
-                        erori_salvare.append(f"Necesar #{necesar_id} ({row.get('Piesă')}): {e}")
-
-                piesa_id = meta.get("_piesa_id")
-                if piesa_id is not None and stare_veche != stare_noua:
-                    try:
-                        PieseRepository.update_stare_comandata(piesa_id, stare_noua)
-                        salvat_ceva = True
-                    except Exception as e:
-                        erori_salvare.append(f"Piesa #{piesa_id} ({row.get('Piesă')}): {e}")
-
-                sursa_rec_id = meta.get("_sursa_rec_id")
-                if sursa_tbl in ("reparatii", "reparatii_electronice") and sursa_rec_id is not None and stare_veche != stare_noua:
-                    try:
-                        if _DeFacutDataAdapter.update_stare_in_raport_json(sursa_tbl, sursa_rec_id, str(row.get("Piesă") or ""), stare_noua):
-                            salvat_ceva = True
-                    except Exception as e:
-                        erori_salvare.append(f"{sursa_tbl} #{sursa_rec_id} ({row.get('Piesă')}): {e}")
-
-                if salvat_ceva:
-                    nr_mod += 1
+        nr_mod, erori_salvare = _salveaza_modificari_piese(
+            df_orig_rows=df_f.to_dict("records"),
+            edited_df=edited_df,
+            col_prio="Stare Piesă",
+            col_status="Status Comandă",
+        )
 
         if nr_mod > 0:
             _goleste_cache_piese_si_rfq()
+            st.session_state["df_editor_piese_prio_ver"] = st.session_state.get("df_editor_piese_prio_ver", 0) + 1
 
         if erori_salvare:
             st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_salvare))
@@ -2022,7 +2091,6 @@ def _fragment_cereri_oferta_furnizori():
                 st.markdown("**1. Total pe Furnizor & Monedă**")
                 st.dataframe(rezumat_furn, hide_index=True, use_container_width=True)
 
-                # Pozițiile cotate (>0) sunt sortate primele crescător după preț; cele necotate (=0) merg la final
                 df_analiza["_fara_pret"] = df_analiza["Preț Unitar"] <= 0
                 comp_pe_piesa = (
                     df_analiza.sort_values(
