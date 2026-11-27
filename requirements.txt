@@ -8,3 +8,5 @@ reportlab
 Pillow
 pytesseract
 streamlit-drawable-canvas
+google-api-python-client
+google-auth
