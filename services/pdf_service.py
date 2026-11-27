@@ -571,6 +571,7 @@ def genereaza_pdf_oferta(data):
         s_small=s_small,
         include_banca_iban=True,
     ))
+    
     elements.append(Spacer(1, 8))
 
     adresa_formatata = formateaza_adresa_pe_randuri(data.get('adresa_client', ''))
