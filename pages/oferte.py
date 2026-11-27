@@ -1104,18 +1104,30 @@ def _fragment_deviz_oferta(
             st.markdown(f"- {msg}")
 
     # ----------------bloc semnatura--------------
-    st.markdown("#### ✍️ Semnătură Nexus Industrial (optional)")
-    canvas_semnatura = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)",
-        stroke_width=3,
-        stroke_color="#0F172A",
-        background_color="#FFFFFF",
-        height=130,
-        width=360,
-        drawing_mode="freedraw",
-        return_image_data=True,
-        key="canvas_semnatura_client",
-    )
+    
+    st.session_state.setdefault("semnatura_nexus_counter", 0)
+
+    with st.expander("✍️ Semnătură", expanded=False):
+        st.caption("Opțional — desenează semnătura Nexus Industrial pe ecran tactil.")
+
+        col_clear, _ = st.columns([1.4, 3.6])
+        with col_clear:
+            if st.button("🗑️ Golește semnătura", key="btn_goleste_semnatura_nexus", use_container_width=True):
+                st.session_state["semnatura_nexus_counter"] += 1
+                st.rerun()
+
+        canvas_key = f"canvas_semnatura_nexus_{st.session_state['semnatura_nexus_counter']}"
+        canvas_semnatura = st_canvas(
+            fill_color="rgba(255, 255, 255, 0)",
+            stroke_width=3,
+            stroke_color="#0F172A",
+            background_color="#FFFFFF",
+            height=130,
+            width=360,
+            drawing_mode="freedraw",
+            return_image_data=True,
+            key=canvas_key,
+        )
 
     semnatura_bytes = None
     img_arr = getattr(canvas_semnatura, "image_data", None)
@@ -1125,7 +1137,7 @@ def _fragment_deviz_oferta(
             buf_sig = io.BytesIO()
             img_pil.save(buf_sig, format="PNG")
             semnatura_bytes = buf_sig.getvalue()
-    
+        
     #---------------------------------------------
 
     st.divider()
