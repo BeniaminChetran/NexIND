@@ -11,6 +11,8 @@ import pandas as pd
 import streamlit as st
 import io
 import unicodedata
+import binascii
+import streamlit.components.v1 as components
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from config import db_cursor
@@ -1254,9 +1256,7 @@ def _fragment_deviz_oferta(
                     )
                     st.session_state["oferta_pdf_bytes"] = pdf_bytes
                     st.session_state["oferta_pdf_nume_fisier"] = nume_fisier_pdf
-                    st.session_state["oferta_pdf_deschis"] = True
-                    st.session_state["oferta_pdf_bytes"] = pdf_bytes
-                    st.session_state["oferta_pdf_deschis"] = True
+                    st.session_state["oferta_pdf_deschis"] = True             
                     st.rerun()
                 except Exception as exc:
                     st.error(f"⚠️ Eroare la generarea PDF-ului: {exc}")
@@ -1290,41 +1290,62 @@ def _fragment_deviz_oferta(
                 )
                 st.session_state["oferta_curenta_id"] = nou_id
                 st.session_state["oferta_status"] = "Verificată / Trimisă la client"
-                st.success(f"📨 Oferta #{nou_id} a fost marcată ca **verificată și trimisă către client** ({data_trim}).")
-                st.rerun()
+                st.success(f"📨 Oferta #{nou_id} a fost marcată ca **Verificată și trimisă către client** ({data_trim}).")
 
-    if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
-        nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or "Oferta.pdf"
-        pdf_bytes = st.session_state["oferta_pdf_bytes"]
+                # --- PUNCTUL 3: AICI (înainte de st.rerun() de pe linia 1293) ---
+                nume_firma_curat = str(firma_obj.get("nume_firma") or nume_firma or "").strip()
+                nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or _construieste_nume_fisier_oferta(
+                    nr_oferta=nou_id,
+                    nume_firma=nume_firma_curat,
+                    masina=masina_selectata,
+                    data_str=data_oferta_str,
+                )
 
-        st.success(f"✅ PDF pregătit: **{nume_fisier_pdf}**")
+                pdf_pentru_drive = st.session_state.get("oferta_pdf_bytes")
+                if not pdf_pentru_drive:
+                    payload_pdf = _construieste_payload_pdf_service(
+                        oferta_id=nou_id,
+                        firma_obj=firma_obj,
+                        masina_selectata=masina_selectata,
+                        data_oferta_str=data_oferta_str,
+                        disc_pct=disc_pct,
+                        disc_val=disc_val,
+                        cota_tva=float(cota_tva),
+                        tot=tot,
+                        curs_valutar=curs_valutar_activ,
+                        este_revizuita=bool(st.session_state.get("oferta_curenta_id")),
+                    )
+                    payload_pdf["semnatura_emitent_png"] = semnatura_bytes
+                    pdf_pentru_drive = genereaza_pdf_oferta(payload_pdf)
+                    st.session_state["oferta_pdf_bytes"] = pdf_pentru_drive
+                    st.session_state["oferta_pdf_nume_fisier"] = nume_fisier_pdf
+                    st.session_state["oferta_pdf_deschis"] = True
 
-        col_drv, col_dl, col_cls = st.columns([2.0, 2.0, 1.0], vertical_alignment="center")
-        with col_drv:
-            if st.button("☁️ Salvează în Google Drive", key="btn_salveaza_pdf_gdrive", use_container_width=True):
                 ok_drv, msg_drv = salveaza_pdf_oferta_in_gdrive(
-                    pdf_bytes=pdf_bytes,
+                    pdf_bytes=pdf_pentru_drive,
                     nume_fisier=nume_fisier_pdf,
                 )
                 if ok_drv:
-                    st.success(f"✅ {msg_drv}")
+                    st.toast(f"✅ {msg_drv}")
                 else:
-                    st.warning(f"⚠️ {msg_drv}")
-        with col_dl:
-            st.download_button(
-                "⬇️ Descarcă PDF",
-                data=pdf_bytes,
-                file_name=nume_fisier_pdf,
-                mime="application/pdf",
-                key="btn_descarca_pdf_oferta",
-                type="primary",
-                use_container_width=True,
-            )
-        with col_cls:
-            if st.button("✖️", key="btn_inchide_pdf_oferta", help="Ascunde PDF", use_container_width=True):
+                    st.warning(f"⚠️ Salvare Google Drive: {msg_drv}")
+                # ------------------------------------------------------------------
+
+                st.rerun()
+                
+
+    if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
+        nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or "Oferta.pdf"
+        c_info, c_cls = st.columns([4.5, 1.0], vertical_alignment="center")
+        with c_info:
+            st.success(f"✅ PDF generat: **{nume_fisier_pdf}**")
+        with c_cls:
+            if st.button("✖️ Închide", key="btn_inchide_pdf_oferta", use_container_width=True):
                 st.session_state["oferta_pdf_deschis"] = False
                 st.session_state["oferta_pdf_bytes"] = None
                 st.rerun()
+        _deschide_pdf_in_browser(st.session_state["oferta_pdf_bytes"], nume_fisier_pdf)
+    
 
 
 def render_oferte():
@@ -1475,3 +1496,45 @@ def _construieste_nume_fisier_oferta(
     data_seg = _curata_compact(data_str)
 
     return f"Of{nr_seg}{client_seg}{masina_seg}{data_seg}.pdf"
+    
+    
+import binascii
+import streamlit.components.v1 as components
+
+
+def _deschide_pdf_in_browser(pdf_bytes: bytes, nume_fisier: str):
+    pdf_b64 = binascii.b2a_base64(pdf_bytes, newline=False).decode("ascii")
+    nume_curat = str(nume_fisier or "Oferta.pdf").replace('"', "").replace("'", "")
+    html_code = f"""
+    <div style="margin: 6px 0 12px 0;">
+        <a id="link_pdf_oferta" href="#" target="_blank" rel="noopener"
+           style="display:inline-block; padding:6px 12px; border-radius:6px;
+                  background:#1E293B; color:#FFFFFF; text-decoration:none; font-size:14px;">
+            🔗 Deschide {nume_curat} în browser
+        </a>
+    </div>
+    <script>
+        (function() {{
+            const b64 = "{pdf_b64}";
+            const byteChars = atob(b64);
+            const byteNumbers = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) {{
+                byteNumbers[i] = byteChars.charCodeAt(i);
+            }}
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], {{ type: "application/pdf" }});
+            const url = URL.createObjectURL(blob);
+
+            const linkEl = document.getElementById("link_pdf_oferta");
+            if (linkEl) {{
+                linkEl.href = url;
+            }}
+
+            const win = window.open(url, "_blank");
+            if (!win && linkEl) {{
+                linkEl.textContent = "🔗 Browserul a blocat fila nouă — click aici pentru {nume_curat}";
+            }}
+        }})();
+    </script>
+    """
+    components.html(html_code, height=54)
