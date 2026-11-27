@@ -480,6 +480,52 @@ COLS_OFERTA = [
 ]
 
 
+@st.cache_data(ttl=3600)
+def obtine_curs_bnr():
+    headers_browser = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/xml,text/xml,text/html,*/*;q=0.8",
+        "Accept-Language": "ro-RO,ro;q=0.9,en;q=0.8",
+    }
+    ctx = ssl._create_unverified_context()
+
+    try:
+        req = urllib.request.Request("https://www.bnr.ro/nbrfxrates.xml", headers=headers_browser)
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
+            xml_data = response.read()
+            root = ET.fromstring(xml_data)
+            for cube in root.iter("{http://www.bnr.ro/xsd}Cube"):
+                if cube.get("date"):
+                    for rate in cube.findall("{http://www.bnr.ro/xsd}Rate"):
+                        if rate.get("currency") == "EUR":
+                            return float(rate.text)
+    except Exception:
+        pass
+
+    try:
+        req_cb = urllib.request.Request("https://www.cursbnr.ro/", headers=headers_browser)
+        with urllib.request.urlopen(req_cb, timeout=5, context=ctx) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+            match = re.search(r"1\s*EURO\s*=\s*([0-9]+\.[0-9]{4})\s*Lei", html, re.IGNORECASE)
+            if match:
+                return float(match.group(1))
+    except Exception:
+        pass
+
+    try:
+        url_ecb = "https://api.frankfurter.app/latest?from=EUR&to=RON"
+        req_ecb = urllib.request.Request(url_ecb, headers=headers_browser)
+        with urllib.request.urlopen(req_ecb, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            if "rates" in data and "RON" in data["rates"]:
+                return float(data["rates"]["RON"])
+    except Exception:
+        pass
+
+    return 5.35
+
+
+
 def valideaza_si_calculeaza_linie_oferta(
     piesa_catalog: dict,
     cantitate: float,
