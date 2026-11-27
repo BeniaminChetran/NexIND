@@ -86,13 +86,69 @@ def obtine_curs_bnr() -> float | None:
 
 
 @st.cache_data(ttl=60)
-def _get_piese_cached() -> list[dict]:
-    return PieseRepository.get_all() or []
+def _get_date_initiale_pagina() -> tuple[dict[str, dict], list[dict], float]:
+    firme_db = FirmeRepository.get_all() or []
+    firme_dict = {
+        str(f.get("nume_firma") or "").strip(): f
+        for f in firme_db
+        if str(f.get("nume_firma") or "").strip()
+    }
+    masini_db = MasiniRepository.get_all() or []
+    setari_firma = get_date_firma_mea() or {}
+    raw_tva = setari_firma.get("cota_tva")
+    cota_tva = float(raw_tva) if raw_tva not in (None, "") else 0.0
+    return firme_dict, masini_db, cota_tva
 
 
 @st.cache_data(ttl=60)
-def _get_tarife_cached() -> list[dict]:
-    return TarifeRepository.get_all() or []
+def _get_catalog_piese_indexat() -> dict[str, dict]:
+    piese_all = PieseRepository.get_all() or []
+    piese_dict: dict[str, dict] = {}
+    for p in piese_all:
+        den = str(p.get("denumire") or "").strip()
+        if not den:
+            continue
+        cod = str(p.get("cod_producator") or p.get("cod_comercial") or "").strip()
+        raw_p = p.get("pret_achizitie")
+        mon = str(p.get("valuta_achizitie") or "").strip().upper()
+        pret_lbl = f"{float(raw_p):.2f} {mon}".strip() if raw_p not in (None, "") else "preț lipsă"
+        eticheta = f"{den}" + (f" [{cod}]" if cod else "") + f" — {pret_lbl}"
+        piese_dict[eticheta] = p
+    return piese_dict
+
+
+def _parseaza_moneda_um(moneda_um: str) -> tuple[str, str]:
+    raw = str(moneda_um or "").strip()
+    if "/" in raw:
+        parte_mon, parte_um = raw.split("/", 1)
+        return parte_mon.strip().upper(), parte_um.strip()
+    return raw.upper(), "buc"
+
+
+@st.cache_data(ttl=60)
+def _construieste_grile_tarife() -> dict[str, list[dict]]:
+    tarife_all = TarifeRepository.get_all() or []
+    grile: dict[str, list[dict]] = {}
+
+    for t in tarife_all:
+        desc = str(t.get("descriere") or "").strip()
+        if not desc:
+            continue
+        nivel = str(t.get("nivel_grila") or "").strip() or "Fără nivel"
+        moneda, um = _parseaza_moneda_um(t.get("moneda_um") or "")
+        grile.setdefault(nivel, []).append(
+            {
+                "id": t.get("id"),
+                "descriere": desc,
+                "pret": t.get("pret"),
+                "moneda": moneda,
+                "um": um,
+                "nivel_grila": nivel,
+                "moneda_um_raw": str(t.get("moneda_um") or "").strip(),
+            }
+        )
+
+    return grile
 
 
 def _asigura_tabel_oferte_db():
@@ -273,15 +329,65 @@ def _listeaza_oferte_salvate(
     limit: int = 30,
 ) -> list[dict]:
     _asigura_tabel_oferte_db()
+    fid_int = None
+    if firma_id is not None:
+        try:
+            fid_int = int(firma_id)
+        except (TypeError, ValueError):
+            fid_int = None
+
+    nume_clean = str(nume_firma or "").strip()
+    sql_limit = max(int(limit) * 4, 100)
+
     with db_cursor() as cur:
-        cur.execute(
-            """
-            SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
-                   total_general, status_oferta, trimisa_la_client, data_trimitere
-            FROM oferte_client
-            ORDER BY id DESC
-            """
-        )
+        if fid_int is not None and nume_clean:
+            cur.execute(
+                """
+                SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
+                       total_general, status_oferta, trimisa_la_client, data_trimitere
+                FROM oferte_client
+                WHERE firma_id = %s OR LOWER(TRIM(nume_firma)) = LOWER(%s)
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (fid_int, nume_clean, sql_limit),
+            )
+        elif fid_int is not None:
+            cur.execute(
+                """
+                SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
+                       total_general, status_oferta, trimisa_la_client, data_trimitere
+                FROM oferte_client
+                WHERE firma_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (fid_int, sql_limit),
+            )
+        elif nume_clean:
+            cur.execute(
+                """
+                SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
+                       total_general, status_oferta, trimisa_la_client, data_trimitere
+                FROM oferte_client
+                WHERE LOWER(TRIM(nume_firma)) = LOWER(%s)
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (nume_clean, sql_limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, firma_id, nume_firma, masina, data_oferta, moneda_oferta,
+                       total_general, status_oferta, trimisa_la_client, data_trimitere
+                FROM oferte_client
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (sql_limit,),
+            )
+
         rows = cur.fetchall() or []
         cols = [d[0] for d in cur.description] if cur.description else []
         toate = [r if isinstance(r, dict) else dict(zip(cols, r)) for r in rows]
@@ -298,9 +404,9 @@ def _listeaza_oferte_salvate(
         o_nume_norm = _normalizeaza_nume_firma(o.get("nume_firma"))
 
         match_firma = False
-        if firma_id is not None and o_fid is not None:
+        if fid_int is not None and o_fid is not None:
             try:
-                match_firma = int(o_fid) == int(firma_id)
+                match_firma = int(o_fid) == fid_int
             except (TypeError, ValueError):
                 pass
 
@@ -401,13 +507,19 @@ def valideaza_si_calculeaza_linie_oferta(
     }
 
 
+def _normalizeaza_df_oferta(df: pd.DataFrame | None, default_text: str | None = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLS_OFERTA)
+    df_out = df.copy()
+    for col in COLS_OFERTA:
+        if col not in df_out.columns:
+            df_out[col] = 0.0 if col == "Discount (%)" else default_text
+    return df_out[COLS_OFERTA]
+
+
 def _sincronizeaza_editor_inainte_de_adaugare() -> pd.DataFrame:
     st.session_state.setdefault("df_oferta_editor", pd.DataFrame(columns=COLS_OFERTA))
-    df_base = st.session_state["df_oferta_editor"].copy()
-    for col in COLS_OFERTA:
-        if col not in df_base.columns:
-            df_base[col] = 0.0 if col == "Discount (%)" else None
-    df_base = df_base[COLS_OFERTA]
+    df_base = _normalizeaza_df_oferta(st.session_state["df_oferta_editor"])
 
     counter = st.session_state.get("oferta_2_editor_counter", 0)
     state_ed = st.session_state.get(f"oferta_2_data_editor_{counter}")
@@ -422,6 +534,13 @@ def _sincronizeaza_editor_inainte_de_adaugare() -> pd.DataFrame:
                     if col_name in df_base.columns:
                         df_base.at[idx, col_name] = new_val
     return df_base
+
+
+def _adauga_linie_in_editor(linie_dict: dict):
+    df_baza = _sincronizeaza_editor_inainte_de_adaugare()
+    linie_dict["Ordine"] = len(df_baza) + 1
+    st.session_state["df_oferta_editor"] = pd.concat([df_baza, pd.DataFrame([linie_dict])], ignore_index=True)
+    st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
 
 
 def _converteste_suma_moneda(
@@ -442,6 +561,115 @@ def _converteste_suma_moneda(
     if sursa == "RON" and tinta == "EUR":
         return True, suma / curs
     return False, 0.0
+
+
+def _valideaza_linie_oferta(
+    idx: int,
+    row: pd.Series,
+    moneda_tinta: str,
+    curs_valutar: float | None,
+    lipsuri: list[str],
+    monede_diferite_detectate: set[str],
+) -> dict | None:
+    desc = str(row.get("Descriere") or "").strip()
+    raw_cant = row.get("Cantitate")
+    raw_pret = row.get("Pret Unitar")
+    raw_disc_linie = row.get("Discount (%)")
+    mon = str(row.get("Moneda") or "").strip().upper()
+
+    if (
+        not desc
+        and (raw_cant is None or str(raw_cant).strip() == "" or pd.isna(raw_cant))
+        and (raw_pret is None or str(raw_pret).strip() == "" or pd.isna(raw_pret))
+    ):
+        return None
+
+    nr_rand = idx + 1
+    rand_ok = True
+
+    if not desc:
+        lipsuri.append(f"Rândul {nr_rand}: lipsește «Descriere».")
+        rand_ok = False
+
+    cant = None
+    if raw_cant is None or str(raw_cant).strip() == "" or pd.isna(raw_cant):
+        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Cantitate».")
+        rand_ok = False
+    else:
+        try:
+            cant = float(raw_cant)
+            if cant <= 0:
+                lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Cantitate» trebuie să fie > 0.")
+                rand_ok = False
+        except (TypeError, ValueError):
+            lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Cantitate» nu este numerică.")
+            rand_ok = False
+
+    pret = None
+    if raw_pret is None or str(raw_pret).strip() == "" or pd.isna(raw_pret):
+        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Pret Unitar».")
+        rand_ok = False
+    else:
+        try:
+            pret = float(raw_pret)
+            if pret <= 0:
+                lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Pret Unitar» lipsește sau este 0.")
+                rand_ok = False
+        except (TypeError, ValueError):
+            lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Pret Unitar» nu este numeric.")
+            rand_ok = False
+
+    disc_linie_pct = 0.0
+    if raw_disc_linie is not None and str(raw_disc_linie).strip() != "" and not pd.isna(raw_disc_linie):
+        try:
+            disc_linie_pct = float(raw_disc_linie)
+            if disc_linie_pct < 0 or disc_linie_pct > 100:
+                lipsuri.append(
+                    f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Discount (%)» trebuie să fie între 0 și 100."
+                )
+                rand_ok = False
+        except (TypeError, ValueError):
+            lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Discount (%)» nu este numeric.")
+            rand_ok = False
+
+    if not mon:
+        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Moneda».")
+        rand_ok = False
+    elif mon != moneda_tinta:
+        monede_diferite_detectate.add(mon)
+
+    if not (rand_ok and cant is not None and pret is not None):
+        return None
+
+    ok_conv, pret_unitar_conv = _converteste_suma_moneda(pret, mon, moneda_tinta, curs_valutar)
+    if not ok_conv:
+        lipsuri.append(
+            f"Rândul {nr_rand} ({desc}): nu se poate converti din {mon} în {moneda_tinta} fără un curs valutar valid."
+        )
+        return None
+
+    pret_unitar_conv_r = round(pret_unitar_conv, 2)
+    val_bruta_linie = round(cant * pret_unitar_conv_r, 2)
+    val_disc_linie = round(val_bruta_linie * (disc_linie_pct / 100.0), 2)
+    val_neta_linie = round(val_bruta_linie - val_disc_linie, 2)
+    pret_net_unitar = round(pret_unitar_conv_r * (1.0 - disc_linie_pct / 100.0), 2)
+
+    return {
+        "Nr.": int(row.get("Ordine") or nr_rand),
+        "Descriere": desc,
+        "UM": str(row.get("UM") or "buc").strip() or "buc",
+        "Cantitate": cant,
+        f"Preț Unitar ({moneda_tinta})": pret_unitar_conv_r,
+        "Discount (%)": round(disc_linie_pct, 2),
+        f"Preț Net ({moneda_tinta})": pret_net_unitar,
+        f"Valoare ({moneda_tinta})": val_neta_linie,
+        "Monedă sursă": mon,
+        "Termen livrare": str(row.get("Termen livrare") or "").strip(),
+        "_pret_unitar_conv": pret_unitar_conv_r,
+        "_pret_net_unitar": pret_net_unitar,
+        "_valoare_neta": val_neta_linie,
+        "_valoare_discount_linie": val_disc_linie,
+    }
 
 
 def calculeaza_oferta_fara_fallback(
@@ -482,108 +710,18 @@ def calculeaza_oferta_fara_fallback(
         lipsuri.append("Oferta nu conține nicio linie.")
     else:
         for idx, row in df_linii.iterrows():
-            desc = str(row.get("Descriere") or "").strip()
-            raw_cant = row.get("Cantitate")
-            raw_pret = row.get("Pret Unitar")
-            raw_disc_linie = row.get("Discount (%)")
-            mon = str(row.get("Moneda") or "").strip().upper()
-
-            if (
-                not desc
-                and (raw_cant is None or str(raw_cant).strip() == "" or pd.isna(raw_cant))
-                and (raw_pret is None or str(raw_pret).strip() == "" or pd.isna(raw_pret))
-            ):
-                continue
-
-            nr_rand = idx + 1
-            rand_ok = True
-
-            if not desc:
-                lipsuri.append(f"Rândul {nr_rand}: lipsește «Descriere».")
-                rand_ok = False
-
-            if raw_cant is None or str(raw_cant).strip() == "" or pd.isna(raw_cant):
-                lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Cantitate».")
-                cant = None
-                rand_ok = False
-            else:
-                try:
-                    cant = float(raw_cant)
-                    if cant <= 0:
-                        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Cantitate» trebuie să fie > 0.")
-                        rand_ok = False
-                except (TypeError, ValueError):
-                    lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Cantitate» nu este numerică.")
-                    cant = None
-                    rand_ok = False
-
-            if raw_pret is None or str(raw_pret).strip() == "" or pd.isna(raw_pret):
-                lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Pret Unitar».")
-                pret = None
-                rand_ok = False
-            else:
-                try:
-                    pret = float(raw_pret)
-                    if pret <= 0:
-                        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Pret Unitar» lipsește sau este 0.")
-                        rand_ok = False
-                except (TypeError, ValueError):
-                    lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Pret Unitar» nu este numeric.")
-                    pret = None
-                    rand_ok = False
-
-            disc_linie_pct = 0.0
-            if raw_disc_linie is not None and str(raw_disc_linie).strip() != "" and not pd.isna(raw_disc_linie):
-                try:
-                    disc_linie_pct = float(raw_disc_linie)
-                    if disc_linie_pct < 0 or disc_linie_pct > 100:
-                        lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Discount (%)» trebuie să fie între 0 și 100.")
-                        rand_ok = False
-                except (TypeError, ValueError):
-                    lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): «Discount (%)» nu este numeric.")
-                    rand_ok = False
-
-            if not mon:
-                lipsuri.append(f"Rândul {nr_rand} ({desc or 'fără descriere'}): lipsește «Moneda».")
-                rand_ok = False
-            elif mon != moneda_tinta:
-                monede_diferite_detectate.add(mon)
-
-            if rand_ok and cant is not None and pret is not None:
-                ok_conv, pret_unitar_conv = _converteste_suma_moneda(pret, mon, moneda_tinta, curs_valutar)
-                if not ok_conv:
-                    lipsuri.append(
-                        f"Rândul {nr_rand} ({desc}): nu se poate converti din {mon} în {moneda_tinta} fără un curs valutar valid."
-                    )
-                    continue
-
-                pret_unitar_conv_r = round(pret_unitar_conv, 2)
-                val_bruta_linie = round(cant * pret_unitar_conv_r, 2)
-                val_disc_linie = round(val_bruta_linie * (disc_linie_pct / 100.0), 2)
-                val_neta_linie = round(val_bruta_linie - val_disc_linie, 2)
-                pret_net_unitar = round(pret_unitar_conv_r * (1.0 - disc_linie_pct / 100.0), 2)
-
-                subtotal += val_neta_linie
-                total_discount_repere += val_disc_linie
-
-                linii_valide.append(
-                    {
-                        "Nr.": int(row.get("Ordine") or nr_rand),
-                        "Descriere": desc,
-                        "UM": str(row.get("UM") or "buc").strip() or "buc",
-                        "Cantitate": cant,
-                        f"Preț Unitar ({moneda_tinta})": pret_unitar_conv_r,
-                        "Discount (%)": round(disc_linie_pct, 2),
-                        f"Preț Net ({moneda_tinta})": pret_net_unitar,
-                        f"Valoare ({moneda_tinta})": val_neta_linie,
-                        "Monedă sursă": mon,
-                        "Termen livrare": str(row.get("Termen livrare") or "").strip(),
-                        "_pret_unitar_conv": pret_unitar_conv_r,
-                        "_pret_net_unitar": pret_net_unitar,
-                        "_valoare_neta": val_neta_linie,
-                        "_valoare_discount_linie": val_disc_linie,
-                    }
-                )
+            linie_calc = _valideaza_linie_oferta(
+                idx=idx,
+                row=row,
+                moneda_tinta=moneda_tinta,
+                curs_valutar=curs_valutar,
+                lipsuri=lipsuri,
+                monede_diferite_detectate=monede_diferite_detectate,
+            )
+            if linie_calc is not None:
+                subtotal += linie_calc["_valoare_neta"]
+                total_discount_repere += linie_calc["_valoare_discount_linie"]
+                linii_valide.append(linie_calc)
 
     if not linii_valide and not lipsuri:
         lipsuri.append("Oferta nu conține nicio linie validă.")
@@ -683,11 +821,13 @@ def _construieste_payload_pdf_service(
     }
 
 
-def _adauga_linie_in_editor(linie_dict: dict):
-    df_baza = _sincronizeaza_editor_inainte_de_adaugare()
-    linie_df = pd.DataFrame([linie_dict])
-    st.session_state["df_oferta_editor"] = pd.concat([df_baza, linie_df], ignore_index=True)
-    st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
+def _extrage_semnatura_png_bytes(canvas_semnatura) -> bytes | None:
+    img_arr = getattr(canvas_semnatura, "image_data", None)
+    if img_arr is not None and getattr(img_arr, "size", 0) > 0 and (img_arr[:, :, :3] < 250).any():
+        buf_sig = io.BytesIO()
+        Image.fromarray(img_arr.astype("uint8"), "RGBA").save(buf_sig, format="PNG")
+        return buf_sig.getvalue()
+    return None
 
 
 @st.fragment
@@ -704,6 +844,7 @@ def _fragment_deviz_oferta(
     st.session_state.setdefault("df_oferta_editor", pd.DataFrame(columns=COLS_OFERTA))
     st.session_state.setdefault("oferta_2_editor_counter", 0)
     st.session_state.setdefault("oferta_2_eroare_piesa", "")
+    st.session_state.setdefault("oferta_2_eroare_tarif", "")
     st.session_state.setdefault("oferta_curenta_id", None)
     st.session_state.setdefault("oferta_status", "Ciornă")
     st.session_state.setdefault("oferta_pdf_bytes", None)
@@ -762,7 +903,6 @@ def _fragment_deviz_oferta(
                 st.session_state["oferta_pdf_bytes"] = None
                 st.session_state["oferta_pdf_deschis"] = False
                 st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
-                st.rerun()
             else:
                 rec = _incarca_oferta_din_db(int(sel_oid))
                 if rec:
@@ -774,11 +914,10 @@ def _fragment_deviz_oferta(
                         linii_rec = json.loads(rec.get("linii_json") or "[]")
                     except Exception:
                         linii_rec = []
-                    df_loaded = pd.DataFrame(linii_rec) if linii_rec else pd.DataFrame(columns=COLS_OFERTA)
-                    for col in COLS_OFERTA:
-                        if col not in df_loaded.columns:
-                            df_loaded[col] = 0.0 if col == "Discount (%)" else ""
-                    df_loaded = df_loaded[COLS_OFERTA]
+                    df_loaded = _normalizeaza_df_oferta(
+                        pd.DataFrame(linii_rec) if linii_rec else None,
+                        default_text="",
+                    )
 
                     st.session_state["oferta_curenta_id"] = int(rec["id"])
                     st.session_state["oferta_status"] = str(rec.get("status_oferta") or "Salvată")
@@ -805,18 +944,7 @@ def _fragment_deviz_oferta(
         f"**Monedă ofertă:** `{moneda_oferta}`"
     )
 
-    piese_all = _get_piese_cached()
-    piese_dict: dict[str, dict] = {}
-    for p in piese_all:
-        den = str(p.get("denumire") or "").strip()
-        if not den:
-            continue
-        cod = str(p.get("cod_producator") or p.get("cod_comercial") or "").strip()
-        raw_p = p.get("pret_achizitie")
-        mon = str(p.get("valuta_achizitie") or "").strip().upper()
-        pret_lbl = f"{float(raw_p):.2f} {mon}".strip() if raw_p not in (None, "") else "preț lipsă"
-        eticheta = f"{den}" + (f" [{cod}]" if cod else "") + f" — {pret_lbl}"
-        piese_dict[eticheta] = p
+    piese_dict = _get_catalog_piese_indexat()
 
     def _actualizeaza_termen_din_piesa():
         piesa_cheie = st.session_state.get("oferta_2_sel_piesa")
@@ -867,11 +995,9 @@ def _fragment_deviz_oferta(
             if not ok_p or info_calc is None:
                 st.session_state["oferta_2_eroare_piesa"] = f"⚠️ {err_p}"
             else:
-                next_ord = len(_sincronizeaza_editor_inainte_de_adaugare()) + 1
                 termen_final = str(termen_piesa or p_info.get("termen_livrare") or "").strip()
                 _adauga_linie_in_editor(
                     {
-                        "Ordine": next_ord,
                         "Descriere": info_calc["desc"],
                         "UM": "buc",
                         "Cantitate": info_calc["cant"],
@@ -949,9 +1075,9 @@ def _fragment_deviz_oferta(
             )
 
         if btn_add_tarif:
-            st.session_state["oferta_2_eroare_piesa"] = ""
+            st.session_state["oferta_2_eroare_tarif"] = ""
             if sel_tarif_lbl == "-- Alege tarif --":
-                st.session_state["oferta_2_eroare_piesa"] = "Selectați mai întâi un tarif din grila aleasă."
+                st.session_state["oferta_2_eroare_tarif"] = "Selectați mai întâi un tarif din grila aleasă."
             else:
                 t_info = mapa_tarife_grila[sel_tarif_lbl]
                 nivel_efectiv = t_info.get("nivel_grila") or sel_grila
@@ -960,11 +1086,11 @@ def _fragment_deviz_oferta(
                 um_t = str(t_info.get("um") or "").strip()
 
                 if raw_pret is None or str(raw_pret).strip() == "":
-                    st.session_state["oferta_2_eroare_piesa"] = (
+                    st.session_state["oferta_2_eroare_tarif"] = (
                         f"Lipsește prețul în grila «{nivel_efectiv}» pentru «{t_info['descriere']}»."
                     )
                 elif not mon_t:
-                    st.session_state["oferta_2_eroare_piesa"] = (
+                    st.session_state["oferta_2_eroare_tarif"] = (
                         f"Lipsește moneda în grila «{nivel_efectiv}» pentru «{t_info['descriere']}»."
                     )
                 else:
@@ -974,14 +1100,12 @@ def _fragment_deviz_oferta(
                         pret_val = -1.0
 
                     if pret_val < 0:
-                        st.session_state["oferta_2_eroare_piesa"] = (
+                        st.session_state["oferta_2_eroare_tarif"] = (
                             f"Prețul din grila «{nivel_efectiv}» pentru «{t_info['descriere']}» nu este valid."
                         )
                     else:
-                        next_ord_t = len(_sincronizeaza_editor_inainte_de_adaugare()) + 1
                         _adauga_linie_in_editor(
                             {
-                                "Ordine": next_ord_t,
                                 "Descriere": f"{t_info['descriere']} [{nivel_efectiv}]",
                                 "UM": um_t or "buc",
                                 "Cantitate": float(cant_tarif),
@@ -992,13 +1116,12 @@ def _fragment_deviz_oferta(
                             }
                         )
 
+        if st.session_state.get("oferta_2_eroare_tarif"):
+            st.error(st.session_state["oferta_2_eroare_tarif"])
+
     st.markdown("#### 📋 Linii ofertă")
     st.caption("💡 Poți aplica **Disc. reper (%)** individual pe fiecare reper direct în tabel.")
-    df_init = st.session_state["df_oferta_editor"].copy()
-    for col in COLS_OFERTA:
-        if col not in df_init.columns:
-            df_init[col] = 0.0 if col == "Discount (%)" else None
-    df_init = df_init[COLS_OFERTA]
+    df_init = _normalizeaza_df_oferta(st.session_state["df_oferta_editor"])
 
     ed_key = f"oferta_2_data_editor_{st.session_state.get('oferta_2_editor_counter', 0)}"
     edited_df = st.data_editor(
@@ -1126,13 +1249,6 @@ def _fragment_deviz_oferta(
             key=canvas_key,
         )
 
-    semnatura_bytes = None
-    img_arr = getattr(canvas_semnatura, "image_data", None)
-    if img_arr is not None and getattr(img_arr, "size", 0) > 0 and (img_arr[:, :, :3] < 250).any():
-        buf_sig = io.BytesIO()
-        Image.fromarray(img_arr.astype("uint8"), "RGBA").save(buf_sig, format="PNG")
-        semnatura_bytes = buf_sig.getvalue()
-
     st.divider()
     st.markdown("#### 💾 Salvare, PDF & Trimitere Client")
 
@@ -1206,7 +1322,7 @@ def _fragment_deviz_oferta(
                     curs_valutar=curs_valutar_activ,
                     este_revizuita=era_deja_salvata,
                 )
-                payload_pdf["semnatura_emitent_png"] = semnatura_bytes
+                payload_pdf["semnatura_emitent_png"] = _extrage_semnatura_png_bytes(canvas_semnatura)
 
                 try:
                     sync_oferta_in_fundal(
@@ -1276,6 +1392,7 @@ def _fragment_deviz_oferta(
                 )
                 st.session_state["oferta_curenta_id"] = nou_id
                 st.session_state["oferta_status"] = "Verificată / Trimisă la client"
+                st.session_state.pop("oferta_gdrive_msg", None)
                 st.success(f"📨 Oferta #{nou_id} a fost marcată ca **Verificată și trimisă către client** ({data_trim}).")
 
                 nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or _construieste_nume_fisier_oferta(
@@ -1299,7 +1416,7 @@ def _fragment_deviz_oferta(
                         curs_valutar=curs_valutar_activ,
                         este_revizuita=era_deja_salvata,
                     )
-                    payload_pdf["semnatura_emitent_png"] = semnatura_bytes
+                    payload_pdf["semnatura_emitent_png"] = _extrage_semnatura_png_bytes(canvas_semnatura)
                     pdf_pentru_drive = genereaza_pdf_oferta(payload_pdf)
                     st.session_state["oferta_pdf_bytes"] = pdf_pentru_drive
                     st.session_state["oferta_pdf_nume_fisier"] = nume_fisier_pdf
@@ -1315,6 +1432,9 @@ def _fragment_deviz_oferta(
                 except Exception as e:
                     st.session_state["oferta_gdrive_msg"] = f"Google Drive indisponibil/neuploadat: {e}"
                 st.rerun()
+
+    if st.session_state.get("oferta_gdrive_msg"):
+        st.warning(f"⚠️ {st.session_state['oferta_gdrive_msg']}")
 
     if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
         nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or "Oferta.pdf"
@@ -1332,20 +1452,10 @@ def _fragment_deviz_oferta(
 def render_oferte():
     st.title("💼 Oferte de Preț")
 
-    firme_db = FirmeRepository.get_all() or []
-    firme_dict = {
-        str(f.get("nume_firma") or "").strip(): f
-        for f in firme_db
-        if str(f.get("nume_firma") or "").strip()
-    }
+    firme_dict, masini_db, cota_tva_implicita = _get_date_initiale_pagina()
     if not firme_dict:
         st.warning("⚠️ Nu există firme înregistrate.")
         return
-
-    masini_db = MasiniRepository.get_all() or []
-    setari_firma = get_date_firma_mea() or {}
-    raw_tva_setari = setari_firma.get("cota_tva")
-    cota_tva_implicita = float(raw_tva_setari) if raw_tva_setari not in (None, "") else 0.0
 
     if "oferta_2_curs_valutar" not in st.session_state:
         curs_init = obtine_curs_bnr()
@@ -1419,39 +1529,6 @@ def render_oferte():
         eroare_adaos=eroare_adaos,
         cota_tva_implicita=cota_tva_implicita,
     )
-
-
-def _parseaza_moneda_um(moneda_um: str) -> tuple[str, str]:
-    raw = str(moneda_um or "").strip()
-    if "/" in raw:
-        parte_mon, parte_um = raw.split("/", 1)
-        return parte_mon.strip().upper(), parte_um.strip()
-    return raw.upper(), "buc"
-
-
-def _construieste_grile_tarife() -> dict[str, list[dict]]:
-    tarife_all = _get_tarife_cached()
-    grile: dict[str, list[dict]] = {}
-
-    for t in tarife_all:
-        desc = str(t.get("descriere") or "").strip()
-        if not desc:
-            continue
-        nivel = str(t.get("nivel_grila") or "").strip() or "Fără nivel"
-        moneda, um = _parseaza_moneda_um(t.get("moneda_um") or "")
-        grile.setdefault(nivel, []).append(
-            {
-                "id": t.get("id"),
-                "descriere": desc,
-                "pret": t.get("pret"),
-                "moneda": moneda,
-                "um": um,
-                "nivel_grila": nivel,
-                "moneda_um_raw": str(t.get("moneda_um") or "").strip(),
-            }
-        )
-
-    return grile
 
 
 def _construieste_nume_fisier_oferta(
