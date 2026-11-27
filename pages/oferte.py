@@ -910,7 +910,7 @@ def _fragment_note_comanda_furnizori():
             st.dataframe(pd.DataFrame(nota["repere"]), hide_index=True, use_container_width=True)
 
 
-def render_oferte_2():
+def render_oferte():
     st.title("💼 Oferte de Preț & Note de Comandă Furnizori")
 
     firme_db = FirmeRepository.get_all() or []
