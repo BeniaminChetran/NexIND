@@ -636,7 +636,7 @@ def _fragment_deviz_oferta(
     st.markdown("#### ➕ Adaugă piesă din catalog în ofertă")
     c_sel, c_cant, c_term, c_btn = st.columns([3.0, 1.0, 1.2, 1.2], vertical_alignment="bottom")
     with c_sel:
-    opt_piese = ["-- Alege piesa --"] + list(piese_dict.keys())
+        opt_piese = ["-- Alege piesa --"] + list(piese_dict.keys())
     sel_piesa_catalog = st.selectbox(
         "Piesă din baza de date",
         options=opt_piese,
