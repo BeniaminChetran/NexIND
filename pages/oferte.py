@@ -653,7 +653,7 @@ def _fragment_deviz_oferta(
             key="oferta_2_cant_piesa",
         )
     with c_term:
-    termen_piesa = st.text_input(
+        termen_piesa = st.text_input(
         "Termen livrare",
         key="oferta_2_termen_piesa",
     )
