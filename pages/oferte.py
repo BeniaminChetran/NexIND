@@ -2,7 +2,7 @@
 # --- pages/oferte.py ----------------------------
 # ------------------------------------------------
 
-from datetime import date, datetime
+
 import json
 import re
 import ssl
@@ -13,10 +13,12 @@ import pandas as pd
 import streamlit as st
 
 from config import db_cursor
+from datetime import date, datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
 from services.pdf_service import genereaza_pdf_oferta, get_date_firma_mea
+from repositories.tarife_repository import TarifeRepository
 
 
 COLS_OFERTA = [
@@ -702,6 +704,111 @@ def _fragment_deviz_oferta(
     if st.session_state.get("oferta_2_eroare_piesa"):
         st.error(st.session_state["oferta_2_eroare_piesa"])
 
+    st.markdown("#### 🏷️ Adaugă din Grilă de Tarifare")
+    grile_tarife = _construieste_grile_tarife()
+
+    if not grile_tarife:
+        st.info("Nu există tarife definite în **Setări → Tarife Standard**.")
+    else:
+        opt_grile = sorted(grile_tarife.keys())
+        g_col1, g_col2, g_col3, g_col4, g_col5 = st.columns([1.4, 2.8, 1.0, 1.2, 1.2], vertical_alignment="bottom")
+
+        with g_col1:
+            sel_grila = st.selectbox(
+                "Grilă tarifare",
+                options=opt_grile,
+                key="oferta_2_sel_grila_tarif",
+            )
+
+        tarife_in_grila = grile_tarife.get(sel_grila) or []
+        mapa_tarife_grila: dict[str, dict] = {}
+        for item_t in tarife_in_grila:
+            raw_p = item_t.get("pret")
+            pret_lbl = f"{float(raw_p):.2f}" if raw_p not in (None, "") else "preț lipsă"
+            eticheta_t = f"{item_t['descriere']} — {pret_lbl} {item_t['moneda_um_raw']}".strip()
+            mapa_tarife_grila[eticheta_t] = item_t
+
+        with g_col2:
+            opt_tarife = ["-- Alege tarif --"] + list(mapa_tarife_grila.keys())
+            sel_tarif_lbl = st.selectbox(
+                "Tarif / Activitate din grilă",
+                options=opt_tarife,
+                key="oferta_2_sel_tarif_grila",
+            )
+
+        with g_col3:
+            cant_tarif = st.number_input(
+                "Cantitate",
+                min_value=0.01,
+                value=1.0,
+                step=1.0,
+                format="%.2f",
+                key="oferta_2_cant_tarif_grila",
+            )
+
+        with g_col4:
+            termen_tarif = st.text_input(
+                "Termen livrare",
+                value="",
+                placeholder="opțional",
+                key="oferta_2_termen_tarif_grila",
+            )
+
+        with g_col5:
+            btn_add_tarif = st.button(
+                "➕ Adaugă tarif",
+                key="oferta_2_btn_add_tarif_grila",
+                use_container_width=True,
+            )
+
+        if btn_add_tarif:
+            st.session_state["oferta_2_eroare_piesa"] = ""
+            if sel_tarif_lbl == "-- Alege tarif --":
+                st.session_state["oferta_2_eroare_piesa"] = "Selectați mai întâi un tarif din grila aleasă."
+            else:
+                t_info = mapa_tarife_grila[sel_tarif_lbl]
+                raw_pret = t_info.get("pret")
+                mon_t = str(t_info.get("moneda") or "").strip().upper()
+                um_t = str(t_info.get("um") or "").strip()
+
+                if raw_pret is None or str(raw_pret).strip() == "":
+                    st.session_state["oferta_2_eroare_piesa"] = (
+                        f"Lipsește prețul în grila «{sel_grila}» pentru «{t_info['descriere']}»."
+                    )
+                elif not mon_t:
+                    st.session_state["oferta_2_eroare_piesa"] = (
+                        f"Lipsește moneda în grila «{sel_grila}» pentru «{t_info['descriere']}»."
+                    )
+                else:
+                    try:
+                        pret_val = float(raw_pret)
+                    except (TypeError, ValueError):
+                        pret_val = -1.0
+
+                    if pret_val < 0:
+                        st.session_state["oferta_2_eroare_piesa"] = (
+                            f"Prețul din grila «{sel_grila}» pentru «{t_info['descriere']}» nu este valid."
+                        )
+                    else:
+                        df_baza_t = _sincronizeaza_editor_inainte_de_adaugare()
+                        next_ord_t = len(df_baza_t) + 1
+                        linie_tarif = pd.DataFrame([{
+                            "Ordine": next_ord_t,
+                            "Descriere": f"{t_info['descriere']} [{sel_grila}]",
+                            "UM": um_t or "buc",
+                            "Cantitate": float(cant_tarif),
+                            "Pret Unitar": round(pret_val, 2),
+                            "Moneda": mon_t,
+                            "Termen livrare": str(termen_tarif or "").strip(),
+                        }])
+                        st.session_state["df_oferta_editor"] = pd.concat(
+                            [df_baza_t, linie_tarif],
+                            ignore_index=True,
+                        )
+                        st.session_state["oferta_2_editor_counter"] = (
+                            st.session_state.get("oferta_2_editor_counter", 0) + 1
+                        )
+
     st.markdown("#### 📋 Linii ofertă")
     df_init = st.session_state["df_oferta_editor"].copy()
     for col in COLS_OFERTA:
@@ -966,3 +1073,34 @@ def render_oferte():
         eroare_adaos=eroare_adaos,
         cota_tva_implicita=cota_tva_implicita,
     )
+    
+    
+def _parseaza_moneda_um(moneda_um: str) -> tuple[str, str]:
+    raw = str(moneda_um or "").strip()
+    if "/" in raw:
+        parte_mon, parte_um = raw.split("/", 1)
+        return parte_mon.strip().upper(), parte_um.strip()
+    return raw.upper(), "buc"
+
+
+def _construieste_grile_tarife() -> dict[str, list[dict]]:
+    tarife_all = TarifeRepository.get_all() or []
+    grile: dict[str, list[dict]] = {}
+
+    for t in tarife_all:
+        desc = str(t.get("descriere") or "").strip()
+        if not desc:
+            continue
+        nivel = str(t.get("nivel_grila") or "").strip() or "Fără nivel"
+        moneda, um = _parseaza_moneda_um(t.get("moneda_um") or "")
+        grile.setdefault(nivel, []).append({
+            "id": t.get("id"),
+            "descriere": desc,
+            "pret": t.get("pret"),
+            "moneda": moneda,
+            "um": um,
+            "nivel_grila": nivel,
+            "moneda_um_raw": str(t.get("moneda_um") or "").strip(),
+        })
+
+    return grile
