@@ -1,25 +1,16 @@
 # ------------------------------
-# ----app.py (Meniu 2 Niveluri)
+# ---- app.py (Meniu 2 Niveluri)
 # ------------------------------
 
 import base64
 import importlib
 import os
-import streamlit as st
-import streamlit.components.v1 as components
+import traceback
+
 from dotenv import load_dotenv
 from PIL import Image
-
-from utils.iconita_app import incarca_iconita_app
-
-st.set_page_config(
-    page_title="NexInd CMMS Enterprise Dashboard",
-    page_icon=incarca_iconita_app("logo.png", fallback="⚙️"),
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-from repositories.setari_repository import SetariRepository
+import streamlit as st
+import streamlit.components.v1 as components
 
 load_dotenv()
 
@@ -50,7 +41,7 @@ ANDROID_LOGO_B64 = _incarca_android_logo_b64(ICON_ANDROID_PATH)
 
 st.set_page_config(
     page_title="NexInd CMMS Enterprise Dashboard",
-    page_icon="⚙️",
+    page_icon=PAGE_ICON,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -59,6 +50,7 @@ if ANDROID_LOGO_B64 is not None:
     st.logo(ICON_ANDROID_PATH)
 
 st.session_state.setdefault("is_unlocked", False)
+st.session_state.setdefault("preturi_deblocate", False)
 
 st.markdown(
     """
@@ -97,23 +89,35 @@ def _injecteaza_script_ui_unic(b64_png: str | None) -> None:
         f"""
         <script>
         (function() {{
-            const doc = window.parent.document;
-            {icon_script}
-            function applyAttr() {{
-                doc.querySelectorAll('[data-testid="stSelectbox"] input').forEach(inp => {{
-                    if (!inp.dataset.nexindAutofillBlocked) {{
+            try {{
+                const doc = window.parent.document;
+                {icon_script}
+                let rafId = null;
+
+                function applyAttr() {{
+                    rafId = null;
+                    doc.querySelectorAll('[data-testid="stSelectbox"] input:not([data-nexind-autofill-blocked="1"])').forEach(inp => {{
                         inp.dataset.nexindAutofillBlocked = "1";
                         inp.setAttribute('autocomplete', 'off');
                         inp.setAttribute('data-lpignore', 'true');
                         inp.setAttribute('data-1p-ignore', 'true');
                         inp.setAttribute('data-form-type', 'other');
+                    }});
+                }}
+
+                function scheduleApplyAttr() {{
+                    if (rafId === null) {{
+                        rafId = window.parent.requestAnimationFrame(applyAttr);
                     }}
-                }});
-            }}
-            applyAttr();
-            if (!window.parent.__nexindSelectboxObserver && doc.body) {{
-                window.parent.__nexindSelectboxObserver = new MutationObserver(applyAttr);
-                window.parent.__nexindSelectboxObserver.observe(doc.body, {{ childList: true, subtree: true }});
+                }}
+
+                applyAttr();
+                if (!window.parent.__nexindSelectboxObserver && doc.body) {{
+                    window.parent.__nexindSelectboxObserver = new MutationObserver(scheduleApplyAttr);
+                    window.parent.__nexindSelectboxObserver.observe(doc.body, {{ childList: true, subtree: true }});
+                }}
+            }} catch (e) {{
+                console.warn("NexInd UI init:", e);
             }}
         }})();
         </script>
@@ -136,7 +140,15 @@ def _incarca_handler_pagina(module_path: str, func_name: str):
     return getattr(mod, func_name)
 
 
+def _blocheaza_sesiune():
+    st.session_state["is_unlocked"] = False
+    st.session_state["preturi_deblocate"] = False
+    st.toast("🔒 Elementele protejate au fost blocate.")
+
+
 def render_deblocare():
+    from repositories.setari_repository import SetariRepository
+
     st.subheader("🔐 SistemAdmin — Deblocare Editare Configurații Sisteme")
     st.caption(
         "Deblochează global toate zonele protejate cu parolă din aplicație: prețuri achiziție piese, "
@@ -157,17 +169,17 @@ def render_deblocare():
             "🔓 **Status curent: DEBLOCAT** — Ai permisiuni complete de adăugare și ștergere "
             "la verificările tehnice pe sisteme și la componența sistemelor."
         )
-        if st.button("🔒 Blochează la loc elementele protejate", type="primary"):
-            st.session_state["is_unlocked"] = False
-            st.session_state["preturi_deblocate"] = False
-            st.toast("🔒 Elementele protejate au fost blocate.")
-            st.rerun()
+        st.button(
+            "🔒 Blochează la loc elementele protejate",
+            type="primary",
+            on_click=_blocheaza_sesiune,
+        )
     else:
         st.info(
             "🔒 **Status curent: BLOCAT (Doar vizualizare)** — Introdu parola administratorului "
             "din Setări pentru a debloca editarea."
         )
-        with st.form("form_deblocare_admin"):
+        with st.form("form_deblocare_admin", clear_on_submit=True):
             parola_introdusa = st.text_input("Parolă administrator", type="password")
             submit_unlock = st.form_submit_button("🔓 Deblochează", type="primary")
             if submit_unlock:
@@ -255,8 +267,13 @@ with col_sub:
 st.markdown("---")
 
 mod_path, func_name = submeniuri[submeniu_sel]
-if mod_path == "__local__":
-    render_deblocare()
-else:
-    handler = _incarca_handler_pagina(mod_path, func_name)
-    handler()
+try:
+    if mod_path == "__local__":
+        render_deblocare()
+    else:
+        handler = _incarca_handler_pagina(mod_path, func_name)
+        handler()
+except Exception as exc:
+    st.error(f"❌ Eroare la încărcarea modulului **{submeniu_sel}**: `{exc}`")
+    with st.expander("Detalii tehnice (Traceback)"):
+        st.code(traceback.format_exc(), language="python")

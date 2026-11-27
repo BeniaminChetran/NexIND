@@ -3,6 +3,7 @@
 # ----------------------------------
 
 import json
+import re
 from pathlib import Path
 import pandas as pd
 import streamlit as st
@@ -23,9 +24,9 @@ def construieste_nume_fisa_masina(denumire_masina: str, tip_masina: str, frecven
     return " - ".join(valide) if valide else f"Fișă Mentenanță - {str(frecventa or 'Lunară').strip()}"
 
 
-def _asigura_tabele_fise_si_catalog():
-    if st.session_state.get("_fise_tip_db_ok"):
-        return
+@st.cache_resource
+def _asigura_tabele_fise_si_catalog() -> bool:
+    """Rulează DDL-ul o singură dată pe durata de viață a procesului serverului."""
     with db_cursor() as c:
         c.execute("""
             CREATE TABLE IF NOT EXISTS fise_mentenanta_tip_masina (
@@ -67,7 +68,7 @@ def _asigura_tabele_fise_si_catalog():
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ADD COLUMN IF NOT EXISTS documentatii_json TEXT NOT NULL DEFAULT '[]'")
         c.execute("ALTER TABLE catalog_operatiuni_mentenanta ENABLE ROW LEVEL SECURITY;")
         c.execute("ALTER TABLE fise_mentenanta_tip_masina ENABLE ROW LEVEL SECURITY;")
-    st.session_state["_fise_tip_db_ok"] = True
+    return True
 
 
 def _parse_json_list(val) -> list:
@@ -150,7 +151,11 @@ def rezuma_parametri_coloane(
             str(p0.get("valoare") or "").strip(),
             str(p0.get("um") or "").strip(),
         )
-    den_toate = [str(p.get("parametru") or p.get("denumire") or "").strip() for p in lista if str(p.get("parametru") or p.get("denumire") or "").strip()]
+    den_toate = [
+        str(p.get("parametru") or p.get("denumire") or "").strip()
+        for p in lista
+        if str(p.get("parametru") or p.get("denumire") or "").strip()
+    ]
     val_toate = [str(p.get("valoare") or "").strip() for p in lista if str(p.get("valoare") or "").strip()]
     um_toate = []
     for p in lista:
@@ -327,10 +332,105 @@ def sterge_operatiune_din_catalog_db(op_id: int):
 def _salveaza_fisier_doc_local(uploaded_file, prefix_key: str) -> str:
     folder = Path("uploads/documentatie_mentenanta")
     folder.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(uploaded_file.name).name.replace(" ", "_")
-    dest = folder / f"{prefix_key}_{safe_name}"
+    safe_prefix = re.sub(r"[^a-zA-Z0-9_-]+", "_", prefix_key)[:40]
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", Path(uploaded_file.name).name)
+    dest = folder / f"{safe_prefix}_{safe_name}"
     dest.write_bytes(uploaded_file.getvalue())
     return str(dest)
+
+
+@st.cache_data(ttl=180)
+def _incarca_optiuni_piese_catalog() -> list[str]:
+    piese_db = PieseRepository.get_all() or []
+    return ["-- Introdu piesă manual --"] + [
+        f"{p['denumire']}" + (f" ({p['cod_producator']})" if p.get("cod_producator") else "")
+        for p in piese_db
+    ]
+
+
+# --- CALLBACK-URI BUILDER RESURSE (FĂRĂ st.rerun()) ---
+
+def _cb_adauga_parametru(prefix_key: str):
+    k_prm = f"res_prm_{prefix_key}"
+    den = str(st.session_state.get(f"inp_prm_den_{prefix_key}") or "").strip()
+    val = str(st.session_state.get(f"inp_prm_val_{prefix_key}") or "").strip()
+    um = str(st.session_state.get(f"inp_prm_um_{prefix_key}") or "").strip()
+    if not any([den, val, um]):
+        st.session_state[f"msg_res_{prefix_key}"] = ("warning", "Introdu cel puțin o informație pentru parametru.")
+        return
+    st.session_state[k_prm].append({"parametru": den, "valoare": val, "um": um})
+    st.session_state[f"inp_prm_den_{prefix_key}"] = ""
+    st.session_state[f"inp_prm_val_{prefix_key}"] = ""
+    st.session_state[f"inp_prm_um_{prefix_key}"] = ""
+
+
+def _cb_sterge_element_resursa(state_list_key: str, idx: int):
+    lista = st.session_state.get(state_list_key)
+    if isinstance(lista, list) and 0 <= idx < len(lista):
+        lista.pop(idx)
+
+
+def _cb_selecteaza_piesa_catalog(prefix_key: str):
+    sel = st.session_state.get(f"sel_p_{prefix_key}", "-- Introdu piesă manual --")
+    st.session_state[f"inp_p_den_{prefix_key}"] = "" if sel == "-- Introdu piesă manual --" else sel
+
+
+def _cb_adauga_piesa(prefix_key: str):
+    k_piese = f"res_piese_{prefix_key}"
+    den = str(st.session_state.get(f"inp_p_den_{prefix_key}") or "").strip()
+    if not den:
+        st.session_state[f"msg_res_{prefix_key}"] = ("warning", "Introdu sau selectează o piesă.")
+        return
+    cant = float(st.session_state.get(f"inp_p_cant_{prefix_key}") or 1.0)
+    cant_fmt = int(cant) if cant.is_integer() else round(cant, 2)
+    um = str(st.session_state.get(f"inp_p_um_{prefix_key}") or "buc").strip() or "buc"
+    loc = str(st.session_state.get(f"inp_p_loc_{prefix_key}") or "").strip()
+    st.session_state[k_piese].append({
+        "piesa": den,
+        "cantitate": cant_fmt,
+        "um": um,
+        "loc_utilizare": loc,
+    })
+    st.session_state[f"sel_p_{prefix_key}"] = "-- Introdu piesă manual --"
+    st.session_state[f"inp_p_den_{prefix_key}"] = ""
+    st.session_state[f"inp_p_loc_{prefix_key}"] = ""
+
+
+def _cb_adauga_consumabil(prefix_key: str):
+    k_cons = f"res_cons_{prefix_key}"
+    den = str(st.session_state.get(f"inp_c_den_{prefix_key}") or "").strip()
+    if not den:
+        st.session_state[f"msg_res_{prefix_key}"] = ("warning", "Introdu denumirea materialului consumabil.")
+        return
+    cant = float(st.session_state.get(f"inp_c_cant_{prefix_key}") or 1.0)
+    cant_fmt = int(cant) if cant.is_integer() else round(cant, 2)
+    um = str(st.session_state.get(f"inp_c_um_{prefix_key}") or "buc").strip() or "buc"
+    loc = str(st.session_state.get(f"inp_c_loc_{prefix_key}") or "").strip()
+    st.session_state[k_cons].append({
+        "material": den,
+        "cantitate": cant_fmt,
+        "um": um,
+        "loc_utilizare": loc,
+    })
+    st.session_state[f"inp_c_den_{prefix_key}"] = ""
+    st.session_state[f"inp_c_loc_{prefix_key}"] = ""
+
+
+def _cb_adauga_documentatie(prefix_key: str):
+    k_docs = f"res_docs_{prefix_key}"
+    titlu = str(st.session_state.get(f"inp_d_titlu_{prefix_key}") or "").strip()
+    url = str(st.session_state.get(f"inp_d_url_{prefix_key}") or "").strip()
+    doc_file = st.session_state.get(f"up_d_file_{prefix_key}")
+    final_url = url
+    if doc_file is not None:
+        final_url = _salveaza_fisier_doc_local(doc_file, f"{prefix_key}_doc{len(st.session_state[k_docs]) + 1}")
+    if not final_url:
+        st.session_state[f"msg_res_{prefix_key}"] = ("warning", "Introdu un link sau încarcă un fișier de documentație.")
+        return
+    titlu_final = titlu or f"Documentație #{len(st.session_state[k_docs]) + 1}"
+    st.session_state[k_docs].append({"titlu": titlu_final, "url": final_url})
+    st.session_state[f"inp_d_titlu_{prefix_key}"] = ""
+    st.session_state[f"inp_d_url_{prefix_key}"] = ""
 
 
 def render_builder_resurse_operatiune(
@@ -340,13 +440,6 @@ def render_builder_resurse_operatiune(
     consumabile_init: list[dict] | None = None,
     documentatii_init: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-    """
-    Construiește interactiv pentru o operațiune:
-    - Parametri multipli (fiecare cu denumire parametru, valoare, UM)
-    - Piese necesare (multiple, inclusiv mai multe de același fel, cu loc utilizare)
-    - Materiale consumabile (multiple, ex: WD40 - 50ml, pini 0.75 - 20buc, cu locurile unde se utilizează)
-    - Link-uri / fișiere de documentație multiple (pentru sub-operațiunile executate simultan)
-    """
     k_prm = f"res_prm_{prefix_key}"
     k_piese = f"res_piese_{prefix_key}"
     k_cons = f"res_cons_{prefix_key}"
@@ -361,37 +454,40 @@ def render_builder_resurse_operatiune(
     if k_docs not in st.session_state:
         st.session_state[k_docs] = list(_parse_json_list(documentatii_init))
 
+    msg_res = st.session_state.pop(f"msg_res_{prefix_key}", None)
+    if msg_res:
+        if msg_res[0] == "warning":
+            st.warning(msg_res[1])
+        else:
+            st.info(msg_res[1])
+
     with st.expander("📐 Parametri măsurați / verificați (poți adăuga mai mulți)", expanded=bool(st.session_state[k_prm])):
         cprm1, cprm2, cprm3 = st.columns([2.2, 1.2, 0.9])
         with cprm1:
-            prm_den = st.text_input(
+            st.text_input(
                 "Denumire parametru",
                 placeholder="ex: Tensiune alimentare / Presiune / Joc ax",
                 key=f"inp_prm_den_{prefix_key}",
-            ).strip()
+            )
         with cprm2:
-            prm_val = st.text_input(
+            st.text_input(
                 "Valoare",
                 placeholder="ex: 24.0 / 6.2 / 0.02",
                 key=f"inp_prm_val_{prefix_key}",
-            ).strip()
+            )
         with cprm3:
-            prm_um = st.text_input(
+            st.text_input(
                 "UM",
                 placeholder="ex: V / bar / mm",
                 key=f"inp_prm_um_{prefix_key}",
-            ).strip()
+            )
 
-        if st.button("➕ Adaugă parametru la operațiune", key=f"btn_add_prm_{prefix_key}"):
-            if not any([prm_den, prm_val, prm_um]):
-                st.warning("Introdu cel puțin o informație pentru parametru.")
-            else:
-                st.session_state[k_prm].append({
-                    "parametru": prm_den,
-                    "valoare": prm_val,
-                    "um": prm_um,
-                })
-                st.rerun()
+        st.button(
+            "➕ Adaugă parametru la operațiune",
+            key=f"btn_add_prm_{prefix_key}",
+            on_click=_cb_adauga_parametru,
+            args=(prefix_key,),
+        )
 
         if st.session_state[k_prm]:
             for idx_pr, item_pr in enumerate(st.session_state[k_prm]):
@@ -406,149 +502,139 @@ def render_builder_resurse_operatiune(
                     col_prt.markdown(f"- **{p_den}**")
                 else:
                     col_prt.markdown(f"- {val_um}")
-                if col_prd.button("🗑️", key=f"del_prm_{prefix_key}_{idx_pr}"):
-                    st.session_state[k_prm].pop(idx_pr)
-                    st.rerun()
+                col_prd.button(
+                    "🗑️",
+                    key=f"del_prm_{prefix_key}_{idx_pr}",
+                    on_click=_cb_sterge_element_resursa,
+                    args=(k_prm, idx_pr),
+                )
 
-    piese_db = PieseRepository.get_all() or []
-    opt_piese_catalog = ["-- Introdu piesă manual --"] + [
-        f"{p['denumire']}" + (f" ({p['cod_producator']})" if p.get("cod_producator") else "")
-        for p in piese_db
-    ]
+    opt_piese_catalog = _incarca_optiuni_piese_catalog()
 
     with st.expander("🔩 Piese necesare (poți adăuga mai multe / același tip de mai multe ori)", expanded=bool(st.session_state[k_piese])):
         cp1, cp2 = st.columns([2, 2])
         with cp1:
-            sel_piesa_cat = st.selectbox(
+            st.selectbox(
                 "Alege piesa din catalog (sau manual)",
                 options=opt_piese_catalog,
                 key=f"sel_p_{prefix_key}",
+                on_change=_cb_selecteaza_piesa_catalog,
+                args=(prefix_key,),
             )
         with cp2:
-            piesa_manual = st.text_input(
+            st.text_input(
                 "Denumire piesă",
-                value="" if sel_piesa_cat == "-- Introdu piesă manual --" else sel_piesa_cat,
                 placeholder="ex: Rulment 6205 2RS / Senzor inductiv M12",
                 key=f"inp_p_den_{prefix_key}",
-            ).strip()
+            )
 
         cp3, cp4, cp5 = st.columns([1, 1, 2.2])
         with cp3:
-            cant_piesa = st.number_input("Cantitate", min_value=0.1, step=1.0, value=1.0, key=f"inp_p_cant_{prefix_key}")
+            st.number_input("Cantitate", min_value=0.1, step=1.0, value=1.0, key=f"inp_p_cant_{prefix_key}")
         with cp4:
-            um_piesa = st.text_input("UM", value="buc", key=f"inp_p_um_{prefix_key}").strip() or "buc"
+            st.text_input("UM", value="buc", key=f"inp_p_um_{prefix_key}")
         with cp5:
-            loc_piesa = st.text_input(
+            st.text_input(
                 "Loc montaj / Ansamblu (opțional)",
                 placeholder="ex: Ax X - lagăr față",
                 key=f"inp_p_loc_{prefix_key}",
-            ).strip()
+            )
 
-        if st.button("➕ Adaugă piesă la operațiune", key=f"btn_add_p_{prefix_key}"):
-            if not piesa_manual:
-                st.warning("Introdu sau selectează o piesă.")
-            else:
-                cant_fmt = int(cant_piesa) if float(cant_piesa).is_integer() else round(float(cant_piesa), 2)
-                st.session_state[k_piese].append({
-                    "piesa": piesa_manual,
-                    "cantitate": cant_fmt,
-                    "um": um_piesa,
-                    "loc_utilizare": loc_piesa,
-                })
-                st.rerun()
+        st.button(
+            "➕ Adaugă piesă la operațiune",
+            key=f"btn_add_p_{prefix_key}",
+            on_click=_cb_adauga_piesa,
+            args=(prefix_key,),
+        )
 
         if st.session_state[k_piese]:
             for idx_p, item_p in enumerate(st.session_state[k_piese]):
                 col_pt, col_pd = st.columns([4.5, 0.7], vertical_alignment="center")
                 loc_str = f" — *{item_p['loc_utilizare']}*" if item_p.get("loc_utilizare") else ""
                 col_pt.markdown(f"- **{item_p['piesa']}** — `{item_p['cantitate']} {item_p.get('um', 'buc')}`{loc_str}")
-                if col_pd.button("🗑️", key=f"del_p_{prefix_key}_{idx_p}"):
-                    st.session_state[k_piese].pop(idx_p)
-                    st.rerun()
+                col_pd.button(
+                    "🗑️",
+                    key=f"del_p_{prefix_key}_{idx_p}",
+                    on_click=_cb_sterge_element_resursa,
+                    args=(k_piese, idx_p),
+                )
 
     with st.expander("🧴 Materiale consumabile & locuri de utilizare (ex: WD40 - 50ml, pini 0.75 - 20buc)", expanded=bool(st.session_state[k_cons])):
         cc1, cc2, cc3, cc4 = st.columns([1.8, 0.9, 0.8, 2.2])
         with cc1:
-            mat_den = st.text_input(
+            st.text_input(
                 "Material consumabil",
                 placeholder="ex: WD40 / Pini 0.75 / Vaselină Litiu",
                 key=f"inp_c_den_{prefix_key}",
-            ).strip()
+            )
         with cc2:
-            mat_cant = st.number_input("Cantitate", min_value=0.1, step=1.0, value=50.0, key=f"inp_c_cant_{prefix_key}")
+            st.number_input("Cantitate", min_value=0.1, step=1.0, value=50.0, key=f"inp_c_cant_{prefix_key}")
         with cc3:
-            mat_um = st.text_input("UM", value="ml", placeholder="ml / buc / g", key=f"inp_c_um_{prefix_key}").strip() or "buc"
+            st.text_input("UM", value="ml", placeholder="ml / buc / g", key=f"inp_c_um_{prefix_key}")
         with cc4:
-            mat_loc = st.text_input(
+            st.text_input(
                 "Locul unde se utilizează",
                 placeholder="ex: Se curăță jiglorul 4 de la ansamblul cccc",
                 key=f"inp_c_loc_{prefix_key}",
-            ).strip()
+            )
 
-        if st.button("➕ Adaugă consumabil la operațiune", key=f"btn_add_c_{prefix_key}"):
-            if not mat_den:
-                st.warning("Introdu denumirea materialului consumabil.")
-            else:
-                cant_fmt = int(mat_cant) if float(mat_cant).is_integer() else round(float(mat_cant), 2)
-                st.session_state[k_cons].append({
-                    "material": mat_den,
-                    "cantitate": cant_fmt,
-                    "um": mat_um,
-                    "loc_utilizare": mat_loc,
-                })
-                st.rerun()
+        st.button(
+            "➕ Adaugă consumabil la operațiune",
+            key=f"btn_add_c_{prefix_key}",
+            on_click=_cb_adauga_consumabil,
+            args=(prefix_key,),
+        )
 
         if st.session_state[k_cons]:
             for idx_c, item_c in enumerate(st.session_state[k_cons]):
                 col_ct, col_cd = st.columns([4.5, 0.7], vertical_alignment="center")
                 loc_c = f" → **{item_c['loc_utilizare']}**" if item_c.get("loc_utilizare") else ""
                 col_ct.markdown(f"- **{item_c['material']}** — `{item_c['cantitate']} {item_c.get('um', '')}`{loc_c}")
-                if col_cd.button("🗑️", key=f"del_c_{prefix_key}_{idx_c}"):
-                    st.session_state[k_cons].pop(idx_c)
-                    st.rerun()
+                col_cd.button(
+                    "🗑️",
+                    key=f"del_c_{prefix_key}_{idx_c}",
+                    on_click=_cb_sterge_element_resursa,
+                    args=(k_cons, idx_c),
+                )
 
     with st.expander("🔗 Link-uri / Fișiere documentație multiple (pentru sub-operațiuni executate deodată)", expanded=bool(st.session_state[k_docs])):
         cd1, cd2, cd3 = st.columns([1.8, 2.2, 1.5])
         with cd1:
-            doc_titlu = st.text_input(
+            st.text_input(
                 "Etichetă / Sub-operațiune",
                 placeholder="ex: Demontarea axului axei X",
                 key=f"inp_d_titlu_{prefix_key}",
-            ).strip()
+            )
         with cd2:
-            doc_url = st.text_input(
+            st.text_input(
                 "Link documentație (Google Drive / URL)",
                 placeholder="https://drive.google.com/...",
                 key=f"inp_d_url_{prefix_key}",
-            ).strip()
+            )
         with cd3:
-            doc_file = st.file_uploader(
+            st.file_uploader(
                 "Sau încarcă fișier",
                 type=["pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg"],
                 key=f"up_d_file_{prefix_key}",
             )
 
-        if st.button("➕ Adaugă link / documentație", key=f"btn_add_d_{prefix_key}"):
-            final_url = doc_url
-            if doc_file is not None:
-                final_url = _salveaza_fisier_doc_local(doc_file, f"{prefix_key}_doc{len(st.session_state[k_docs])+1}")
-            if not final_url:
-                st.warning("Introdu un link sau încarcă un fișier de documentație.")
-            else:
-                titlu_final = doc_titlu or f"Documentație #{len(st.session_state[k_docs]) + 1}"
-                st.session_state[k_docs].append({
-                    "titlu": titlu_final,
-                    "url": final_url,
-                })
-                st.rerun()
+        st.button(
+            "➕ Adaugă link / documentație",
+            key=f"btn_add_d_{prefix_key}",
+            on_click=_cb_adauga_documentatie,
+            args=(prefix_key,),
+        )
 
         if st.session_state[k_docs]:
             for idx_d, item_d in enumerate(st.session_state[k_docs]):
                 col_dt, col_dd = st.columns([4.5, 0.7], vertical_alignment="center")
                 col_dt.markdown(f"- **{item_d.get('titlu', 'Link')}**: `{item_d.get('url', '')}`")
-                if col_dd.button("🗑️", key=f"del_d_{prefix_key}_{idx_d}"):
-                    st.session_state[k_docs].pop(idx_d)
-                    st.rerun()
+                col_dd.button(
+                    "🗑️",
+                    key=f"del_d_{prefix_key}_{idx_d}",
+                    on_click=_cb_sterge_element_resursa,
+                    args=(k_docs, idx_d),
+                )
 
     return (
         list(st.session_state[k_prm]),
@@ -559,7 +645,7 @@ def render_builder_resurse_operatiune(
 
 
 def reseteaza_builder_resurse_operatiune(prefix_key: str):
-    for pfx in ("res_prm_", "res_piese_", "res_cons_", "res_docs_"):
+    for pfx in ("res_prm_", "res_piese_", "res_cons_", "res_docs_", "msg_res_"):
         st.session_state.pop(f"{pfx}{prefix_key}", None)
 
 
@@ -730,11 +816,17 @@ def _gaseste_fisa_tip(fise: list[dict], denumire_masina: str, tip_masina: str, f
     return None
 
 
-def _render_sectiune_editare_catalog_db():
+def _render_sectiune_editare_catalog_db(catalog_db: list[dict]):
     st.markdown("### ⚙️ Editare Catalog Operațiuni în Baza de Date")
     st.caption("Tot ce modifici aici se salvează direct în DB și este disponibil imediat și de pe telefon, la client.")
 
-    catalog_db = incarca_catalog_operatiuni_db()
+    msg_cat = st.session_state.pop("msg_cat_db", None)
+    if msg_cat:
+        if msg_cat[0] == "success":
+            st.success(msg_cat[1])
+        elif msg_cat[0] == "toast":
+            st.toast(msg_cat[1])
+
     opt_cat = {"➕ Adaugă operațiune nouă în catalog": None}
     for it in catalog_db:
         opt_cat[f"#{it['id']} | [{it['sistem']}] {it['operatiune'][:75]}"] = it
@@ -810,7 +902,7 @@ def _render_sectiune_editare_catalog_db():
                         consumabile=cons_list,
                         documentatii=docs_list,
                     )
-                    st.success(f"✅ Operațiunea #{item_sel['id']} a fost actualizată în DB.")
+                    st.session_state["msg_cat_db"] = ("success", f"✅ Operațiunea #{item_sel['id']} a fost actualizată în DB.")
                 else:
                     new_id = adauga_operatiune_in_catalog_db(
                         sistem=sistem_val,
@@ -824,13 +916,14 @@ def _render_sectiune_editare_catalog_db():
                         documentatii=docs_list,
                     )
                     reseteaza_builder_resurse_operatiune(builder_key)
-                    st.success(f"✅ Operațiunea #{new_id} a fost adăugată în DB.")
+                    st.session_state["msg_cat_db"] = ("success", f"✅ Operațiunea #{new_id} a fost adăugată în DB.")
                 st.rerun()
     with b2:
         if item_sel and st.button("🗑️ Șterge din Catalog DB", use_container_width=True, key=f"cat_db_del_{edit_id}"):
             sterge_operatiune_din_catalog_db(item_sel["id"])
             reseteaza_builder_resurse_operatiune(builder_key)
-            st.toast(f"🗑️ Operațiunea #{item_sel['id']} a fost ștearsă.")
+            st.session_state["cat_db_sel_item"] = "➕ Adaugă operațiune nouă în catalog"
+            st.session_state["msg_cat_db"] = ("toast", f"🗑️ Operațiunea #{item_sel['id']} a fost ștearsă.")
             st.rerun()
 
     if catalog_db:
@@ -855,8 +948,112 @@ def _render_sectiune_editare_catalog_db():
         st.dataframe(df_cat, hide_index=True, use_container_width=True)
 
 
+# --- CALLBACK-URI FIȘĂ TIP MAȘINĂ (STABILE & FĂRĂ st.rerun()) ---
+
+def _cb_schimba_preset_masina():
+    sel = st.session_state.get("fmp_preset", "-- Introdu manual --")
+    if sel != "-- Introdu manual --":
+        parti = sel.split(" | ", 1)
+        st.session_state["fmp_den_masina"] = parti[0].strip()
+        st.session_state["fmp_tip_masina"] = parti[1].strip() if len(parti) > 1 else ""
+    else:
+        st.session_state["fmp_den_masina"] = ""
+        st.session_state["fmp_tip_masina"] = ""
+
+
+def _cb_schimba_operatiune_catalog_fisa(opt_op_cat: dict, b_key: str):
+    sel_lbl = st.session_state.get(f"fmp_sel_op_{b_key}")
+    it_cat = opt_op_cat.get(sel_lbl)
+    st.session_state[f"fmp_op_txt_{b_key}"] = it_cat["operatiune"] if it_cat else ""
+    st.session_state[f"fmp_prm_txt_{b_key}"] = (it_cat.get("parametru") or "") if it_cat else ""
+    st.session_state[f"fmp_val_txt_{b_key}"] = (it_cat.get("valoare") or "") if it_cat else ""
+    st.session_state[f"fmp_um_txt_{b_key}"] = (it_cat.get("um") or "") if it_cat else ""
+    st.session_state[f"fmp_chk_cat_{b_key}"] = it_cat is None
+    st.session_state[f"res_prm_{b_key}"] = list(it_cat.get("parametri") or []) if it_cat else []
+    st.session_state[f"res_piese_{b_key}"] = list(it_cat.get("piese") or []) if it_cat else []
+    st.session_state[f"res_cons_{b_key}"] = list(it_cat.get("consumabile") or []) if it_cat else []
+    st.session_state[f"res_docs_{b_key}"] = list(it_cat.get("documentatii") or []) if it_cat else []
+
+
+def _cb_adauga_operatiune_in_fisa(b_key: str, it_cat: dict | None):
+    op_txt = str(st.session_state.get(f"fmp_op_txt_{b_key}") or "").strip()
+    if not op_txt:
+        st.session_state["msg_fmp_tab"] = ("warning", "Introdu sau selectează o operațiune.")
+        return
+
+    prm_txt = str(st.session_state.get(f"fmp_prm_txt_{b_key}") or "").strip()
+    val_txt = str(st.session_state.get(f"fmp_val_txt_{b_key}") or "").strip()
+    um_txt = str(st.session_state.get(f"fmp_um_txt_{b_key}") or "").strip()
+
+    prm_op = list(st.session_state.get(f"res_prm_{b_key}") or [])
+    piese_op = list(st.session_state.get(f"res_piese_{b_key}") or [])
+    cons_op = list(st.session_state.get(f"res_cons_{b_key}") or [])
+    docs_op = list(st.session_state.get(f"res_docs_{b_key}") or [])
+
+    final_prm = construieste_lista_parametri(prm_op, prm_txt, val_txt, um_txt)
+    prm_col, val_col, um_col = rezuma_parametri_coloane(final_prm, prm_txt, val_txt, um_txt)
+
+    if st.session_state.get(f"fmp_chk_cat_{b_key}") and it_cat is None:
+        adauga_operatiune_in_catalog_db(
+            sistem="General",
+            operatiune=op_txt,
+            parametru=prm_txt,
+            valoare=val_txt,
+            um=um_txt,
+            parametri=final_prm,
+            piese=piese_op,
+            consumabile=cons_op,
+            documentatii=docs_op,
+        )
+
+    pasi_crt = st.session_state.setdefault("fmp_pasi_activ", [])
+    pasi_crt.append({
+        "Ordine": len(pasi_crt) + 1,
+        "Operațiune / Verificare": op_txt,
+        "Denumire parametru": prm_col,
+        "Valoare": val_col,
+        "UM": um_col,
+        "Piese necesare": formateaza_piese_text(piese_op),
+        "Materiale consumabile": formateaza_consumabile_text(cons_op),
+        "Documentație": formateaza_documentatii_text(docs_op),
+        "parametri": final_prm,
+        "piese": piese_op,
+        "consumabile": cons_op,
+        "documentatii": docs_op,
+    })
+
+    st.session_state[f"fmp_sel_op_{b_key}"] = "-- Introdu manual / copy-paste --"
+    st.session_state[f"fmp_op_txt_{b_key}"] = ""
+    st.session_state[f"fmp_prm_txt_{b_key}"] = ""
+    st.session_state[f"fmp_val_txt_{b_key}"] = ""
+    st.session_state[f"fmp_um_txt_{b_key}"] = ""
+    st.session_state[f"fmp_chk_cat_{b_key}"] = True
+    st.session_state[f"res_prm_{b_key}"] = []
+    st.session_state[f"res_piese_{b_key}"] = []
+    st.session_state[f"res_cons_{b_key}"] = []
+    st.session_state[f"res_docs_{b_key}"] = []
+
+
+def _cb_sterge_operatiuni_fisa(opt_del: dict):
+    de_sters = st.session_state.get("fmp_ms_del_activ") or []
+    if not de_sters:
+        return
+    indici = {opt_del[k] for k in de_sters if k in opt_del}
+    ramase = []
+    for idx_r, it_r in enumerate(st.session_state.get("fmp_pasi_activ") or []):
+        if idx_r not in indici:
+            cp = dict(it_r)
+            cp["Ordine"] = len(ramase) + 1
+            ramase.append(cp)
+    st.session_state["fmp_pasi_activ"] = ramase
+    st.session_state["fmp_ms_del_activ"] = []
+
+
 def render_fise_mentenanta():
     st.subheader("📋 Catalog Operațiuni & Fișe Tip de Mentenanță (DB)")
+
+    catalog_db = incarca_catalog_operatiuni_db()
+    fise_db = _incarca_fise_tip_db()
 
     tab_catalog, tab_fise_tip, tab_lista = st.tabs([
         "⚙️ Editare Catalog Operațiuni (DB)",
@@ -865,85 +1062,78 @@ def render_fise_mentenanta():
     ])
 
     with tab_catalog:
-        _render_sectiune_editare_catalog_db()
+        _render_sectiune_editare_catalog_db(catalog_db)
 
     with tab_fise_tip:
-        fise_db = _incarca_fise_tip_db()
-        catalog_masini = _incarca_masini_catalog()
-        catalog_db = incarca_catalog_operatiuni_db()
+        msg_fmp = st.session_state.pop("msg_fmp_tab", None)
+        if msg_fmp:
+            if msg_fmp[0] == "success":
+                st.success(msg_fmp[1])
+            elif msg_fmp[0] == "warning":
+                st.warning(msg_fmp[1])
+            elif msg_fmp[0] == "error":
+                st.error(msg_fmp[1])
 
+        catalog_masini = _incarca_masini_catalog()
         opt_preset = ["-- Introdu manual --"] + [
             f"{x['denumire_masina']} | {x['tip_masina']}" for x in catalog_masini
         ]
-        sel_preset = st.selectbox("Selectează mașină și tip mașină", options=opt_preset, key="fmp_preset")
-
-        def_den = ""
-        def_tip = ""
-        if sel_preset != "-- Introdu manual --":
-            parti = sel_preset.split(" | ", 1)
-            def_den = parti[0].strip()
-            def_tip = parti[1].strip() if len(parti) > 1 else ""
+        st.selectbox(
+            "Selectează mașină și tip mașină",
+            options=opt_preset,
+            key="fmp_preset",
+            on_change=_cb_schimba_preset_masina,
+        )
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            den_masina = st.text_input("Denumire mașină *", value=def_den, key="fmp_den_masina").strip()
+            den_masina = st.text_input("Denumire mașină *", key="fmp_den_masina").strip()
         with c2:
-            tip_masina = st.text_input("Tip mașină *", value=def_tip, key="fmp_tip_masina").strip()
+            tip_masina = st.text_input("Tip mașină *", key="fmp_tip_masina").strip()
         with c3:
             frec_sel = st.selectbox("Tip mentenanță / Frecvență", options=FRECVENTE_MENTENANTA, key="fmp_frec")
 
+        # Sincronizare stabilă: reîncarcă pașii din DB doar când se schimbă combinația mașină/tip/frecvență
+        semnatura_fisa = (den_masina.lower(), tip_masina.lower(), frec_sel.lower())
         fisa_exs = _gaseste_fisa_tip(fise_db, den_masina, tip_masina, frec_sel)
         nume_auto = construieste_nume_fisa_masina(den_masina, tip_masina, frec_sel)
+
+        if st.session_state.get("fmp_semnatura_curenta") != semnatura_fisa:
+            st.session_state["fmp_semnatura_curenta"] = semnatura_fisa
+            st.session_state["fmp_pasi_activ"] = list(fisa_exs["pasi"]) if fisa_exs else []
+            st.session_state["fmp_nume_fisa_activ"] = (fisa_exs.get("nume_fisa") if fisa_exs else "") or nume_auto
+
         nume_fisa_input = st.text_input(
             "Denumire fișă tip",
-            value=(fisa_exs.get("nume_fisa") if fisa_exs else "") or nume_auto,
-            key=f"fmp_nume_{den_masina.lower()}_{tip_masina.lower()}_{frec_sel.lower()}",
+            key="fmp_nume_fisa_activ",
         ).strip() or nume_auto
-
-        state_key_pasi = f"fmp_pasi_{den_masina.lower()}_{tip_masina.lower()}_{frec_sel.lower()}"
-        if state_key_pasi not in st.session_state:
-            st.session_state[state_key_pasi] = list(fisa_exs["pasi"]) if fisa_exs else []
 
         st.markdown("#### 📎 Încarcă / Setează operațiune în fișa tip")
         opt_op_cat = {"-- Introdu manual / copy-paste --": None}
         for it in catalog_db:
             opt_op_cat[f"[{it['sistem']}] {it['operatiune']}"] = it
 
+        b_key = "fmp_res_activ"
         sel_op_lbl = st.selectbox(
             "Alege operațiunea din Catalogul DB (sau introdu manual / copy-paste)",
             options=list(opt_op_cat.keys()),
-            key=f"fmp_sel_op_{state_key_pasi}",
+            key=f"fmp_sel_op_{b_key}",
+            on_change=_cb_schimba_operatiune_catalog_fisa,
+            args=(opt_op_cat, b_key),
         )
         it_cat = opt_op_cat[sel_op_lbl]
-        b_key = f"fmp_res_{state_key_pasi}_{it_cat['id'] if it_cat else 'man'}"
 
         o1, o2, o3, o4 = st.columns([2.2, 1.2, 0.9, 0.7])
         with o1:
-            op_txt = st.text_input(
-                "Operațiune / Verificare",
-                value=(it_cat["operatiune"] if it_cat else ""),
-                key=f"fmp_op_txt_{b_key}",
-            ).strip()
+            st.text_input("Operațiune / Verificare", key=f"fmp_op_txt_{b_key}")
         with o2:
-            prm_txt = st.text_input(
-                "Parametru rapid",
-                value=(it_cat.get("parametru") or "" if it_cat else ""),
-                key=f"fmp_prm_txt_{b_key}",
-            ).strip()
+            st.text_input("Parametru rapid", key=f"fmp_prm_txt_{b_key}")
         with o3:
-            val_txt = st.text_input(
-                "Valoare",
-                value=(it_cat.get("valoare") or "" if it_cat else ""),
-                key=f"fmp_val_txt_{b_key}",
-            ).strip()
+            st.text_input("Valoare", key=f"fmp_val_txt_{b_key}")
         with o4:
-            um_txt = st.text_input(
-                "UM",
-                value=(it_cat.get("um") or "" if it_cat else ""),
-                key=f"fmp_um_txt_{b_key}",
-            ).strip()
+            st.text_input("UM", key=f"fmp_um_txt_{b_key}")
 
-        prm_op, piese_op, cons_op, docs_op = render_builder_resurse_operatiune(
+        render_builder_resurse_operatiune(
             prefix_key=b_key,
             parametri_init=(it_cat.get("parametri") if it_cat else []),
             piese_init=(it_cat.get("piese") if it_cat else []),
@@ -951,79 +1141,55 @@ def render_fise_mentenanta():
             documentatii_init=(it_cat.get("documentatii") if it_cat else []),
         )
 
-        salveaza_cat = st.checkbox("Salvează această operațiune și în Catalogul DB", value=(it_cat is None), key=f"fmp_chk_cat_{b_key}")
-        if st.button("➕ Adaugă operațiunea în fișa tip", key=f"fmp_btn_add_{b_key}"):
-            if not op_txt:
-                st.warning("Introdu sau selectează o operațiune.")
-            else:
-                final_prm = construieste_lista_parametri(prm_op, prm_txt, val_txt, um_txt)
-                prm_col, val_col, um_col = rezuma_parametri_coloane(final_prm, prm_txt, val_txt, um_txt)
-                if salveaza_cat and it_cat is None:
-                    adauga_operatiune_in_catalog_db(
-                        sistem="General",
-                        operatiune=op_txt,
-                        parametru=prm_txt,
-                        valoare=val_txt,
-                        um=um_txt,
-                        parametri=final_prm,
-                        piese=piese_op,
-                        consumabile=cons_op,
-                        documentatii=docs_op,
-                    )
-                st.session_state[state_key_pasi].append({
-                    "Ordine": len(st.session_state[state_key_pasi]) + 1,
-                    "Operațiune / Verificare": op_txt,
-                    "Denumire parametru": prm_col,
-                    "Valoare": val_col,
-                    "UM": um_col,
-                    "Piese necesare": formateaza_piese_text(piese_op),
-                    "Materiale consumabile": formateaza_consumabile_text(cons_op),
-                    "Documentație": formateaza_documentatii_text(docs_op),
-                    "parametri": final_prm,
-                    "piese": piese_op,
-                    "consumabile": cons_op,
-                    "documentatii": docs_op,
-                })
-                reseteaza_builder_resurse_operatiune(b_key)
-                st.rerun()
+        st.checkbox(
+            "Salvează această operațiune și în Catalogul DB",
+            value=(it_cat is None),
+            key=f"fmp_chk_cat_{b_key}",
+        )
+        st.button(
+            "➕ Adaugă operațiunea în fișa tip",
+            key=f"fmp_btn_add_{b_key}",
+            on_click=_cb_adauga_operatiune_in_fisa,
+            args=(b_key, it_cat),
+        )
 
-        if st.session_state[state_key_pasi]:
+        pasi_activi = st.session_state.get("fmp_pasi_activ") or []
+        if pasi_activi:
             opt_del = {
-                f"{i+1}. {str(p.get('Operațiune / Verificare') or '')[:80]}": i
-                for i, p in enumerate(st.session_state[state_key_pasi])
+                f"{i + 1}. {str(p.get('Operațiune / Verificare') or '')[:80]}": i
+                for i, p in enumerate(pasi_activi)
             }
-            de_sters = st.multiselect("Selectează operațiuni de șters din fișă", options=list(opt_del.keys()), key=f"fmp_ms_del_{state_key_pasi}")
-            if st.button("🗑️ Șterge operațiunile selectate", key=f"fmp_btn_del_{state_key_pasi}") and de_sters:
-                indici = {opt_del[k] for k in de_sters}
-                ramase = []
-                for idx_r, it_r in enumerate(st.session_state[state_key_pasi]):
-                    if idx_r not in indici:
-                        cp = dict(it_r)
-                        cp["Ordine"] = len(ramase) + 1
-                        ramase.append(cp)
-                st.session_state[state_key_pasi] = ramase
-                st.rerun()
+            st.multiselect(
+                "Selectează operațiuni de șters din fișă",
+                options=list(opt_del.keys()),
+                key="fmp_ms_del_activ",
+            )
+            st.button(
+                "🗑️ Șterge operațiunile selectate",
+                key="fmp_btn_del_activ",
+                on_click=_cb_sterge_operatiuni_fisa,
+                args=(opt_del,),
+            )
 
         df_ed = st.data_editor(
-            _normalizare_pasi_df(st.session_state[state_key_pasi]),
+            _normalizare_pasi_df(pasi_activi),
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key=f"editor_fisa_tip_{state_key_pasi}",
+            key="editor_fisa_tip_activ",
         )
 
         if st.button("💾 Salvează Fișa Tip în DB", type="primary", key="btn_salveaza_fisa_tip"):
             if not den_masina and not tip_masina:
                 st.error("⚠️ Completează Denumirea mașinii și/sau Tipul mașinii.")
             else:
-                pasi_noi = _df_la_pasi(df_ed, st.session_state[state_key_pasi])
-                st.session_state[state_key_pasi] = pasi_noi
+                pasi_noi = _df_la_pasi(df_ed, pasi_activi)
+                st.session_state["fmp_pasi_activ"] = pasi_noi
                 _salveaza_fisa_tip_masina(den_masina, tip_masina, frec_sel, pasi_noi, nume_fisa=nume_fisa_input)
-                st.success(f"✅ Fișa tip **„{nume_fisa_input}”** a fost salvată în DB.")
+                st.session_state["msg_fmp_tab"] = ("success", f"✅ Fișa tip **„{nume_fisa_input}”** a fost salvată în DB.")
                 st.rerun()
 
     with tab_lista:
-        fise_db = _incarca_fise_tip_db()
         if not fise_db:
             st.info("Nu există fișe tip salvate în baza de date.")
         else:

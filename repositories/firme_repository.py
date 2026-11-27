@@ -1,121 +1,183 @@
-#--------------------------------
-#-----firme_repository.py--------
-#--------------------------------
+# --------------------------------
+# -----firme_repository.py--------
+# --------------------------------
 
 import logging
+import math
+from typing import Any
+
 import streamlit as st
-from config import db_cursor
+
 from repositories.base_repository import BaseRepository
 from repositories.setari_repository import SetariRepository
 
 logger = logging.getLogger("NexIndCMMS.FirmeRepository")
 
-
-@st.cache_resource
-def _asigura_indexuri_firme_once() -> bool:
-    with db_cursor() as cur:
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_firme_nume_firma ON firme (nume_firma);
-            CREATE INDEX IF NOT EXISTS idx_firme_cui ON firme (cui);
-            """
-        )
-    return True
+_COLOANE_SELECT = (
+    "id, nume_firma, cui, reg_com, adresa, banca, cont, "
+    "nume_persoana, email, telefon, adaos_comercial, distanta_km"
+)
 
 
-def _rezolva_adaos(data: dict) -> float:
+def _curata_text(val: Any) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s if s else None
+
+
+def _rezolva_adaos(data: dict[str, Any]) -> float:
     val = data.get("adaos_comercial")
     if val is not None and str(val).strip() != "":
-        return float(val)
+        try:
+            parsed = float(val)
+            if math.isfinite(parsed) and parsed >= 0.0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+
     setari = SetariRepository.get_setari() or {}
     imp = setari.get("adaos_comercial_implicit")
     try:
-        return float(imp) if imp is not None and str(imp).strip() != "" else 35.0
+        parsed_imp = float(imp) if imp is not None and str(imp).strip() != "" else 35.0
+        return parsed_imp if math.isfinite(parsed_imp) and parsed_imp >= 0.0 else 35.0
     except (TypeError, ValueError):
         return 35.0
+
+
+def _rezolva_distanta_km(data: dict[str, Any]) -> float:
+    val = data.get("distanta_km")
+    if val is None or str(val).strip() == "":
+        return 0.0
+    try:
+        parsed = float(val)
+        if not math.isfinite(parsed) or parsed < 0.0:
+            return 0.0
+        return parsed
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _rezolva_persoana_contact(data: dict[str, Any]) -> str | None:
+    return _curata_text(data.get("persoana_contact")) or _curata_text(data.get("nume_persoana"))
 
 
 class FirmeRepository(BaseRepository):
     @classmethod
     @st.cache_data(ttl=300)
-    def get_all(cls_or_self=None):
-        _asigura_indexuri_firme_once()
-        query = """
-            SELECT id, nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial
+    def get_all(cls, _self=None) -> list[dict[str, Any]]:
+        query = f"""
+            SELECT {_COLOANE_SELECT}
             FROM firme
             ORDER BY nume_firma
         """
-        return BaseRepository().fetch_all(query)
+        rows = cls().fetch_all(query) or []
+        return list(rows)
 
     @classmethod
-    def insert(cls, data: dict):
-        _asigura_indexuri_firme_once()
-        nume = data.get("nume_firma")
-        if not nume or not str(nume).strip():
+    def insert(cls, data: dict[str, Any]) -> None:
+        nume = _curata_text(data.get("nume_firma"))
+        if not nume:
             logger.error("Tentativă de inserare firmă fără nume.")
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
 
         adaos_val = _rezolva_adaos(data)
+        distanta_val = _rezolva_distanta_km(data)
+        persoana_val = _rezolva_persoana_contact(data)
 
         query = """
-            INSERT INTO firme (nume_firma, cui, reg_com, adresa, banca, cont, nume_persoana, email, telefon, adaos_comercial)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO firme (
+                nume_firma, cui, reg_com, adresa, banca, cont,
+                nume_persoana, email, telefon, adaos_comercial, distanta_km
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            nume.strip(),
-            data.get("cui"),
-            data.get("reg_com"),
-            data.get("adresa"),
-            data.get("banca"),
-            data.get("cont"),
-            data.get("nume_persoana"),
-            data.get("email"),
-            data.get("telefon"),
+            nume,
+            _curata_text(data.get("cui")),
+            _curata_text(data.get("reg_com")),
+            _curata_text(data.get("adresa")),
+            _curata_text(data.get("banca")),
+            _curata_text(data.get("cont")),
+            persoana_val,
+            _curata_text(data.get("email")),
+            _curata_text(data.get("telefon")),
             adaos_val,
+            distanta_val,
         )
-        cls().execute(query, params)
+        try:
+            cls().execute(query, params)
+        except Exception as exc:
+            logger.exception("Eroare la inserarea firmei '%s': %s", nume, exc)
+            raise RuntimeError(f"Nu s-a putut salva firma '{nume}'.") from exc
+
         cls.get_all.clear()
-        logger.info(f"Firma nouă adăugată cu succes: {nume}")
+        logger.info("Firma nouă adăugată cu succes: %s", nume)
 
     @classmethod
-    def update(cls, firma_id: int, data: dict):
-        _asigura_indexuri_firme_once()
-        if not firma_id:
+    def update(cls, firma_id: int, data: dict[str, Any]) -> None:
+        if not firma_id or int(firma_id) <= 0:
             raise ValueError("ID-ul firmei este obligatoriu pentru actualizare.")
 
-        nume = data.get("nume_firma")
-        if not nume or not str(nume).strip():
+        nume = _curata_text(data.get("nume_firma"))
+        if not nume:
             raise ValueError("Câmpul 'nume_firma' este obligatoriu.")
 
         adaos_val = _rezolva_adaos(data)
+        distanta_val = _rezolva_distanta_km(data)
+        persoana_val = _rezolva_persoana_contact(data)
 
         query = """
             UPDATE firme
-            SET nume_firma=%s, cui=%s, reg_com=%s, adresa=%s, banca=%s, cont=%s, nume_persoana=%s, email=%s, telefon=%s, adaos_comercial=%s
+            SET nume_firma=%s,
+                cui=%s,
+                reg_com=%s,
+                adresa=%s,
+                banca=%s,
+                cont=%s,
+                nume_persoana=%s,
+                email=%s,
+                telefon=%s,
+                adaos_comercial=%s,
+                distanta_km=%s
             WHERE id=%s
         """
         params = (
-            nume.strip(),
-            data.get("cui"),
-            data.get("reg_com"),
-            data.get("adresa"),
-            data.get("banca"),
-            data.get("cont"),
-            data.get("nume_persoana"),
-            data.get("email"),
-            data.get("telefon"),
+            nume,
+            _curata_text(data.get("cui")),
+            _curata_text(data.get("reg_com")),
+            _curata_text(data.get("adresa")),
+            _curata_text(data.get("banca")),
+            _curata_text(data.get("cont")),
+            persoana_val,
+            _curata_text(data.get("email")),
+            _curata_text(data.get("telefon")),
             adaos_val,
-            firma_id,
+            distanta_val,
+            int(firma_id),
         )
-        cls().execute(query, params)
+        try:
+            cls().execute(query, params)
+        except Exception as exc:
+            logger.exception("Eroare la actualizarea firmei #%s: %s", firma_id, exc)
+            raise RuntimeError(f"Nu s-a putut actualiza firma #{firma_id}.") from exc
+
         cls.get_all.clear()
-        logger.info(f"Firma #{firma_id} a fost actualizată.")
+        logger.info("Firma #%s a fost actualizată.", firma_id)
 
     @classmethod
-    def delete(cls, firma_id: int):
-        if not firma_id:
+    def delete(cls, firma_id: int) -> None:
+        if not firma_id or int(firma_id) <= 0:
             raise ValueError("ID-ul firmei este invalid pentru ștergere.")
+
         query = "DELETE FROM firme WHERE id=%s"
-        cls().execute(query, (firma_id,))
+        try:
+            cls().execute(query, (int(firma_id),))
+        except Exception as exc:
+            logger.exception("Eroare la ștergerea firmei #%s: %s", firma_id, exc)
+            raise RuntimeError(
+                f"Nu s-a putut șterge firma #{firma_id}. Verifică dacă este folosită în alte înregistrări."
+            ) from exc
+
         cls.get_all.clear()
-        logger.warning(f"Firma #{firma_id} a fost ștearsă din baza de date.")
+        logger.warning("Firma #%s a fost ștearsă din baza de date.", firma_id)
