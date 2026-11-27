@@ -1135,7 +1135,8 @@ def _fragment_deviz_oferta(
                 st.rerun()
 
     with b2:
-        if st.button("📄 Generează PDF", key="btn_genereaza_pdf_oferta", use_container_width=True):
+        oid_key = st.session_state.get("oferta_curenta_id") or "noua"
+        if st.button("📄 Generează PDF", key=f"btn_genereaza_pdf_oferta_{oid_key}", use_container_width=True):
             if not ok_calc or tot is None:
                 st.error("⚠️ Nu pot genera PDF-ul deoarece lipsesc valori obligatorii:")
                 for msg in lipsuri_calc:
