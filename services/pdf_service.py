@@ -671,7 +671,8 @@ def genereaza_pdf_oferta(data):
     val_disc_input = float(data.get("valoare_discount_input") or data.get("valoare_discount_total") or 0.0)
 
     col_pret_cheie = f"Pret Unitar ({moneda})"
-    curs_conv = float(data.get("curs_valutar") or 1.0)
+    curs_conv_raw = data.get("curs_valutar")
+    curs_conv = float(curs_conv_raw) if curs_conv_raw not in (None, "") else 0.0
 
     for idx, art in enumerate(articole, 1):
         cant = float(art.get("Cantitate") or 1.0)
@@ -679,12 +680,24 @@ def genereaza_pdf_oferta(data):
             pret = float(art.get(col_pret_cheie))
         elif art.get("Pret Unitar (RON)") is not None:
             pret_ron = float(art.get("Pret Unitar (RON)"))
-            pret = round(pret_ron / curs_conv, 2) if (moneda == "EUR" and curs_conv > 0) else pret_ron
+            if moneda == "EUR":
+                if curs_conv <= 0:
+                    raise ValueError("Lipsește cursul valutar pentru conversia RON -> EUR în PDF.")
+                pret = round(pret_ron / curs_conv, 2)
+            else:
+                pret = pret_ron
         elif art.get("Pret Unitar (EUR)") is not None:
             pret_eur = float(art.get("Pret Unitar (EUR)"))
-            pret = round(pret_eur * curs_conv, 2) if (moneda == "RON" and curs_conv > 0) else pret_eur
+            if moneda == "RON":
+                if curs_conv <= 0:
+                    raise ValueError("Lipsește cursul valutar pentru conversia EUR -> RON în PDF.")
+                pret = round(pret_eur * curs_conv, 2)
+            else:
+                pret = pret_eur
+        elif art.get("Pret Unitar") is not None:
+            pret = float(art.get("Pret Unitar"))
         else:
-            pret = 0.0
+            raise ValueError(f"Lipsește prețul unitar la articolul #{idx} ({art.get('Descriere', '')}).")
 
         valoare_bruta_linie = round(cant * pret, 2)
         disc_rep_pct = float(art.get("Discount (%)") or 0.0)
@@ -737,11 +750,10 @@ def genereaza_pdf_oferta(data):
         discount_valoare = 0.0
 
     subtotal = round(max(0.0, subtotal_brut - discount_valoare), 2)
-    cota_tva_procent = float(
-        data.get("cota_tva")
-        if data.get("cota_tva") is not None
-        else (setari.get("cota_tva") if setari.get("cota_tva") is not None else 21.0)
-    )
+    raw_tva = data.get("cota_tva") if data.get("cota_tva") is not None else setari.get("cota_tva")
+    if raw_tva is None or str(raw_tva).strip() == "":
+        raise ValueError("Lipsește cota de TVA (nici în ofertă, nici în setările firmei).")
+    cota_tva_procent = float(raw_tva)
     tva = round(subtotal * (cota_tva_procent / 100.0), 2)
     total_general = round(subtotal + tva, 2)
 
