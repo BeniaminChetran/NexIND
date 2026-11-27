@@ -710,9 +710,12 @@ def _fragment_deviz_oferta(
     if not grile_tarife:
         st.info("Nu există tarife definite în **Setări → Tarife Standard**.")
     else:
-        nivele_standard = ["Nivel A", "Nivel B", "Nivel C"]
-        nivele_extra = [n for n in sorted(grile_tarife.keys()) if n not in nivele_standard]
-        opt_grile = ["Toate grilele"] + nivele_standard + nivele_extra
+        nivele_din_db = sorted(
+            str(n).strip()
+            for n in grile_tarife.keys()
+            if str(n).strip()
+        )
+        opt_grile = ["Toate grilele"] + nivele_din_db
 
         # Grilă tarifare mai scurtă (1.0), Tarif / Activitate mai lungă (3.6), Cantitate mai scurtă (0.75)
         g_col1, g_col2, g_col3, g_col4, g_col5 = st.columns(
