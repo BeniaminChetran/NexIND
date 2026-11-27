@@ -738,6 +738,11 @@ def _fragment_deviz_oferta(
                 st.rerun()
             else:
                 rec = _incarca_oferta_din_db(int(sel_oid))
+                mas_rec = str(rec.get("masina") or "").strip()
+                if mas_rec and mas_rec != "-- Fără mașină --":
+                    st.session_state["oferta_2_masina_incarcata"] = mas_rec
+                else:
+                    st.session_state["oferta_2_masina_incarcata"] = None
                 if rec:
                     try:
                         linii_rec = json.loads(rec.get("linii_json") or "[]")
@@ -765,7 +770,7 @@ def _fragment_deviz_oferta(
                     st.session_state["oferta_2_editor_counter"] = st.session_state.get("oferta_2_editor_counter", 0) + 1
                     st.success(f"✅ Oferta #{rec['id']} a fost încărcată.")
                     st.rerun()
-
+                
     oid_curent = st.session_state.get("oferta_curenta_id")
     status_curent = st.session_state.get("oferta_status", "Ciornă")
     st.caption(
@@ -1335,6 +1340,9 @@ def render_oferte():
             if str(m.get("denumire") or "").strip() and (fid is None or m.get("firma_id") == fid)
         ]
         opt_mas = ["-- Fără mașină --"] + sorted(set(masini_firma))
+        mas_preincarcata = st.session_state.pop("oferta_2_masina_incarcata", None)
+        if mas_preincarcata and mas_preincarcata in opt_mas:
+            st.session_state["oferta_2_masina"] = mas_preincarcata
         masina_selectata = st.selectbox("Mașină / Utilaj", options=opt_mas, key="oferta_2_masina")
 
     ok_ad, eroare_adaos, adaos_client = _extrage_adaos_firma(firma_obj)
