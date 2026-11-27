@@ -142,17 +142,29 @@ def _rezolva_folder_drive(service, locatie_setata: str) -> tuple[str | None, str
     return folder_creat.get("id"), ""
 
 
-def salveaza_pdf_oferta_in_gdrive(pdf_bytes: bytes, nume_fisier: str) -> tuple[bool, str]:
+def salveaza_pdf_oferta_in_gdrive(
+    pdf_bytes: bytes,
+    nume_fisier: str,
+    locatie_folder: str | None = None,
+) -> tuple[bool, str]:
     if not pdf_bytes:
         return False, "Conținutul PDF este gol."
 
-    service, err_srv = _get_drive_service()
-    if service is None:
-        return False, err_srv
-
     try:
+        service, err_srv = _get_drive_service()
+        if service is None:
+            return False, err_srv or "Google Drive neconfigurat."
+
         setari_info = SetariRepository.get_setari() or {}
-        locatie_setata = str(setari_info.get("locatie_oferte_gdrive") or "Oferte").strip()
+        locatie_setata = (
+            str(
+                locatie_folder
+                if locatie_folder is not None
+                else (setari_info.get("locatie_oferte_gdrive") or "Oferte")
+            ).strip()
+            or "Oferte"
+        )
+
         folder_id, err_fld = _rezolva_folder_drive(service, locatie_setata)
         if not folder_id:
             return False, err_fld or "Nu s-a putut identifica folderul Google Drive."
