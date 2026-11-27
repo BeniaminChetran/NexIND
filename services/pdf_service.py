@@ -208,7 +208,7 @@ def _construieste_antet_cu_sigla(
     dreapta_elems = [
         Paragraph(f"<b>{titlu_dreapta}</b>", style_titlu_dr),
         Spacer(1, 2 * mm),
-        Paragraph(f"<b>Nr.:</b> {nr_text}", style_meta_dr),
+        
         Paragraph(f"<b>Data:</b> {data_text}", style_meta_dr),
     ]
 
