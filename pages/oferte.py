@@ -23,6 +23,7 @@ from repositories.piese_repository import PieseRepository
 from repositories.tarife_repository import TarifeRepository
 from services.pdf_service import genereaza_pdf_oferta, get_date_firma_mea
 from services.sync_service import sync_oferta_in_fundal
+from services.sync_service import sync_oferta_in_fundal, salveaza_pdf_oferta_in_gdrive
 
 
 COLS_OFERTA = [

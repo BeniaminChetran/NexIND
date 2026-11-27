@@ -55,7 +55,6 @@ def _salveaza_si_reincarca(payload: dict, mesaj: str) -> None:
     st.session_state["setari_toast_msg"] = mesaj
     st.rerun()
 
-
 def render_setari():
     st.subheader("⚙️ Setări Generale Firmă, TVA & Configurări Documente")
 
@@ -134,7 +133,7 @@ def render_setari():
             )
             locatie_oferte_gdrive = st.text_input(
                 "Folder Google Drive pentru Oferte (nume folder sau link/ID folder)",
-                value=str(setari.get("locatie_oferte_gdrive") or "Oferte"),
+                value=_val_text_implicit(setari_curente, "locatie_oferte_gdrive", "Oferte"),
                 placeholder="ex: Oferte sau https://drive.google.com/drive/folders/...",
             )
 
@@ -164,6 +163,7 @@ def render_setari():
                     "intocmit_de_implicit": intocmit_de_implicit.strip() or DEFAULT_INTOCMIT_DE,
                     "tehnician_implicit": tehnician_implicit.strip() or DEFAULT_TEHNICIAN,
                     "locatie_documentatii_gdrive": locatie_documentatii_gdrive.strip(),
+                    "locatie_oferte_gdrive": locatie_oferte_gdrive.strip() or "Oferte",
                     "clauze_subsol_implicite": clauze_subsol_implicite.strip(),
                 }
                 _salveaza_si_reincarca(date_actualizate, "✅ Setările au fost salvate!")
@@ -191,7 +191,6 @@ def render_setari():
                         {**setari_curente, "adaos_comercial_implicit": float(nou_adaos_implicit)},
                         f"✅ Adaosul comercial implicit a fost salvat ({nou_adaos_implicit:.2f}%)!",
                     )
-
 
     with tab_tarife:
         st.markdown("##### Configurare Tarife & Activități Implicite (EUR sau RON)")
