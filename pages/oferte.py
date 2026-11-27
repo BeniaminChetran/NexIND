@@ -337,6 +337,15 @@ def _sincronizeaza_editor_inainte_de_adaugare() -> pd.DataFrame:
                         df_base.at[idx, col_name] = new_val
     return df_base
 
+st.session_state.setdefault("oferta_2_termen_piesa", "")
+
+def _actualizeaza_termen_din_piesa():
+    piesa_cheie = st.session_state.get("oferta_2_sel_piesa")
+    piesa_info = piese_dict.get(piesa_cheie) if isinstance(piesa_cheie, str) else None
+    if piesa_info:
+        st.session_state["oferta_2_termen_piesa"] = str(piesa_info.get("termen_livrare") or "").strip()
+    else:
+        st.session_state["oferta_2_termen_piesa"] = ""
 
 def calculeaza_oferta_fara_fallback(
     firma_obj: dict,
@@ -625,12 +634,13 @@ def _fragment_deviz_oferta(
     st.markdown("#### ➕ Adaugă piesă din catalog în ofertă")
     c_sel, c_cant, c_term, c_btn = st.columns([3.0, 1.0, 1.2, 1.2], vertical_alignment="bottom")
     with c_sel:
-        opt_piese = ["-- Alege piesa --"] + list(piese_dict.keys())
-        sel_piesa_catalog = st.selectbox(
-            "Piesă din baza de date",
-            options=opt_piese,
-            key="oferta_2_sel_piesa",
-        )
+    opt_piese = ["-- Alege piesa --"] + list(piese_dict.keys())
+    sel_piesa_catalog = st.selectbox(
+        "Piesă din baza de date",
+        options=opt_piese,
+        key="oferta_2_sel_piesa",
+        on_change=_actualizeaza_termen_din_piesa,
+    )
     with c_cant:
         cant_piesa = st.number_input(
             "Cantitate",
@@ -641,12 +651,10 @@ def _fragment_deviz_oferta(
             key="oferta_2_cant_piesa",
         )
     with c_term:
-        termen_piesa = st.text_input(
-            "Termen livrare",
-            value="",
-            placeholder="ex: 3 zile",
-            key="oferta_2_termen_piesa",
-        )
+    termen_piesa = st.text_input(
+        "Termen livrare",
+        key="oferta_2_termen_piesa",
+    )
     with c_btn:
         btn_add_piesa = st.button(
             "➕ Adaugă",
@@ -682,6 +690,7 @@ def _fragment_deviz_oferta(
                     "Moneda": info_calc["moneda"],
                     "Termen livrare": termen_final,
                 }])
+                termen_final = str(termen_piesa or p_info.get("termen_livrare") or "").strip()
                 st.session_state["df_oferta_editor"] = pd.concat(
                     [df_baza_p, linie_piesa],
                     ignore_index=True,
