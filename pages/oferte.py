@@ -710,8 +710,15 @@ def _fragment_deviz_oferta(
     if not grile_tarife:
         st.info("Nu există tarife definite în **Setări → Tarife Standard**.")
     else:
-        opt_grile = sorted(grile_tarife.keys())
-        g_col1, g_col2, g_col3, g_col4, g_col5 = st.columns([1.4, 2.8, 1.0, 1.2, 1.2], vertical_alignment="bottom")
+        nivele_standard = ["Nivel A", "Nivel B", "Nivel C"]
+        nivele_extra = [n for n in sorted(grile_tarife.keys()) if n not in nivele_standard]
+        opt_grile = ["Toate grilele"] + nivele_standard + nivele_extra
+
+        # Grilă tarifare mai scurtă (1.0), Tarif / Activitate mai lungă (3.6), Cantitate mai scurtă (0.75)
+        g_col1, g_col2, g_col3, g_col4, g_col5 = st.columns(
+            [1.0, 3.6, 0.75, 1.15, 1.1],
+            vertical_alignment="bottom",
+        )
 
         with g_col1:
             sel_grila = st.selectbox(
@@ -720,12 +727,21 @@ def _fragment_deviz_oferta(
                 key="oferta_2_sel_grila_tarif",
             )
 
-        tarife_in_grila = grile_tarife.get(sel_grila) or []
+        if sel_grila == "Toate grilele":
+            tarife_in_grila = [
+                item_t
+                for lista_niv in grile_tarife.values()
+                for item_t in lista_niv
+            ]
+        else:
+            tarife_in_grila = grile_tarife.get(sel_grila) or []
+
         mapa_tarife_grila: dict[str, dict] = {}
         for item_t in tarife_in_grila:
             raw_p = item_t.get("pret")
             pret_lbl = f"{float(raw_p):.2f}" if raw_p not in (None, "") else "preț lipsă"
-            eticheta_t = f"{item_t['descriere']} — {pret_lbl} {item_t['moneda_um_raw']}".strip()
+            niv_lbl = f" [{item_t['nivel_grila']}]" if sel_grila == "Toate grilele" else ""
+            eticheta_t = f"{item_t['descriere']}{niv_lbl} — {pret_lbl} {item_t['moneda_um_raw']}".strip()
             mapa_tarife_grila[eticheta_t] = item_t
 
         with g_col2:
@@ -738,7 +754,7 @@ def _fragment_deviz_oferta(
 
         with g_col3:
             cant_tarif = st.number_input(
-                "Cantitate",
+                "Cant.",
                 min_value=0.01,
                 value=1.0,
                 step=1.0,
@@ -767,17 +783,18 @@ def _fragment_deviz_oferta(
                 st.session_state["oferta_2_eroare_piesa"] = "Selectați mai întâi un tarif din grila aleasă."
             else:
                 t_info = mapa_tarife_grila[sel_tarif_lbl]
+                nivel_efectiv = t_info.get("nivel_grila") or sel_grila
                 raw_pret = t_info.get("pret")
                 mon_t = str(t_info.get("moneda") or "").strip().upper()
                 um_t = str(t_info.get("um") or "").strip()
 
                 if raw_pret is None or str(raw_pret).strip() == "":
                     st.session_state["oferta_2_eroare_piesa"] = (
-                        f"Lipsește prețul în grila «{sel_grila}» pentru «{t_info['descriere']}»."
+                        f"Lipsește prețul în grila «{nivel_efectiv}» pentru «{t_info['descriere']}»."
                     )
                 elif not mon_t:
                     st.session_state["oferta_2_eroare_piesa"] = (
-                        f"Lipsește moneda în grila «{sel_grila}» pentru «{t_info['descriere']}»."
+                        f"Lipsește moneda în grila «{nivel_efectiv}» pentru «{t_info['descriere']}»."
                     )
                 else:
                     try:
@@ -787,14 +804,14 @@ def _fragment_deviz_oferta(
 
                     if pret_val < 0:
                         st.session_state["oferta_2_eroare_piesa"] = (
-                            f"Prețul din grila «{sel_grila}» pentru «{t_info['descriere']}» nu este valid."
+                            f"Prețul din grila «{nivel_efectiv}» pentru «{t_info['descriere']}» nu este valid."
                         )
                     else:
                         df_baza_t = _sincronizeaza_editor_inainte_de_adaugare()
                         next_ord_t = len(df_baza_t) + 1
                         linie_tarif = pd.DataFrame([{
                             "Ordine": next_ord_t,
-                            "Descriere": f"{t_info['descriere']} [{sel_grila}]",
+                            "Descriere": f"{t_info['descriere']} [{nivel_efectiv}]",
                             "UM": um_t or "buc",
                             "Cantitate": float(cant_tarif),
                             "Pret Unitar": round(pret_val, 2),
@@ -808,7 +825,7 @@ def _fragment_deviz_oferta(
                         st.session_state["oferta_2_editor_counter"] = (
                             st.session_state.get("oferta_2_editor_counter", 0) + 1
                         )
-
+    
     st.markdown("#### 📋 Linii ofertă")
     df_init = st.session_state["df_oferta_editor"].copy()
     for col in COLS_OFERTA:
