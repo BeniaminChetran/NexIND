@@ -7,12 +7,13 @@ import re
 import ssl
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
-
 import pandas as pd
 import streamlit as st
-
+import io
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 from config import db_cursor
+from datetime import date, datetime
 from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
@@ -1100,6 +1101,31 @@ def _fragment_deviz_oferta(
         st.warning("⚠️ Oferta nu poate fi calculată complet din cauza următoarelor lipsuri:")
         for msg in lipsuri_calc:
             st.markdown(f"- {msg}")
+
+    # ----------------bloc semnatura--------------
+    st.markdown("#### ✍️ Semnătură Client (pe ecran tactil)")
+    canvas_semnatura = st_canvas(
+        fill_color="rgba(255, 255, 255, 0)",
+        stroke_width=3,
+        stroke_color="#0F172A",
+        background_color="#FFFFFF",
+        height=130,
+        width=360,
+        drawing_mode="freedraw",
+        key="canvas_semnatura_client",
+)
+
+    semnatura_bytes = None
+    if canvas_semnatura.image_data is not None:
+        img_arr = canvas_semnatura.image_data
+        # Verificăm dacă s-a desenat ceva (nu e doar fundal alb)
+        if (img_arr[:, :, :3] < 250).any():
+            img_pil = Image.fromarray(img_arr.astype("uint8"), "RGBA")
+            buf_sig = io.BytesIO()
+            img_pil.save(buf_sig, format="PNG")
+            semnatura_bytes = buf_sig.getvalue()
+    
+    #---------------------------------------------
 
     st.divider()
     st.markdown("#### 💾 Salvare, PDF & Trimitere Client")
