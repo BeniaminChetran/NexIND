@@ -555,15 +555,20 @@ def genereaza_pdf_oferta(data):
     este_revizuita = bool(data.get('este_revizuita', False))
 
     titlu_banner = "OFERTĂ DE PREȚ COMERCIALĂ (REVIZUITĂ)" if este_revizuita else "OFERTĂ DE PREȚ COMERCIALĂ"
-    nr_afisare = str(data.get('numar_oferta') or data.get('id') or '')
-    if este_revizuita:
-        nr_afisare = f"#{nr_afisare} (REVIZUITĂ)"
-    elif nr_afisare and not nr_afisare.startswith("#"):
-        nr_afisare = f"#{nr_afisare}"
+    nr_afisare = str(data.get('numar_oferta') or data.get('id') or '').strip()
+    if nr_afisare:
+        if este_revizuita:
+            nr_afisare = f"#{nr_afisare.lstrip('#')} (REVIZUITĂ)"
+        elif not nr_afisare.startswith("#"):
+            nr_afisare = f"#{nr_afisare}"
+    elif este_revizuita:
+        nr_afisare = "(REVIZUITĂ)"
+
+    titlu_dreapta_oferta = f"OFERTĂ DE PREȚ {nr_afisare}".strip()
 
     elements.append(_construieste_antet_cu_sigla(
         setari=setari,
-        titlu_dreapta="OFERTĂ DE PREȚ",
+        titlu_dreapta=titlu_dreapta_oferta,
         nr_text=nr_afisare,
         data_text=str(data.get('data', ''))[:10],
         s_normal=s_normal,
