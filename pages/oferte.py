@@ -19,6 +19,7 @@ from repositories.masini_repository import MasiniRepository
 from repositories.piese_repository import PieseRepository
 from repositories.tarife_repository import TarifeRepository
 from services.pdf_service import genereaza_pdf_oferta, get_date_firma_mea
+from services.sync_service import sync_oferta_in_fundal
 
 
 COLS_OFERTA = [
@@ -1103,7 +1104,7 @@ def _fragment_deviz_oferta(
             st.markdown(f"- {msg}")
 
     # ----------------bloc semnatura--------------
-    st.markdown("#### ✍️ Semnătură Client (pe ecran tactil)")
+    st.markdown("#### ✍️ Semnătură Client (opțional, pe ecran tactil)")
     canvas_semnatura = st_canvas(
         fill_color="rgba(255, 255, 255, 0)",
         stroke_width=3,
@@ -1112,13 +1113,13 @@ def _fragment_deviz_oferta(
         height=130,
         width=360,
         drawing_mode="freedraw",
+        return_image_data=True,
         key="canvas_semnatura_client",
-)
+    )
 
     semnatura_bytes = None
-    if canvas_semnatura.image_data is not None:
-        img_arr = canvas_semnatura.image_data
-        # Verificăm dacă s-a desenat ceva (nu e doar fundal alb)
+    img_arr = getattr(canvas_semnatura, "image_data", None)
+    if img_arr is not None and getattr(img_arr, "size", 0) > 0:
         if (img_arr[:, :, :3] < 250).any():
             img_pil = Image.fromarray(img_arr.astype("uint8"), "RGBA")
             buf_sig = io.BytesIO()
@@ -1186,6 +1187,7 @@ def _fragment_deviz_oferta(
                     status_oferta=st.session_state.get("oferta_status", "Salvată"),
                     trimisa_la_client=(st.session_state.get("oferta_status") == "Verificată / Trimisă la client"),
                 )
+                
                 st.session_state["oferta_curenta_id"] = nou_id
 
                 payload_pdf = _construieste_payload_pdf_service(
@@ -1200,6 +1202,29 @@ def _fragment_deviz_oferta(
                     curs_valutar=curs_valutar_activ,
                     este_revizuita=era_deja_salvata,
                 )
+                payload_pdf["semnatura_client_png"] = semnatura_bytes
+
+                try:
+                    sync_oferta_in_fundal({
+                        "id": nou_id,
+                        "numar_oferta": nou_id,
+                        "data": data_oferta_str,
+                        "client": nume_firma,
+                        "titlu": f"Ofertă #{nou_id}" + (
+                            f" — {masina_selectata}"
+                            if masina_selectata and masina_selectata != "-- Fără mașină --"
+                            else ""
+                        ),
+                        "moneda": moneda_oferta,
+                        "total_general": tot["total_general"],
+                        "status": "Revizuită" if era_deja_salvata else "Emisă",
+                        "articole": payload_pdf["articole"],
+                        "intocmit_de": "",
+                        "valabilitate": "",
+                    })
+                except Exception as exc_sync:
+                    st.warning(f"⚠️ Sincronizarea nu a reușit: {exc_sync}")
+
                 try:
                     pdf_bytes = genereaza_pdf_oferta(payload_pdf)
                     st.session_state["oferta_pdf_bytes"] = pdf_bytes
@@ -1207,6 +1232,7 @@ def _fragment_deviz_oferta(
                     st.rerun()
                 except Exception as exc:
                     st.error(f"⚠️ Eroare la generarea PDF-ului: {exc}")
+                
 
     with b3:
         if st.button("✅ Ofertă verificată — Trimite la client", key="btn_trimite_oferta_client", use_container_width=True):
