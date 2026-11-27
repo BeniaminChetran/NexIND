@@ -1244,6 +1244,16 @@ def _fragment_deviz_oferta(
 
                 try:
                     pdf_bytes = genereaza_pdf_oferta(payload_pdf)
+                    nume_firma_curat = str(firma_obj.get("nume_firma") or "").strip()
+                    nume_fisier_pdf = _construieste_nume_fisier_oferta(
+                        nr_oferta=nou_id,
+                        nume_firma=nume_firma_curat,
+                        masina=masina_selectata,
+                        data_str=data_oferta_str,
+                    )
+                    st.session_state["oferta_pdf_bytes"] = pdf_bytes
+                    st.session_state["oferta_pdf_nume_fisier"] = nume_fisier_pdf
+                    st.session_state["oferta_pdf_deschis"] = True
                     st.session_state["oferta_pdf_bytes"] = pdf_bytes
                     st.session_state["oferta_pdf_deschis"] = True
                     st.rerun()
@@ -1283,21 +1293,34 @@ def _fragment_deviz_oferta(
                 st.rerun()
 
     if st.session_state.get("oferta_pdf_deschis") and st.session_state.get("oferta_pdf_bytes"):
-        st.success("✅ PDF-ul ofertei este pregătit. Descarcă-l pentru verificare, apoi apasă pe **«✅ Ofertă verificată — Trimite la client»** sau modifică tabelul și regenerează.")
-        c_dl, c_close = st.columns([2.2, 1.4], vertical_alignment="center")
-        nume_fisier_pdf = f"oferta_{st.session_state.get('oferta_curenta_id') or 'noua'}_{moneda_oferta}_{data_oferta_str}.pdf"
-        with c_dl:
+        nume_fisier_pdf = st.session_state.get("oferta_pdf_nume_fisier") or "Oferta.pdf"
+        pdf_bytes = st.session_state["oferta_pdf_bytes"]
+
+        st.success(f"✅ PDF pregătit: **{nume_fisier_pdf}**")
+
+        col_drv, col_dl, col_cls = st.columns([2.0, 2.0, 1.0], vertical_alignment="center")
+        with col_drv:
+            if st.button("☁️ Salvează în Google Drive", key="btn_salveaza_pdf_gdrive", use_container_width=True):
+                ok_drv, msg_drv = salveaza_pdf_oferta_in_gdrive(
+                    pdf_bytes=pdf_bytes,
+                    nume_fisier=nume_fisier_pdf,
+                )
+                if ok_drv:
+                    st.success(f"✅ {msg_drv}")
+                else:
+                    st.warning(f"⚠️ {msg_drv}")
+        with col_dl:
             st.download_button(
                 "⬇️ Descarcă PDF",
-                data=st.session_state["oferta_pdf_bytes"],
+                data=pdf_bytes,
                 file_name=nume_fisier_pdf,
                 mime="application/pdf",
                 key="btn_descarca_pdf_oferta",
                 type="primary",
                 use_container_width=True,
             )
-        with c_close:
-            if st.button("✖️ Ascunde descărcarea", key="btn_inchide_pdf_oferta", use_container_width=True):
+        with col_cls:
+            if st.button("✖️", key="btn_inchide_pdf_oferta", help="Ascunde PDF", use_container_width=True):
                 st.session_state["oferta_pdf_deschis"] = False
                 st.session_state["oferta_pdf_bytes"] = None
                 st.rerun()
@@ -1426,33 +1449,28 @@ def _construieste_grile_tarife() -> dict[str, list[dict]]:
 
     return grile
 
-
 def _construieste_nume_fisier_oferta(
+    *,
     nr_oferta: int | str | None,
     nume_firma: str,
     masina: str | None,
     data_str: str,
 ) -> str:
-    def _curata_segment(val: str) -> str:
+    def _curata_compact(val: str) -> str:
         s = str(val or "").strip()
-        s = re.sub(r'[\\/:*?"<>|]+', "", s)
-        s = re.sub(r"\s+", "_", s).strip("_")
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not unicodedata.combining(ch))
+        s = re.sub(r"[^A-Za-z0-9-]+", "", s)
         return s
 
-    nr_seg = _curata_segment(str(nr_oferta) if nr_oferta else "noua")
-    client_seg = _curata_segment(nume_firma) or "Client"
+    nr_seg = _curata_compact(str(nr_oferta) if nr_oferta else "noua")
+    client_seg = _curata_compact(nume_firma) or "Client"
     masina_curata = str(masina or "").strip()
     masina_seg = (
-        _curata_segment(masina_curata)
+        _curata_compact(masina_curata)
         if masina_curata and masina_curata != "-- Fără mașină --"
         else ""
     )
-    data_seg = _curata_segment(data_str)
+    data_seg = _curata_compact(data_str)
 
-    parti = [f"Of{nr_seg}", client_seg]
-    if masina_seg:
-        parti.append(masina_seg)
-    if data_seg:
-        parti.append(data_seg)
-
-    return "_".join(parti) + ".pdf"
+    return f"Of{nr_seg}{client_seg}{masina_seg}{data_seg}.pdf"
