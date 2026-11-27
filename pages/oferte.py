@@ -1425,3 +1425,34 @@ def _construieste_grile_tarife() -> dict[str, list[dict]]:
         })
 
     return grile
+
+
+def _construieste_nume_fisier_oferta(
+    nr_oferta: int | str | None,
+    nume_firma: str,
+    masina: str | None,
+    data_str: str,
+) -> str:
+    def _curata_segment(val: str) -> str:
+        s = str(val or "").strip()
+        s = re.sub(r'[\\/:*?"<>|]+', "", s)
+        s = re.sub(r"\s+", "_", s).strip("_")
+        return s
+
+    nr_seg = _curata_segment(str(nr_oferta) if nr_oferta else "noua")
+    client_seg = _curata_segment(nume_firma) or "Client"
+    masina_curata = str(masina or "").strip()
+    masina_seg = (
+        _curata_segment(masina_curata)
+        if masina_curata and masina_curata != "-- Fără mașină --"
+        else ""
+    )
+    data_seg = _curata_segment(data_str)
+
+    parti = [f"Of{nr_seg}", client_seg]
+    if masina_seg:
+        parti.append(masina_seg)
+    if data_seg:
+        parti.append(data_seg)
+
+    return "_".join(parti) + ".pdf"

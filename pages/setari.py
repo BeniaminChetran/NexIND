@@ -132,6 +132,11 @@ def render_setari():
                 value=str(setari_curente.get("locatie_documentatii_gdrive") or ""),
                 placeholder="https://drive.google.com/drive/folders/...",
             )
+            locatie_oferte_gdrive = st.text_input(
+                "Folder Google Drive pentru Oferte (nume folder sau link/ID folder)",
+                value=str(setari.get("locatie_oferte_gdrive") or "Oferte"),
+                placeholder="ex: Oferte sau https://drive.google.com/drive/folders/...",
+            )
 
             clauze_subsol_implicite = st.text_area(
                 "Mențiuni / Clauze implicite subsol ofertă (folosește {MONEDA} pentru EUR/RON automat)",
@@ -186,6 +191,7 @@ def render_setari():
                         {**setari_curente, "adaos_comercial_implicit": float(nou_adaos_implicit)},
                         f"✅ Adaosul comercial implicit a fost salvat ({nou_adaos_implicit:.2f}%)!",
                     )
+
 
     with tab_tarife:
         st.markdown("##### Configurare Tarife & Activități Implicite (EUR sau RON)")

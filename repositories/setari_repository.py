@@ -86,7 +86,8 @@ def _ensure_setari_schema_once() -> bool:
                 ADD COLUMN IF NOT EXISTS telefon_2 VARCHAR(50) DEFAULT '',
                 ADD COLUMN IF NOT EXISTS email_1 VARCHAR(150) DEFAULT '',
                 ADD COLUMN IF NOT EXISTS email_2 VARCHAR(150) DEFAULT '',
-                ADD COLUMN IF NOT EXISTS locatie_documentatii_gdrive TEXT DEFAULT ''
+                ADD COLUMN IF NOT EXISTS locatie_documentatii_gdrive TEXT DEFAULT '',
+                ADD COLUMN IF NOT EXISTS locatie_oferte_gdrive TEXT DEFAULT ''                
                 """
             )
         return True

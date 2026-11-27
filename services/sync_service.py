@@ -5,8 +5,14 @@
 import json
 import urllib.request
 import streamlit as st
+import io
+import re
+
 from repositories.setari_repository import SetariRepository
 from config import logger
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 
 def update_google_sheet(payload_sheet: dict) -> tuple[bool, str]:
@@ -85,3 +91,86 @@ def sync_oferta_in_fundal(date_oferta: dict):
     ok, err_msg = update_google_sheet(payload_oferta)
     if not ok:
         st.warning(f"⚠️ Sincronizare Google Sheet (Oferte): {err_msg}")
+        
+def _get_drive_service():
+    sa_info = st.secrets.get("gcp_service_account")
+    if not sa_info:
+        return None, "Lipsește secțiunea [gcp_service_account] din st.secrets."
+    creds = service_account.Credentials.from_service_account_info(
+        dict(sa_info),
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    return build("drive", "v3", credentials=creds, cache_discovery=False), ""
+
+
+def _rezolva_folder_drive(service, locatie_setata: str) -> tuple[str | None, str]:
+    txt = str(locatie_setata or "").strip()
+    if not txt:
+        txt = "Oferte"
+
+    m = re.search(r"/folders/([a-zA-Z0-9_-]+)", txt)
+    if m:
+        return m.group(1), ""
+    if re.fullmatch(r"[a-zA-Z0-9_-]{25,}", txt):
+        return txt, ""
+
+    nume_escapat = txt.replace("'", "\\'")
+    resp = (
+        service.files()
+        .list(
+            q=f"mimeType='application/vnd.google-apps.folder' and name='{nume_escapat}' and trashed=false",
+            fields="files(id, name)",
+            pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute()
+    )
+    fisiere = resp.get("files", [])
+    if fisiere:
+        return fisiere[0]["id"], ""
+
+    folder_creat = (
+        service.files()
+        .create(
+            body={"name": txt, "mimeType": "application/vnd.google-apps.folder"},
+            fields="id",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    return folder_creat.get("id"), ""
+
+
+def salveaza_pdf_oferta_in_gdrive(pdf_bytes: bytes, nume_fisier: str) -> tuple[bool, str]:
+    if not pdf_bytes:
+        return False, "Conținutul PDF este gol."
+
+    service, err_srv = _get_drive_service()
+    if service is None:
+        return False, err_srv
+
+    try:
+        setari_info = SetariRepository.get_setari() or {}
+        locatie_setata = str(setari_info.get("locatie_oferte_gdrive") or "Oferte").strip()
+        folder_id, err_fld = _rezolva_folder_drive(service, locatie_setata)
+        if not folder_id:
+            return False, err_fld or "Nu s-a putut identifica folderul Google Drive."
+
+        metadata = {"name": nume_fisier, "parents": [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
+        creat = (
+            service.files()
+            .create(
+                body=metadata,
+                media_body=media,
+                fields="id, name",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        logger.info(f"PDF încărcat pe Google Drive: {creat.get('name')} (id={creat.get('id')})")
+        return True, f"Încărcat în Google Drive ({locatie_setata}): {creat.get('name')}"
+    except Exception as e:
+        logger.error(f"Eroare upload PDF Google Drive: {e}")
+        return False, str(e)[cite: 6]
