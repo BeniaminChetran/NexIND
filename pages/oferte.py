@@ -1104,7 +1104,7 @@ def _fragment_deviz_oferta(
             st.markdown(f"- {msg}")
 
     # ----------------bloc semnatura--------------
-    st.markdown("#### ✍️ Semnătură Client (opțional, pe ecran tactil)")
+    st.markdown("#### ✍️ Semnătură Nexus Industrial (optional)")
     canvas_semnatura = st_canvas(
         fill_color="rgba(255, 255, 255, 0)",
         stroke_width=3,
@@ -1202,7 +1202,7 @@ def _fragment_deviz_oferta(
                     curs_valutar=curs_valutar_activ,
                     este_revizuita=era_deja_salvata,
                 )
-                payload_pdf["semnatura_client_png"] = semnatura_bytes
+                payload_pdf["semnatura_emitent_png"] = semnatura_bytes
 
                 try:
                     sync_oferta_in_fundal({

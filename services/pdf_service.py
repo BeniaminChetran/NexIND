@@ -826,14 +826,18 @@ def genereaza_pdf_oferta(data):
     elements.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
     
     # ----------------semnatura client ---------------------
-    semnatura_png = data.get("semnatura_client_png")
-    if semnatura_png:
-        celula_semnatura_client = RLImage(io.BytesIO(semnatura_png), width=130, height=48)
+    
+    semnatura_emitent_png = data.get("semnatura_emitent_png")
+    if semnatura_emitent_png:
+        celula_semnatura_emitent = RLImage(io.BytesIO(semnatura_emitent_png), width=130, height=48)
+        rand_semnatura_linie = Paragraph("", ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER))
     else:
-        celula_semnatura_client = Paragraph(
+        celula_semnatura_emitent = Spacer(1, 16)
+        rand_semnatura_linie = Paragraph(
             "Semnătură: ___________________",
             ParagraphStyle('C', parent=s_normal, alignment=TA_CENTER),
         )
+    
     #-------------------------------------------------------
     
     
