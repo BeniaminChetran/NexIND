@@ -58,6 +58,16 @@ SQL_NU_ESTE_INCHISA_STARE_FINALA = """
     ) NOT LIKE '%%inchis%%'
 """
 
+SQL_ESTE_INCHISA_STARE_FINALA = """
+    LOWER(
+        TRANSLATE(
+            TRIM(COALESCE(stare_finala, '')),
+            'ăâîșțĂÂÎȘȚ',
+            'aaistAAIST'
+        )
+    ) LIKE '%%inchis%%'
+"""
+
 SQL_NU_ESTE_INCHISA_MASINI_ALIAS = """
     LOWER(
         TRANSLATE(
@@ -441,7 +451,25 @@ def incarca_defecte_recurente(zile_inainte: int = 180) -> list[dict]:
 @st.cache_data(ttl=120)
 def incarca_utilaje_dupa_stare(mod: str) -> list[dict]:
     with db_cursor() as c:
-        if mod == "supraveghere":
+        if mod == "inchise":
+            c.execute(f"""
+                SELECT
+                    id,
+                    COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
+                    COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS utilaj,
+                    COALESCE(
+                        NULLIF(TRIM(defect), ''),
+                        NULLIF(TRIM(solutie), ''),
+                        NULLIF(TRIM(titlu), ''),
+                        'Nespecificat'
+                    ) AS motiv_oprire,
+                    COALESCE(stare_finala, 'Închisă') AS stare,
+                    TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
+                FROM reparatii
+                WHERE {SQL_ESTE_INCHISA_STARE_FINALA}
+                ORDER BY data_creare DESC NULLS LAST, id DESC
+            """)
+        elif mod == "supraveghere":
             c.execute(f"""
                 SELECT
                     id,
@@ -493,6 +521,7 @@ def actualizeaza_stare_reparatie(reparatie_id: int, stare_noua: str):
     incarca_date_dashboard.clear()
     incarca_utilaje_dupa_stare.clear()
     incarca_defecte_recurente.clear()
+    incarca_clienti_inactivi.clear()
 
 
 @st.cache_data(ttl=120)
@@ -570,6 +599,48 @@ def _randare_lista_utilaje_stare(items: list[dict], este_supraveghere: bool):
             if st.button("🔒 Închisă", key=f"btn_inchisa_{prefix}_{rep_id}", use_container_width=True):
                 actualizeaza_stare_reparatie(rep_id, "Închisă")
                 st.toast(f"🔒 #{rep_id} ({item['utilaj']}) marcat ca Închisă și scos din listele active.")
+
+
+def _randare_lista_utilaje_inchise(items: list[dict]):
+    if not items:
+        st.info("Nu există utilaje marcate ca Închisă.")
+        return
+
+    c_search = st.text_input(
+        "Caută în mașinile închise",
+        placeholder="firmă, utilaj sau motiv...",
+        key="dash_cautare_masini_inchise",
+    ).strip().lower()
+
+    filtrate = [
+        it for it in items
+        if not c_search
+        or c_search in str(it.get("firma") or "").lower()
+        or c_search in str(it.get("utilaj") or "").lower()
+        or c_search in str(it.get("motiv_oprire") or "").lower()
+    ]
+
+    if not filtrate:
+        st.info("Nu există utilaje închise pentru căutarea introdusă.")
+        return
+
+    for item in filtrate:
+        rep_id = item["id"]
+        col_info, col_act1, col_act2 = st.columns([4.4, 1.5, 1.7], vertical_alignment="center")
+        with col_info:
+            st.markdown(
+                f"**{item['firma']}** — {item['utilaj']} "
+                f"`#{rep_id} • {item['data_inregistrare']}`  \n"
+                f"**Motiv / Detalii:** {item['motiv_oprire']}"
+            )
+        with col_act1:
+            if st.button("🔓 Redeschide Activ", key=f"btn_redeschide_activ_{rep_id}", use_container_width=True):
+                actualizeaza_stare_reparatie(rep_id, "Funcțională")
+                st.toast(f"🔓 #{rep_id} ({item['utilaj']}) redeschis pe starea Funcțională!")
+        with col_act2:
+            if st.button("👀 Redeschide Supraveghere", key=f"btn_redeschide_supr_{rep_id}", use_container_width=True):
+                actualizeaza_stare_reparatie(rep_id, "Funcțională sub supraveghere")
+                st.toast(f"👀 #{rep_id} ({item['utilaj']}) redeschis pe Funcțională sub supraveghere!")
 
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:
@@ -1475,7 +1546,7 @@ def render_dashboard():
     st.session_state.setdefault("dash_sectiune_activa", None)
     sectiune_activa = st.session_state.get("dash_sectiune_activa")
 
-    b1, b2, b3, b4 = st.columns([1.4, 1.6, 1.4, 0.9])
+    b1, b2, b3, b4, b5 = st.columns([1.35, 1.5, 1.35, 1.4, 0.8])
     with b1:
         st.button(
             "🛑 Utilaje oprite",
@@ -1504,6 +1575,15 @@ def render_dashboard():
             args=("clienti_inactivi",),
         )
     with b4:
+        st.button(
+            "🔒 Mașini închise",
+            use_container_width=True,
+            type="primary" if sectiune_activa == "masini_inchise" else "secondary",
+            key="btn_dash_masini_inchise",
+            on_click=_comuta_sectiune_activa,
+            args=("masini_inchise",),
+        )
+    with b5:
         if sectiune_activa is not None:
             st.button(
                 "✖ Ascunde",
@@ -1540,6 +1620,11 @@ def render_dashboard():
                 st.dataframe(pd.DataFrame(date_inactivi), use_container_width=True, hide_index=True)
             else:
                 st.info(f"Nu există clienți inactivi în ultimele {zile_prag} de zile.")
+    elif sectiune_activa == "masini_inchise":
+        with st.container(border=True):
+            st.caption("Utilajele marcate ca **Închisă** sunt excluse din alerte și KPI-urile active. Le poți redeschide aici oricând.")
+            date_inchise = incarca_utilaje_dupa_stare("inchise")
+            _randare_lista_utilaje_inchise(date_inchise)
 
     # Navigare pe 3 tab-uri pentru ergonomie și mai puțin scroll
     tab_azi, tab_comenzi, tab_analiza = st.tabs([
