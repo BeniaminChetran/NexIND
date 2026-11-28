@@ -48,9 +48,53 @@ STARI_COMANDA_VALIDE_RAW = frozenset({
     "anulata",
 })
 
+SQL_NU_ESTE_INCHISA_STARE_FINALA = """
+    LOWER(
+        TRANSLATE(
+            TRIM(COALESCE(stare_finala, '')),
+            'ăâîșțĂÂÎȘȚ',
+            'aaistAAIST'
+        )
+    ) NOT LIKE '%%inchis%%'
+"""
+
+SQL_NU_ESTE_INCHISA_MASINI_ALIAS = """
+    LOWER(
+        TRANSLATE(
+            TRIM(COALESCE(m.stare, '')),
+            'ăâîșțĂÂÎȘȚ',
+            'aaistAAIST'
+        )
+    ) NOT LIKE '%%inchis%%'
+"""
+
+SQL_NU_ESTE_INCHISA_MASINI = """
+    LOWER(
+        TRANSLATE(
+            TRIM(COALESCE(stare, '')),
+            'ăâîșțĂÂÎȘȚ',
+            'aaistAAIST'
+        )
+    ) NOT LIKE '%%inchis%%'
+"""
+
 
 def _norm_text(val: object) -> str:
     return " ".join(str(val or "").strip().lower().split())
+
+
+def _este_stare_inchisa(val: object) -> bool:
+    s = _norm_text(val)
+    if not s:
+        return False
+    s_clean = (
+        s.replace("ă", "a")
+        .replace("â", "a")
+        .replace("î", "i")
+        .replace("ș", "s")
+        .replace("ț", "t")
+    )
+    return "inchis" in s_clean
 
 
 def _safe_int(val: object) -> int | None:
@@ -229,21 +273,28 @@ def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
 @st.cache_data(ttl=120)
 def incarca_date_dashboard():
     with db_cursor() as c:
-        c.execute("""
+        c.execute(f"""
             SELECT
                 COUNT(*) AS interventii,
                 COALESCE(SUM(durata), 0) AS minute,
                 COUNT(DISTINCT NULLIF(TRIM(firma), '')) AS clienti,
                 COUNT(DISTINCT NULLIF(TRIM(masina), '')) AS utilaje,
-                COUNT(*) FILTER (WHERE stare_finala = 'Oprită / Necesar piese') AS utilaje_oprite,
-                COUNT(*) FILTER (WHERE LOWER(COALESCE(stare_finala, '')) LIKE '%%supraveghere%%') AS utilaje_supraveghere
+                COUNT(*) FILTER (
+                    WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                      AND stare_finala = 'Oprită / Necesar piese'
+                ) AS utilaje_oprite,
+                COUNT(*) FILTER (
+                    WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                      AND LOWER(COALESCE(stare_finala, '')) LIKE '%%supraveghere%%'
+                ) AS utilaje_supraveghere
             FROM reparatii
-            WHERE data_creare >= DATE_TRUNC('month', CURRENT_DATE)
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+              AND data_creare >= DATE_TRUNC('month', CURRENT_DATE)
               AND data_creare < (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month')
         """)
         kpi_res = dict(c.fetchone() or {})
 
-        c.execute("""
+        c.execute(f"""
             SELECT
                 COUNT(*) AS total_masini_rep,
                 COUNT(*) FILTER (
@@ -251,6 +302,7 @@ def incarca_date_dashboard():
                        OR LOWER(COALESCE(stare_finala, '')) LIKE 'functional%%'
                 ) AS reusite_masini_rep
             FROM reparatii
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
         """)
         masini_rep_res = dict(c.fetchone() or {})
 
@@ -267,30 +319,33 @@ def incarca_date_dashboard():
         except Exception:
             el_rep_res = {"total_el_rep": 0, "reusite_el_rep": 0}
 
-        c.execute("""
+        c.execute(f"""
             SELECT defect, COUNT(*) AS aparitii
             FROM reparatii
-            WHERE defect IS NOT NULL AND TRIM(defect) <> ''
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+              AND defect IS NOT NULL AND TRIM(defect) <> ''
             GROUP BY defect
             ORDER BY aparitii DESC
             LIMIT 10
         """)
         top_def = [dict(r) for r in (c.fetchall() or [])]
 
-        c.execute("""
+        c.execute(f"""
             SELECT firma, COUNT(*) AS interventii
             FROM reparatii
-            WHERE firma IS NOT NULL AND TRIM(firma) <> ''
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+              AND firma IS NOT NULL AND TRIM(firma) <> ''
             GROUP BY firma
             ORDER BY interventii DESC
             LIMIT 10
         """)
         top_cli = [dict(r) for r in (c.fetchall() or [])]
 
-        c.execute("""
+        c.execute(f"""
             SELECT masina, COUNT(*) AS interventii
             FROM reparatii
-            WHERE masina IS NOT NULL AND TRIM(masina) <> ''
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+              AND masina IS NOT NULL AND TRIM(masina) <> ''
             GROUP BY masina
             ORDER BY interventii DESC
             LIMIT 10
@@ -305,7 +360,7 @@ def incarca_memento_intretinere(zile_inainte: int = 14) -> list[dict]:
     zile = max(0, int(zile_inainte))
     try:
         with db_cursor() as c:
-            c.execute("""
+            c.execute(f"""
                 SELECT
                     m.id,
                     COALESCE(NULLIF(TRIM(f.nume_firma), ''), 'Fără firmă') AS firma,
@@ -315,41 +370,61 @@ def incarca_memento_intretinere(zile_inainte: int = 14) -> list[dict]:
                 FROM masini m
                 LEFT JOIN firme f ON f.id = m.firma_id
                 WHERE COALESCE(m.fara_intretinere, FALSE) = FALSE
+                  AND {SQL_NU_ESTE_INCHISA_MASINI_ALIAS}
                   AND m.data_intretinere IS NOT NULL
                   AND m.data_intretinere::date <= (CURRENT_DATE + make_interval(days => %s))
                 ORDER BY m.data_intretinere::date ASC, firma ASC, m.denumire ASC
             """, (zile,))
             return [dict(r) for r in (c.fetchall() or [])]
     except Exception:
-        with db_cursor() as c:
-            c.execute("""
-                SELECT
-                    id,
-                    'Fără firmă' AS firma,
-                    denumire AS utilaj,
-                    data_intretinere::date AS data_scadenta,
-                    (data_intretinere::date - CURRENT_DATE) AS zile_ramase
-                FROM masini
-                WHERE COALESCE(fara_intretinere, FALSE) = FALSE
-                  AND data_intretinere IS NOT NULL
-                  AND data_intretinere::date <= (CURRENT_DATE + make_interval(days => %s))
-                ORDER BY data_intretinere::date ASC, denumire ASC
-            """, (zile,))
-            return [dict(r) for r in (c.fetchall() or [])]
+        try:
+            with db_cursor() as c:
+                c.execute(f"""
+                    SELECT
+                        id,
+                        'Fără firmă' AS firma,
+                        denumire AS utilaj,
+                        data_intretinere::date AS data_scadenta,
+                        (data_intretinere::date - CURRENT_DATE) AS zile_ramase
+                    FROM masini
+                    WHERE COALESCE(fara_intretinere, FALSE) = FALSE
+                      AND {SQL_NU_ESTE_INCHISA_MASINI}
+                      AND data_intretinere IS NOT NULL
+                      AND data_intretinere::date <= (CURRENT_DATE + make_interval(days => %s))
+                    ORDER BY data_intretinere::date ASC, denumire ASC
+                """, (zile,))
+                return [dict(r) for r in (c.fetchall() or [])]
+        except Exception:
+            with db_cursor() as c:
+                c.execute("""
+                    SELECT
+                        id,
+                        'Fără firmă' AS firma,
+                        denumire AS utilaj,
+                        data_intretinere::date AS data_scadenta,
+                        (data_intretinere::date - CURRENT_DATE) AS zile_ramase
+                    FROM masini
+                    WHERE COALESCE(fara_intretinere, FALSE) = FALSE
+                      AND data_intretinere IS NOT NULL
+                      AND data_intretinere::date <= (CURRENT_DATE + make_interval(days => %s))
+                    ORDER BY data_intretinere::date ASC, denumire ASC
+                """, (zile,))
+                return [dict(r) for r in (c.fetchall() or [])]
 
 
 @st.cache_data(ttl=120)
 def incarca_defecte_recurente(zile_inainte: int = 180) -> list[dict]:
     zile = max(1, int(zile_inainte))
     with db_cursor() as c:
-        c.execute("""
+        c.execute(f"""
             SELECT
                 COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
                 COALESCE(NULLIF(TRIM(masina), ''), 'Utilaj nespecificat') AS masina,
                 TRIM(defect) AS defect,
                 COUNT(*) AS repetitii
             FROM reparatii
-            WHERE defect IS NOT NULL
+            WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+              AND defect IS NOT NULL
               AND TRIM(defect) <> ''
               AND data_creare >= (CURRENT_DATE - make_interval(days => %s))
             GROUP BY
@@ -367,7 +442,7 @@ def incarca_defecte_recurente(zile_inainte: int = 180) -> list[dict]:
 def incarca_utilaje_dupa_stare(mod: str) -> list[dict]:
     with db_cursor() as c:
         if mod == "supraveghere":
-            c.execute("""
+            c.execute(f"""
                 SELECT
                     id,
                     COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
@@ -381,11 +456,12 @@ def incarca_utilaje_dupa_stare(mod: str) -> list[dict]:
                     COALESCE(stare_finala, 'Funcțională sub supraveghere') AS stare,
                     TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
                 FROM reparatii
-                WHERE LOWER(COALESCE(stare_finala, '')) LIKE '%%supraveghere%%'
+                WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                  AND LOWER(COALESCE(stare_finala, '')) LIKE '%%supraveghere%%'
                 ORDER BY data_creare DESC NULLS LAST, id DESC
             """)
         else:
-            c.execute("""
+            c.execute(f"""
                 SELECT
                     id,
                     COALESCE(NULLIF(TRIM(firma), ''), 'Fără firmă') AS firma,
@@ -398,8 +474,11 @@ def incarca_utilaje_dupa_stare(mod: str) -> list[dict]:
                     COALESCE(stare_finala, 'Oprită / Necesar piese') AS stare,
                     TO_CHAR(data_creare, 'YYYY-MM-DD') AS data_inregistrare
                 FROM reparatii
-                WHERE stare_finala = 'Oprită / Necesar piese'
-                   OR LOWER(COALESCE(stare_finala, '')) LIKE '%%oprit%%'
+                WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                  AND (
+                    stare_finala = 'Oprită / Necesar piese'
+                    OR LOWER(COALESCE(stare_finala, '')) LIKE '%%oprit%%'
+                  )
                 ORDER BY data_creare DESC NULLS LAST, id DESC
             """)
         return [dict(r) for r in (c.fetchall() or [])]
@@ -413,6 +492,7 @@ def actualizeaza_stare_reparatie(reparatie_id: int, stare_noua: str):
         )
     incarca_date_dashboard.clear()
     incarca_utilaje_dupa_stare.clear()
+    incarca_defecte_recurente.clear()
 
 
 @st.cache_data(ttl=120)
@@ -420,13 +500,14 @@ def incarca_clienti_inactivi(zile_inactivitate: int = 90) -> list[dict]:
     zile = max(1, int(zile_inactivitate))
     try:
         with db_cursor() as c:
-            c.execute("""
+            c.execute(f"""
                 WITH ultima_rep AS (
                     SELECT
                         LOWER(TRIM(firma)) AS firma_norm,
                         MAX(data_creare) AS ultima_data
                     FROM reparatii
-                    WHERE firma IS NOT NULL AND TRIM(firma) <> ''
+                    WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                      AND firma IS NOT NULL AND TRIM(firma) <> ''
                     GROUP BY LOWER(TRIM(firma))
                 )
                 SELECT
@@ -441,13 +522,14 @@ def incarca_clienti_inactivi(zile_inactivitate: int = 90) -> list[dict]:
             return [dict(r) for r in (c.fetchall() or [])]
     except Exception:
         with db_cursor() as c:
-            c.execute("""
+            c.execute(f"""
                 SELECT
                     TRIM(firma) AS "Client / Firmă",
                     TO_CHAR(MAX(data_creare), 'YYYY-MM-DD') AS "Ultima intervenție",
                     COUNT(*) AS "Total intervenții istoric"
                 FROM reparatii
-                WHERE firma IS NOT NULL AND TRIM(firma) <> ''
+                WHERE {SQL_NU_ESTE_INCHISA_STARE_FINALA}
+                  AND firma IS NOT NULL AND TRIM(firma) <> ''
                 GROUP BY TRIM(firma)
                 HAVING MAX(data_creare) < (CURRENT_DATE - make_interval(days => %s))::timestamp
                 ORDER BY MAX(data_creare) ASC
@@ -460,10 +542,15 @@ def _mod_key(este_supraveghere: bool) -> str:
 
 
 def _randare_lista_utilaje_stare(items: list[dict], este_supraveghere: bool):
+    items_active = [it for it in items if not _este_stare_inchisa(it.get("stare"))]
+    if not items_active:
+        st.info("Nu există utilaje active în această categorie.")
+        return
+
     prefix = _mod_key(este_supraveghere)
-    for item in items:
+    for item in items_active:
         rep_id = item["id"]
-        col_info, col_act1, col_act2 = st.columns([5.2, 1.3, 1.3], vertical_alignment="center")
+        col_info, col_act1, col_act2, col_act3 = st.columns([4.4, 1.15, 1.3, 1.15], vertical_alignment="center")
         with col_info:
             st.markdown(
                 f"**{item['firma']}** — {item['utilaj']} "
@@ -479,6 +566,10 @@ def _randare_lista_utilaje_stare(items: list[dict], este_supraveghere: bool):
                 if st.button("👀 Supraveghere", key=f"btn_supr_{rep_id}", use_container_width=True):
                     actualizeaza_stare_reparatie(rep_id, "Funcțională sub supraveghere")
                     st.toast(f"👀 #{rep_id} ({item['utilaj']}) trecut pe Funcțională sub supraveghere!")
+        with col_act3:
+            if st.button("🔒 Închisă", key=f"btn_inchisa_{prefix}_{rep_id}", use_container_width=True):
+                actualizeaza_stare_reparatie(rep_id, "Închisă")
+                st.toast(f"🔒 #{rep_id} ({item['utilaj']}) marcat ca Închisă și scos din listele active.")
 
 
 def _extrage_furnizor_piesa(piesa_row: dict) -> str:
@@ -615,10 +706,10 @@ def render_memento_intretinere_dashboard():
     with col_info:
         if alerta_rows:
             st.warning(
-                f"⏰ **{len(alerta_rows)}** utilaje cu întreținerea scadentă în **{zile_avans}** zile (sau depășită)."
+                f"⏰ **{len(alerta_rows)}** utilaje active cu întreținerea scadentă în **{zile_avans}** zile (sau depășită)."
             )
         else:
-            st.success(f"✅ Nicio întreținere scadentă în următoarele **{zile_avans}** zile.")
+            st.success(f"✅ Nicio întreținere scadentă la utilajele active în următoarele **{zile_avans}** zile.")
 
     if alerta_rows:
         df_m = pd.DataFrame([
@@ -660,6 +751,7 @@ def render_piese_prioritare_bon_deschis():
                     str(m.get("denumire") or "").strip()
                     for m in masini_all
                     if str(m.get("denumire") or "").strip()
+                    and not _este_stare_inchisa(m.get("stare"))
                     and (fid_teren is None or _safe_int(m.get("firma_id")) == fid_teren)
                 ]
                 opt_masini_teren = ["-- Fără mașină --"] + list(dict.fromkeys(masini_firma))
@@ -1094,6 +1186,8 @@ def _colecteaza_randuri_piese_de_comandat() -> list[dict]:
         })
 
     for r in (ReparatiiRepository.get_all() or []):
+        if _este_stare_inchisa(r.get("stare_finala")):
+            continue
         piese_raw = _parse_json_list(r.get("piese_valide") or r.get("piese_json"))
         for item_idx, item in enumerate(piese_raw):
             den_piesa = str(item.get("Piesa") or item.get("piesa") or item.get("denumire") or "").strip()
