@@ -14,6 +14,7 @@ OPTIUNI_STARE_COMANDA = [
     "De ofertat",
     "De comandat",
     "Comandată",
+    "Ofertată",
     "În așteptare",
     "Anulată",
 ]
@@ -30,6 +31,9 @@ def _normalizeaza_stare_comanda(val) -> str:
         "comandat": "Comandată",
         "comandata": "Comandată",
         "comandată": "Comandată",
+        "ofertat": "Ofertată",
+        "ofertata": "Ofertată",
+        "ofertată": "Ofertată",
         "in asteptare": "În așteptare",
         "în așteptare": "În așteptare",
         "anulata": "Anulată",
@@ -119,7 +123,7 @@ class PieseRepository(BaseRepository):
     def insert(cls, data: dict):
         cls._asigura_coloane_piese()
         valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()
-        if valuta not in ("RON", "EUR"):
+        if valuta not in ("RON", "EUR", "USD"):
             valuta = "RON"
         masina_val = str(data.get("masina_montaj") or "").strip() or "General"
         stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))
@@ -152,7 +156,7 @@ class PieseRepository(BaseRepository):
     def update(cls, piesa_id: int, data: dict):
         cls._asigura_coloane_piese()
         valuta = str(data.get("valuta_achizitie") or "RON").strip().upper()
-        if valuta not in ("RON", "EUR"):
+        if valuta not in ("RON", "EUR", "USD"):
             valuta = "RON"
         masina_val = str(data.get("masina_montaj") or "").strip() or "General"
         stare_cmd = _normalizeaza_stare_comanda(data.get("stare_comandata"))

@@ -191,7 +191,6 @@ def _sincronizeaza_din_toate_sectiunile() -> dict:
                 if _insereaza_daca_nou(den, cod, masina_srv, subansamblu_srv, prop, stare):
                     adaugate_service += 1
 
-        # Fallback dacă raportul are piese salvate ca text simplu separat prin virgulă / linie nouă
         if not gasit_in_lista:
             for camp_txt in ("piese_schimbate", "piese_necesare", "denumire_piesa"):
                 val_txt = rep.get(camp_txt)
@@ -226,16 +225,19 @@ def _sincronizeaza_din_toate_sectiunile() -> dict:
                 adaugate_el += 1
 
     # 3. Din Necesar Piese Teren (NecesarPieseRepository)
-    necesar_rows = NecesarPieseRepository.get_all() or []
+    necesar_rows = NecesarPieseRepository.get_all(include_ofertate=True) or []
     for nr in necesar_rows:
         if not isinstance(nr, dict):
             continue
         den = nr.get("denumire_piesa") or nr.get("denumire") or ""
         cod = nr.get("cod_producator") or ""
         mas = nr.get("masina") or "General"
-        obs = nr.get("observatii") or ""
+        client = str(nr.get("firma_client") or "").strip()
+        prio = str(nr.get("prioritate_piesa") or "").strip()
+        obs = str(nr.get("observatii") or "").strip()
+        meta_txt = " | ".join(x for x in (f"Client: {client}" if client else "", f"Prioritate: {prio}" if prio else "", obs) if x)
         stare = nr.get("status_comanda") or nr.get("stare_comandata")
-        if _insereaza_daca_nou(den, cod, mas, "", obs, stare):
+        if _insereaza_daca_nou(den, cod, mas, "", meta_txt, stare):
             adaugate_teren += 1
 
     if adaugate_service or adaugate_el or adaugate_teren:
@@ -259,52 +261,7 @@ def _este_gol(val) -> bool:
     return str(val).strip() == ""
 
 
-def _normalizare_valoare_payload(col_db: str, val, orig_val=None):
-    if col_db == "denumire":
-        return "" if _este_gol(val) else str(val).strip()
-    if col_db == "masina_montaj":
-        txt = "" if _este_gol(val) else str(val).strip()
-        return txt or "General"
-    if col_db == "valuta_achizitie":
-        txt = "" if _este_gol(val) else str(val).strip().upper()
-        return txt or "RON"
-    if col_db == "termen_livrare":
-        txt = "" if _este_gol(val) else str(val).strip()
-        return txt or "1"
-    if col_db == "stare_comandata":
-        return _normalizeaza_stare_comanda("" if _este_gol(val) else val)
-    if col_db == "pret_achizitie":
-        if _este_gol(val):
-            return 0.0
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return float(orig_val or 0.0)
-
-    if isinstance(orig_val, (int, float)) and not isinstance(orig_val, bool):
-        if _este_gol(val):
-            return 0 if isinstance(orig_val, int) else 0.0
-        try:
-            return int(val) if isinstance(orig_val, int) and str(val).strip().isdigit() else float(val)
-        except (TypeError, ValueError):
-            return orig_val
-
-    return "" if _este_gol(val) else str(val).strip()
-
-
-def _valori_diferite(a, b) -> bool:
-    if _este_gol(a) and _este_gol(b):
-        return False
-    if isinstance(a, float) or isinstance(b, float):
-        try:
-            return abs(float(a or 0.0) - float(b or 0.0)) > 1e-6
-        except (TypeError, ValueError):
-            pass
-    return str(a if a is not None else "") != str(b if b is not None else "")
-
-
 def _construieste_df_catalog(piese_filtrate: list[dict]) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Construiește DataFrame-ul cu toate coloanele din DB și returnează maparea {coloana_ui: coloana_db}."""
     toate_coloane_db: list[str] = []
     for row in piese_filtrate:
         for k in row.keys():
@@ -420,6 +377,7 @@ def _curata_celula_float(val) -> float:
     except (TypeError, ValueError):
         return 0.0
 
+
 @st.fragment
 def render_catalog_general_piese(acces_permis: bool):
     st.subheader("📦 Catalog General Piese (Adăugare, Editare & Ștergere)")
@@ -505,7 +463,7 @@ def render_catalog_general_piese(acces_permis: bool):
     rev = st.session_state.get("piese_editor_rev", 0)
     editor_key = f"editor_piese_general_{sel_mas}_{sel_stare}_{rev}"
 
-    edited = st.data_editor(
+    st.data_editor(
         df_init,
         key=editor_key,
         hide_index=True,
@@ -518,11 +476,7 @@ def render_catalog_general_piese(acces_permis: bool):
     if st.button("💾 Salvează Modificările în Catalogul de Piese", type="primary", key="btn_save_piese_general"):
         state_ed = st.session_state.get(editor_key) if isinstance(st.session_state.get(editor_key), dict) else {}
 
-        # Pornim de la df_init și aplicăm explicit delta din st.session_state[editor_key]
-        # pentru a nu pierde celulele golite (None / "") sau rândurile șterse
         df_lucru = df_init.copy()
-
-        # 1. Aplicăm editările pe celule (inclusiv golirea lor la "" / None)
         for idx_str, changes in (state_ed.get("edited_rows") or {}).items():
             try:
                 idx = int(idx_str)
@@ -533,7 +487,6 @@ def render_catalog_general_piese(acces_permis: bool):
                     if col_name in df_lucru.columns:
                         df_lucru.at[idx, col_name] = "" if new_val is None else new_val
 
-        # 2. Identificăm rândurile șterse direct din editor (Delete / iconița coș)
         deleted_indices = set()
         for idx_del in (state_ed.get("deleted_rows") or []):
             try:
@@ -546,7 +499,6 @@ def render_catalog_general_piese(acces_permis: bool):
         nr_add = 0
         erori_validare = 0
 
-        # Procesăm rândurile inițiale (update sau delete)
         for idx, orig_row in df_init.iterrows():
             pid = int(orig_row["id"])
             row_curent = df_lucru.loc[idx]
@@ -564,7 +516,6 @@ def render_catalog_general_piese(acces_permis: bool):
                 if col_db == "id":
                     continue
                 if not acces_permis and col_db in COLOANE_PRETINSE_FARA_ACCES:
-                    # Păstrăm valoarea originală pentru coloanele blocate pe rol
                     if col_db == "pret_achizitie":
                         payload_upd[col_db] = _curata_celula_float(orig_row.get(col_ui))
                     else:
@@ -602,8 +553,6 @@ def render_catalog_general_piese(acces_permis: bool):
                     if val_noua != val_veche:
                         schimbat = True
                 else:
-                    # Aici intră cod_producator, cod_comercial, subansamblu, parametri, link_furnizor, furnizor etc.
-                    # Când ștergi valoarea din celulă, val_noua devine "" și se salvează ca gol în DB!
                     val_noua = _curata_celula_text(row_curent.get(col_ui))
                     val_veche = _curata_celula_text(orig_row.get(col_ui))
                     payload_upd[col_db] = val_noua
@@ -619,7 +568,6 @@ def render_catalog_general_piese(acces_permis: bool):
                 PieseRepository.update(pid, payload_upd)
                 nr_mod += 1
 
-        # 3. Procesăm rândurile nou adăugate direct în tabel (added_rows)
         for new_row in (state_ed.get("added_rows") or []):
             if not isinstance(new_row, dict) or bool(new_row.get("Șterge", False)):
                 continue
@@ -690,8 +638,46 @@ def render_adaugare_piesa_noua(masini_all: list[dict], acces_permis: bool):
         c7, c8, c9, c10 = st.columns([1.1, 0.9, 1.1, 1.5])
         with c7:
             pret = st.number_input("Preț achiziție", min_value=0.0, value=0.0, step=1.0, format="%.2f", disabled=not acces_permis)
-            
-            
+        with c8:
+            valuta = st.selectbox("Valută", options=["RON", "EUR", "USD"], disabled=not acces_permis)
+        with c9:
+            termen = st.text_input("Termen livrare (zile)", value="1")
+        with c10:
+            stare_cmd = st.selectbox("Stare comandă", options=OPTIUNI_STARE_COMANDA, index=0)
+
+        link_furn = st.text_input(
+            "Furnizor / link furnizor",
+            placeholder="ex: nume furnizor sau URL produs...",
+            disabled=not acces_permis,
+        )
+        salveaza = st.form_submit_button("💾 Salvează în Catalog", type="primary")
+
+    if salveaza:
+        den_clean = " ".join(str(den or "").split()).strip()
+        if not den_clean:
+            st.error("⚠️ Denumirea piesei este obligatorie.")
+            return
+        try:
+            PieseRepository.insert({
+                "denumire": den_clean,
+                "cod_producator": str(cod_p or "").strip(),
+                "cod_comercial": str(cod_c or "").strip(),
+                "masina_montaj": mas,
+                "subansamblu": str(sub or "").strip(),
+                "parametri": str(prop or "").strip(),
+                "pret_achizitie": float(pret or 0.0) if acces_permis else 0.0,
+                "valuta_achizitie": valuta if acces_permis else "RON",
+                "link_furnizor": str(link_furn or "").strip() if acces_permis else "",
+                "termen_livrare": str(termen or "1").strip() or "1",
+                "stare_comandata": stare_cmd,
+            })
+            _curata_cache_piese()
+            st.session_state["piese_editor_rev"] = st.session_state.get("piese_editor_rev", 0) + 1
+            st.success(f"✅ Piesă adăugată în catalog: **{den_clean}**.")
+        except Exception as exc:
+            st.error(f"⚠️ Eroare la salvare: {exc}")
+
+
 def render_piese():
     st.title("🔩 Gestiune Piese")
 

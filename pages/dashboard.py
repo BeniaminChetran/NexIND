@@ -14,7 +14,9 @@ from repositories.firme_repository import FirmeRepository
 from repositories.masini_repository import MasiniRepository
 from repositories.necesar_piese_repository import (
     OPTIUNI_PRIORITATE_PIESA,
+    OPTIUNI_STATUS_TEREN,
     NecesarPieseRepository,
+    normalizeaza_prioritate_piesa,
 )
 from repositories.piese_repository import (
     OPTIUNI_STARE_COMANDA,
@@ -37,6 +39,11 @@ STARI_COMANDA_VALIDE_RAW = frozenset({
     "de ofertat",
     "comandată",
     "comandata",
+    "ofertat",
+    "ofertata",
+    "ofertată",
+    "în așteptare",
+    "in asteptare",
     "anulată",
     "anulata",
 })
@@ -133,7 +140,6 @@ def _obtine_harta_firme() -> tuple[list[str], dict[str, int]]:
 @st.cache_data(ttl=120)
 def incarca_date_dashboard():
     with db_cursor() as c:
-        # Interval deschis pe luna curentă -> permite folosirea indexului pe data_creare
         c.execute("""
             SELECT
                 COUNT(*) AS interventii,
@@ -426,7 +432,6 @@ def _actualizeaza_stare_in_raport_json(
             it["stare_comandata"] = stare_noua
             return True
 
-        # 1. Prioritar: poziția exactă din lista JSON dacă denumirea corespunde
         if item_idx is not None and 0 <= item_idx < len(items):
             cand = items[item_idx]
             den_cand = _norm_text(
@@ -439,7 +444,6 @@ def _actualizeaza_stare_in_raport_json(
             if not den_target or den_cand == den_target:
                 modificat = _aplica_pe_item(cand)
 
-        # 2. Fallback sigur: potrivire exactă pe denumirea normalizată
         if not modificat and den_target:
             for item in items:
                 den_item = _norm_text(
@@ -550,112 +554,328 @@ def render_memento_intretinere_dashboard():
         )
 
 
-def render_notare_rapida_teren():
-    with st.expander("📝 Notare Rapidă Piese pe Teren (Client obligatoriu • Mașină opțională)", expanded=False):
-        firme_nume, nume_to_id = _obtine_harta_firme()
+def render_piese_prioritare_bon_deschis():
+    """Bon deschis de piese notate în grabă la client: prioritate + stare de căutat/ofertat,
+    salvate automat și în catalogul `piese` și scoase din lista activă după ofertare."""
+    firme_nume, nume_to_id = _obtine_harta_firme()
+    masini_all = MasiniRepository.get_all() or []
+    optiuni_piese, detalii_piese = _incarca_optiuni_lookup_piese()
+
+    st.caption(
+        "Bon deschis pentru piese notate rapid la client: se adaugă în **Catalogul General Piese**, "
+        "păstrează **Prioritatea** și **Starea** de lucru și **ies din lista activă** imediat ce sunt marcate ca **Ofertată** (rămânând în istoric)."
+    )
+
+    with st.expander("📝 Notează Piesă Prioritară la Client (Bon Deschis)", expanded=False):
         if not firme_nume:
             st.warning("⚠️ Nu există firme înregistrate în baza de date.")
-            return
-
-        masini_all = MasiniRepository.get_all() or []
-        optiuni_piese, detalii_piese = _incarca_optiuni_lookup_piese()
-
-        firma_teren = st.selectbox(
-            "Client / Firmă *",
-            options=firme_nume,
-            key="dash_teren_firma_sel",
-        )
-        fid_teren = nume_to_id.get(firma_teren)
-        masini_firma = [
-            str(m.get("denumire") or "").strip()
-            for m in masini_all
-            if str(m.get("denumire") or "").strip()
-            and (fid_teren is None or _safe_int(m.get("firma_id")) == fid_teren)
-        ]
-        opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
-
-        piesa_aleasa_lookup = st.selectbox(
-            "Alege piesă din DB (sau «Piesă nouă»)",
-            options=optiuni_piese,
-            key="dash_teren_lookup_piesa",
-        )
-
-        este_piesa_noua = piesa_aleasa_lookup == "✍️ Piesă nouă (scriu manual)"
-        piesa_din_db = detalii_piese.get(piesa_aleasa_lookup, {})
-        den_implicit = "" if este_piesa_noua else str(piesa_din_db.get("denumire") or "")
-        cod_implicit = "" if este_piesa_noua else str(piesa_din_db.get("cod_producator") or "")
-
-        with st.form("form_notare_rapida_teren", clear_on_submit=True):
-            c_t1, c_t2 = st.columns([2.2, 2.0])
-            with c_t1:
-                piesa_teren = st.text_input(
-                    "Denumire piesă *",
-                    value=den_implicit,
-                    disabled=not este_piesa_noua,
-                    placeholder="scrie denumirea piesei noi...",
-                )
-            with c_t2:
-                masina_teren = st.selectbox(
-                    "Mașină (opțional)",
-                    options=opt_masini_teren,
-                )
-
-            c_t3, c_t4, c_t5 = st.columns([1.6, 1.1, 1.4])
-            with c_t3:
-                cod_teren = st.text_input(
-                    "Cod producător (opțional)",
-                    value=cod_implicit,
-                    placeholder="ex: cod reper notat la client",
-                )
-            with c_t4:
-                cant_teren = st.number_input(
-                    "Cantitate *",
-                    min_value=0.01,
-                    value=1.0,
-                    step=1.0,
-                    format="%.2f",
-                )
-            with c_t5:
-                prioritate_teren = st.selectbox(
-                    "Stare piesă *",
-                    options=OPTIUNI_PRIORITATE_PIESA,
-                    index=0,
-                )
-
-            obs_teren = st.text_area(
-                "Observații / detalii notate la client (opțional)",
-                placeholder="ex: cerută la vizită, verificare ofertă, detalii montaj...",
-                height=90,
+        else:
+            firma_teren = st.selectbox(
+                "Client / Firmă *",
+                options=firme_nume,
+                key="dash_prio_firma_sel",
             )
-            salveaza_teren = st.form_submit_button("➕ Notează Piesa pentru Comandă", type="primary")
+            fid_teren = nume_to_id.get(firma_teren)
+            masini_firma = [
+                str(m.get("denumire") or "").strip()
+                for m in masini_all
+                if str(m.get("denumire") or "").strip()
+                and (fid_teren is None or _safe_int(m.get("firma_id")) == fid_teren)
+            ]
+            opt_masini_teren = ["-- Fără mașină (opțional) --"] + list(dict.fromkeys(masini_firma))
 
-        if salveaza_teren:
+            piesa_aleasa_lookup = st.selectbox(
+                "Caută piesă existentă în catalog sau alege «Piesă nouă»",
+                options=optiuni_piese,
+                key="dash_prio_lookup_piesa",
+            )
+
+            este_piesa_noua = piesa_aleasa_lookup == "✍️ Piesă nouă (scriu manual)"
+            piesa_din_db = detalii_piese.get(piesa_aleasa_lookup, {})
+            den_implicit = "" if este_piesa_noua else str(piesa_din_db.get("denumire") or "")
+            cod_implicit = "" if este_piesa_noua else str(piesa_din_db.get("cod_producator") or "")
+
+            with st.form("form_piesa_prioritara_bon", clear_on_submit=True):
+                c_t1, c_t2 = st.columns([2.2, 2.0])
+                with c_t1:
+                    piesa_teren = st.text_input(
+                        "Denumire piesă *",
+                        value=den_implicit,
+                        disabled=not este_piesa_noua,
+                        placeholder="ex: rulment, electrovalvă, senzor...",
+                    )
+                with c_t2:
+                    masina_teren = st.selectbox(
+                        "Utilaj / Mașină (opțional)",
+                        options=opt_masini_teren,
+                    )
+
+                c_t3, c_t4, c_t5, c_t6 = st.columns([1.5, 1.0, 1.2, 1.4])
+                with c_t3:
+                    cod_teren = st.text_input(
+                        "Cod producător (opțional)",
+                        value=cod_implicit,
+                        placeholder="cod reper...",
+                    )
+                with c_t4:
+                    cant_teren = st.number_input(
+                        "Cantitate *",
+                        min_value=0.01,
+                        value=1.0,
+                        step=1.0,
+                        format="%.2f",
+                    )
+                with c_t5:
+                    prioritate_teren = st.selectbox(
+                        "Prioritate *",
+                        options=OPTIUNI_PRIORITATE_PIESA,
+                        index=0,
+                    )
+                with c_t6:
+                    stare_init_teren = st.selectbox(
+                        "Stare *",
+                        options=OPTIUNI_STATUS_TEREN,
+                        index=0,
+                    )
+
+                obs_teren = st.text_area(
+                    "Observații rapide (ce trebuie căutat / verificat la ofertare)",
+                    placeholder="ex: verificat furnizor, cerut preț + termen livrare pentru ofertă client...",
+                    height=75,
+                )
+                salveaza_teren = st.form_submit_button("➕ Adaugă pe Bonul Prioritar", type="primary")
+
+            if salveaza_teren:
+                try:
+                    den_finala = den_implicit if not este_piesa_noua else piesa_teren
+                    rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
+                        firma_client=firma_teren,
+                        firma_id=fid_teren,
+                        denumire_piesa=den_finala,
+                        cantitate=cant_teren,
+                        masina=masina_teren,
+                        cod_producator=cod_teren,
+                        prioritate_piesa=prioritate_teren,
+                        status_comanda=stare_init_teren,
+                        observatii=obs_teren,
+                    )
+                    _goleste_cache_piese_si_cataloage()
+                    info_cat = (
+                        "legată de piesa existentă din catalog"
+                        if rez.get("existenta_in_catalog")
+                        else "adăugată automat și în Catalogul General Piese"
+                    )
+                    st.success(
+                        f"✅ Adăugat pe bon **{str(den_finala).strip()}** ({float(cant_teren):g} buc.) pentru **{firma_teren}** — "
+                        f"Prioritate: **{rez.get('prioritate_piesa')}**, Stare: **{rez.get('status_comanda')}** ({info_cat})."
+                    )
+                except ValueError as ve:
+                    st.error(f"⚠️ {ve}")
+                except Exception as e:
+                    st.error(f"⚠️ Eroare la salvare: {e}")
+
+    arata_istoric_ofertate = st.checkbox(
+        "📜 Afișează și istoricul pieselor deja ofertate",
+        value=False,
+        key="dash_prio_arata_ofertate",
+    )
+
+    toate_prioritare = NecesarPieseRepository.get_all(include_ofertate=True) or []
+    if not toate_prioritare:
+        st.info("Nu există piese notate pe bonul prioritar.")
+        return
+
+    lista_vizibila = (
+        toate_prioritare
+        if arata_istoric_ofertate
+        else [r for r in toate_prioritare if _normalizeaza_stare_comanda(r.get("status_comanda")) != "Ofertată"]
+    )
+
+    if not lista_vizibila:
+        st.success("✅ Nu mai ai nicio piesă deschisă de căutat sau ofertat pe bonul prioritar.")
+        return
+
+    df_p = pd.DataFrame(lista_vizibila)
+    df_p["firma_client"] = df_p["firma_client"].fillna("").astype(str)
+    df_p["prioritate_piesa"] = df_p["prioritate_piesa"].apply(normalizeaza_prioritate_piesa)
+    df_p["status_comanda"] = df_p["status_comanda"].apply(_normalizeaza_stare_comanda)
+    df_p["denumire_piesa"] = df_p["denumire_piesa"].fillna("").astype(str)
+    df_p["cod_producator"] = df_p["cod_producator"].fillna("").astype(str)
+    df_p["furnizor_piesa"] = df_p["furnizor_piesa"].fillna("").astype(str)
+
+    fp1, fp2, fp3, fp4 = st.columns([1.3, 1.1, 1.2, 1.4])
+    with fp1:
+        firme_opt = ["Toate firmele"] + sorted(f for f in df_p["firma_client"].unique().tolist() if f)
+        sel_firma_p = st.selectbox("Client / Firmă", options=firme_opt, key="dash_prio_filtru_firma")
+    with fp2:
+        sel_prio_p = st.selectbox(
+            "Prioritate",
+            options=["Toate", "Urgent", "Normal"],
+            key="dash_prio_filtru_prio",
+        )
+    with fp3:
+        stari_filtru = OPTIUNI_STATUS_TEREN if arata_istoric_ofertate else [s for s in OPTIUNI_STATUS_TEREN if s != "Ofertată"]
+        sel_stare_p = st.selectbox(
+            "Stare",
+            options=["Toate stările"] + stari_filtru,
+            key="dash_prio_filtru_stare",
+        )
+    with fp4:
+        cautare_p = st.text_input(
+            "Caută piesă / cod / furnizor",
+            placeholder="denumire, cod, furnizor...",
+            key="dash_prio_cautare",
+        ).strip().lower()
+
+    df_pf = df_p
+    if sel_firma_p != "Toate firmele":
+        df_pf = df_pf[df_pf["firma_client"] == sel_firma_p]
+    if sel_prio_p != "Toate":
+        df_pf = df_pf[df_pf["prioritate_piesa"] == sel_prio_p]
+    if sel_stare_p != "Toate stările":
+        df_pf = df_pf[df_pf["status_comanda"] == sel_stare_p]
+    if cautare_p:
+        pat = re.escape(cautare_p)
+        mask_p = (
+            df_pf["denumire_piesa"].str.lower().str.contains(pat, na=False)
+            | df_pf["cod_producator"].str.lower().str.contains(pat, na=False)
+            | df_pf["furnizor_piesa"].str.lower().str.contains(pat, na=False)
+        )
+        df_pf = df_pf[mask_p]
+
+    if df_pf.empty:
+        st.info("Nu există piese prioritare pentru filtrele selectate.")
+        return
+
+    df_p_init = pd.DataFrame([
+        {
+            "id": int(r.id),
+            "Prioritate": normalizeaza_prioritate_piesa(r.prioritate_piesa),
+            "Stare": _normalizeaza_stare_comanda(r.status_comanda),
+            "Client / Firmă": str(r.firma_client or ""),
+            "Utilaj": str(r.masina or "") or "-",
+            "Piesă": str(r.denumire_piesa or ""),
+            "Cod": str(r.cod_producator or ""),
+            "Cant.": _safe_float(r.cantitate, 1.0),
+            "Furnizor": str(r.furnizor_piesa or "").strip() or "Fără furnizor setat",
+            "Observații": str(r.observatii or ""),
+            "Ofertată acum": False,
+        }
+        for r in df_pf.itertuples(index=False)
+    ])
+
+    st.session_state.setdefault("dash_prio_editor_rev", 0)
+    editor_prio_key = f"dash_editor_piese_prioritare_v{st.session_state['dash_prio_editor_rev']}"
+
+    edited_p = st.data_editor(
+        df_p_init,
+        key=editor_prio_key,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["id", "Client / Firmă", "Utilaj", "Piesă", "Cod", "Cant.", "Furnizor"],
+        column_config={
+            "id": None,
+            "Prioritate": st.column_config.SelectboxColumn(
+                "Prioritate",
+                options=OPTIUNI_PRIORITATE_PIESA,
+                required=True,
+                width="small",
+            ),
+            "Stare": st.column_config.SelectboxColumn(
+                "Stare",
+                options=OPTIUNI_STATUS_TEREN,
+                required=True,
+                width="medium",
+            ),
+            "Client / Firmă": st.column_config.TextColumn("Client / Firmă", width="medium"),
+            "Utilaj": st.column_config.TextColumn("Utilaj", width="small"),
+            "Piesă": st.column_config.TextColumn("Piesă", width="large"),
+            "Cod": st.column_config.TextColumn("Cod", width="small"),
+            "Cant.": st.column_config.NumberColumn("Cant.", format="%.2f", width="small"),
+            "Furnizor": st.column_config.TextColumn("Furnizor", width="medium"),
+            "Observații": st.column_config.TextColumn("Observații", width="medium"),
+            "Ofertată acum": st.column_config.CheckboxColumn("📤 Ofertată", default=False, width="small"),
+        },
+    )
+
+    if st.button("💾 Salvează Prioritate / Stare / Ofertare", type="primary", key="btn_dash_save_piese_prioritare"):
+        df_p_final = edited_p.copy()
+        state_p = st.session_state.get(editor_prio_key)
+        if isinstance(state_p, dict):
+            for idx_key, changes in (state_p.get("edited_rows") or {}).items():
+                idx = _safe_int(idx_key)
+                if idx is not None and 0 <= idx < len(df_p_final) and isinstance(changes, dict):
+                    for col_name, new_val in changes.items():
+                        if col_name in df_p_final.columns:
+                            df_p_final.at[idx, col_name] = new_val
+
+        orig_p_map = {
+            int(r.id): (
+                normalizeaza_prioritate_piesa(r.Prioritate),
+                _normalizeaza_stare_comanda(r.Stare),
+                str(r.Observații or "").strip(),
+            )
+            for r in df_p_init.itertuples(index=False)
+        }
+
+        nr_actualizate = 0
+        nr_ofertate = 0
+        erori_p = []
+
+        for row in df_p_final.itertuples(index=False):
+            nid = int(row.id)
+            orig = orig_p_map.get(nid)
+            if orig is None:
+                continue
+
+            prio_veche, stare_veche, obs_veche = orig
+            prio_noua = normalizeaza_prioritate_piesa(row.Prioritate)
+            stare_noua = _normalizeaza_stare_comanda(row.Stare)
+            obs_noua = str(row.Observații or "").strip()
+            marcat_ofertat_acum = bool(getattr(row, "_10", False))
+
             try:
-                den_finala = den_implicit if not este_piesa_noua else piesa_teren
-                rez = NecesarPieseRepository.noteaza_piesa_pe_teren(
-                    firma_client=firma_teren,
-                    firma_id=fid_teren,
-                    denumire_piesa=den_finala,
-                    cantitate=cant_teren,
-                    masina=masina_teren,
-                    cod_producator=cod_teren,
-                    prioritate_piesa=prioritate_teren,
-                    observatii=obs_teren,
-                )
-                _goleste_cache_piese_si_cataloage()
-                mesaj_catalog = (
-                    "era deja în catalog → Status Comandă: **De ofertat**"
-                    if rez.get("existenta_in_catalog")
-                    else "nu era în catalog → adăugată în catalog și Status Comandă: **De căutat**"
-                )
-                st.success(
-                    f"✅ Notat **{str(den_finala).strip()}** (cant. **{float(cant_teren):g}**, stare piesă: **{prioritate_teren}**, "
-                    f"client **{firma_teren}**): {mesaj_catalog}."
-                )
-            except ValueError as ve:
-                st.error(f"⚠️ {ve}")
+                if marcat_ofertat_acum or (stare_noua == "Ofertată" and stare_veche != "Ofertată"):
+                    nota_extra = obs_noua if (obs_noua and obs_noua != obs_veche) else ""
+                    NecesarPieseRepository.marcheaza_ofertat(nid, observatie_suplimentara=nota_extra)
+                    nr_ofertate += 1
+                    continue
+
+                if prio_noua != prio_veche:
+                    NecesarPieseRepository.update_prioritate_piesa(nid, prio_noua)
+                    nr_actualizate += 1
+
+                if stare_noua != stare_veche:
+                    NecesarPieseRepository.update_status_comanda(nid, stare_noua)
+                    nr_actualizate += 1
+
+                if obs_noua != obs_veche:
+                    with db_cursor() as c:
+                        c.execute(
+                            "UPDATE necesar_piese SET observatii = %s WHERE id = %s",
+                            (obs_noua, nid),
+                        )
+                    NecesarPieseRepository.get_all.clear()
+                    nr_actualizate += 1
             except Exception as e:
-                st.error(f"⚠️ Eroare la salvarea piesei: {e}")
+                erori_p.append(f"#{nid} ({row.Piesă}): {e}")
+
+        if erori_p:
+            st.error("⚠️ Au apărut erori la salvare:\n" + "\n".join(erori_p))
+
+        if nr_actualizate == 0 and nr_ofertate == 0:
+            if not erori_p:
+                st.info("ℹ️ Nu există modificări nesalvate pe bonul prioritar.")
+        else:
+            _goleste_cache_piese_si_cataloage()
+            st.session_state["dash_prio_editor_rev"] += 1
+            mesaj_parti = []
+            if nr_ofertate:
+                mesaj_parti.append(f"**{nr_ofertate}** marcate ca **Ofertată** (scoase din bonul activ)")
+            if nr_actualizate:
+                mesaj_parti.append(f"**{nr_actualizate}** actualizări")
+            st.success("✅ " + " • ".join(mesaj_parti) + ".")
 
 
 def render_notite_vizita_dashboard():
@@ -861,8 +1081,7 @@ def _colecteaza_randuri_piese_de_comandat() -> list[dict]:
     randuri: list[dict] = []
     idx_counter = 0
 
-    # 1. Necesar piese din teren
-    for np_row in (NecesarPieseRepository.get_all() or []):
+    for np_row in (NecesarPieseRepository.get_all(include_ofertate=False) or []):
         den_np = str(np_row.get("denumire_piesa") or "").strip()
         if not den_np:
             continue
@@ -889,7 +1108,6 @@ def _colecteaza_randuri_piese_de_comandat() -> list[dict]:
             "Raport": f"NP #{np_row.get('id')}",
         })
 
-    # 2. Piese din rapoarte mașini
     for r in (ReparatiiRepository.get_all() or []):
         piese_raw = _parse_json_list(r.get("piese_valide") or r.get("piese_json"))
         for item_idx, item in enumerate(piese_raw):
@@ -933,7 +1151,6 @@ def _colecteaza_randuri_piese_de_comandat() -> list[dict]:
                 "Raport": f"#{r.get('id')}",
             })
 
-    # 3. Componente din fișe electronice
     for f_el in _incarca_fise_electronice_piese():
         comp_raw = _parse_json_list(f_el.get("componente_json"))
         for comp_idx, comp in enumerate(comp_raw):
@@ -977,7 +1194,7 @@ def _colecteaza_randuri_piese_de_comandat() -> list[dict]:
 
 def render_piese_de_comandat_dashboard():
     st.caption(
-        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `În așteptare`, `Anulată`) "
+        "Schimbă direct în tabel coloana **Status Comandă** (`De căutat`, `De ofertat`, `De comandat`, `Comandată`, `Ofertată`, `În așteptare`, `Anulată`) "
         "și apasă **💾 Actualizează Stările în Tabel**."
     )
 
@@ -1205,8 +1422,10 @@ def render_dashboard():
     c5.metric("🚨 Utilaje Oprite", utilaje_oprite)
     c6.metric("👀 Sub supraveghere", utilaje_supr)
 
-    # Notare rapidă piese pe teren (expander propriu, închis la pornire)
-    render_notare_rapida_teren()
+    # Bon deschis piese prioritare (căutare & ofertare client)
+    st.markdown("---")
+    with st.expander("🎯 Piese Prioritare — Bon Deschis Căutare & Ofertare Client", expanded=False):
+        render_piese_prioritare_bon_deschis()
 
     # Piese de comandat & Notițe vizită client (expander-e închise la pornire)
     st.markdown("---")
