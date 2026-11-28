@@ -196,8 +196,8 @@ def render_deblocare():
 
 MENIU_STRUCTURA = {
     "📈 0. DashBoard": {
-        "✅ De făcut & Teren": ("pages.de_facut", "render_de_facut"),
         "📊 Indicatori & Analiză": ("pages.dashboard", "render_dashboard"),
+        "✅ De făcut & Teren": ("pages.de_facut", "render_de_facut"),
     },
     "🚨 1. Diagnostic & Documentație": {
         "🛠️ Asistent Defecte": ("pages.asistent_defecte", "render_page"),
