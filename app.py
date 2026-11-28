@@ -56,6 +56,13 @@ st.set_page_config(
 if ANDROID_LOGO_B64 is not None:
     st.logo(ICON_ANDROID_PATH)
 
+# Dacă URL-ul conține ?masina_id=... sau ?qr=... (scanare QR directă), deschide automat modul Operator Mașină
+qp_masina = st.query_params.get("masina_id") or st.query_params.get("qr")
+if qp_masina and not st.session_state.get("_nexind_qr_url_handled"):
+    st.session_state["_nexind_qr_url_handled"] = True
+    st.session_state["op_qr_cod_input"] = str(qp_masina).strip()
+    activeaza_mod_operator()
+
 cont_curent = get_cont_activ()
 if cont_curent.are_acces_total:
     st.session_state["is_unlocked"] = True
